@@ -4,12 +4,12 @@
 const {esc, d, today, fmt, fmtShort, pct, lvl, lvlColor, toast} = U;
 const CFG = window.APP_CONFIG || {};
 const sb = U.supa();
-const T = {session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
+const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
            online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false};
 const $ = s => document.querySelector(s);
-const GRADES = [5,6,7,8,9,10,11];
-const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme";
+const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
+const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url";
 const inviteLink = tok => `${location.origin}${location.pathname.replace(/teacher\.html$/, "")}?invite=${tok}`;
 const blockOf = (c, l) => c.blocks[l.block] || {name:"Свои уроки", color:U.ownColor()};
 const I = {
@@ -22,8 +22,11 @@ const I = {
   code:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg>',
   lock:'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>'
 };
-const access = cid => !sb || (T.me?.base_access || []).includes(U.packOf(cid));
+const access = cid => !sb || !U.packOf(cid) || (T.me?.base_access || []).includes(U.packOf(cid));
 const curCourse = () => T.courseId || CFG.DEFAULT_COURSE || "oge-rus";
+const FREE = {id:"free", title:"Личная доска", free:true, theory:[], practice:[], materials:[], learn:[]};
+const subjOfS = s => s.subject || U.subjectOf(s.course);
+const siblings = s => T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id));
 /* курс в разделе «Материалы»: встроенный + свои уроки учителя (общие для всех учеников) */
 const teacherCourse = cid => U.courseFor({course: cid}, T.mats);
 
@@ -72,10 +75,9 @@ function sData(s){
 const sheetFor = (c, lid) => T.sheets.find(x => x.course === c && x.lesson_id === lid) || {};
 const pending = s => !s.registered_at;
 const ownerOf = s => s.pair_id && s.pair_id < s.id ? s.pair_id : s.id;
-function courseOptions(g){
-  const all = Object.entries(COURSES).map(([k, c]) => [k, c]);
-  const fit = ([, c]) => c.grade === g || (c.grades || []).includes(g);
-  return [...all.filter(fit), ...all.filter(x => !fit(x))].map(([k, c]) => [k, c.course + (access(k) ? "" : " – база не открыта"), access(k)]);
+function courseOptions(g, subject){
+  const keys = U.coursesOf(subject || "rus"), fit = k => { const c = U.getCourse(k); return c.grade === g || (c.grades || []).includes(g); };
+  return [...keys.filter(fit), ...keys.filter(k => !fit(k))].map(k => [k, U.getCourse(k).course + (access(k) ? "" : " – база не открыта"), access(k)]);
 }
 const mins = sec => sec ? Math.max(1, Math.round(sec / 60)) + " мин" : "–";
 
@@ -103,19 +105,22 @@ function inviteBox(s){
 }
 
 function viewStudents(){
-  const list = T.students.filter(s => T.grade === "all" || String(s.grade) === T.grade || (T.grade === "new" && pending(s)));
+  const list = T.students.filter(s => (T.subject === "all" || subjOfS(s) === T.subject) && (T.grade === "all" || String(s.grade) === T.grade || (T.grade === "new" && pending(s))));
+  const usedSubj = U.SUBJECTS.filter(x => T.students.some(s => subjOfS(s) === x.k));
   const wait = T.writings.filter(w => w.status === "sent").length + T.hw.filter(h => h.status === "sent").length;
   const nameOf = id => T.students.find(x => x.id === id);
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Кабинет учителя</span>
       <h1>Ученики</h1><p>${T.students.length} учеников · на проверку: ${wait}</p><div id="online-count" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
-    <div class="section-title"><div class="filters" role="group" aria-label="Класс">${[["all","Все"],...GRADES.map(g => [String(g), g + " кл."]),["new","Ждут регистрации"]].map(([k,n]) => `<button data-grade="${k}" aria-pressed="${T.grade===k}">${n}</button>`).join("")}</div>
+    ${usedSubj.length > 1 ? `<div class="filters" role="group" aria-label="Предмет" style="margin-top:22px">${[["all","Все предметы",""], ...usedSubj.map(x => [x.k, x.n, x.e])].map(([k,n,e]) => `<button data-subjf="${k}" aria-pressed="${T.subject===k}">${e} ${esc(n)}</button>`).join("")}</div>` : ""}
+    <div class="section-title"><div class="filters" role="group" aria-label="Класс">${[["all","Все классы"],...GRADES.map(g => [String(g), g === 0 ? "дошк." : g + " кл."]),["new","Ждут регистрации"]].map(([k,n]) => `<button data-grade="${k}" aria-pressed="${T.grade===k}">${n}</button>`).join("")}</div>
       <button class="btn ghost sm" data-act="reload">Обновить</button></div>
     ${T.loading ? `<p class="muted">Загружаю…</p>` : ""}
     <div class="grid2">${list.map(s => { const x = sData(s), avg = x.c ? U.avgAll(x.c, x.results) : null, p = s.pair_id && nameOf(s.pair_id);
       return `<button class="card" data-student="${s.id}" style="text-align:left">
         <div class="row between"><h2>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h2>${x.waiting ? `<span class="chip mid">проверить: ${x.waiting}</span>` : ""}</div>
         <div data-online="${s.id}"></div>
-        <p class="small muted" style="margin-top:4px">${s.grade ? s.grade + " класс" : "класс не указан"}${s.goal ? " · " + esc(s.goal) : ""} · логин ${esc(s.code)}</p>
+        <p class="small" style="margin-top:4px"><b>${U.subj(subjOfS(s)).e} ${esc(U.subj(subjOfS(s)).n)}</b></p>
+        <p class="small muted">${s.grade != null ? U.gradeName(s.grade) : "класс не указан"}${s.goal ? " · " + esc(s.goal) : ""} · логин ${esc(s.code)}</p>
         ${p ? `<p class="small" style="margin-top:4px">👥 в паре с ${esc(p.name)}</p>` : ""}
         <div class="row" style="margin-top:10px;gap:20px">
           <div><div class="big tnum" style="font-size:1.5rem;color:${x.entry ? lvlColor(pct(x.entry.last)) : "inherit"}">${x.entry ? pct(x.entry.last) + "%" : "–"}</div><div class="small muted">входной тест</div></div>
@@ -126,9 +131,10 @@ function viewStudents(){
 
     <div class="section-title"><h2>Добавить ученика</h2></div>
     <form class="card stack" id="add-student" style="gap:8px">
-      <p class="small muted">Создаётся одноразовая ссылка. Ученик сам заполнит анкету, выберет класс и цели – план выстроится автоматически, а результаты входного теста появятся здесь.</p>
+      <p class="small muted">Выберите предмет – создастся одноразовая ссылка. Ученик заполнит анкету, выберет цели – план по предмету выстроится автоматически, материалы предмета откроются сразу. Если ученик уже есть, второй предмет добавляется в его карточке – вход останется тем же.</p>
       <label for="ns-name">Как вы его называете (для себя, необязательно)</label><input type="text" id="ns-name" placeholder="Например, Артём, 9А">
-      <label for="ns-grade">Класс</label><select id="ns-grade">${GRADES.map(g => `<option value="${g}" ${g===9?"selected":""}>${g} класс</option>`).join("")}</select>
+      <label for="ns-subj">Предмет</label><select id="ns-subj">${U.SUBJECTS.map(x => `<option value="${x.k}" ${x.k===T.addSubj?"selected":""}>${x.e} ${esc(x.n)}</option>`).join("")}</select>
+      <label for="ns-grade">Класс</label><select id="ns-grade">${U.subj(T.addSubj).g.map(g => `<option value="${g}" ${g===9?"selected":""}>${U.gradeName(g)}</option>`).join("")}</select>
       <div><button class="btn" type="submit">Создать ссылку-приглашение</button></div>
     </form>
     ${T.justInvited ? inviteBox(T.justInvited) : ""}
@@ -194,11 +200,22 @@ function viewStudent(){
       <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="new-invite">${pending(s) ? "Новая ссылка" : "Сбросить пароль (новая ссылка)"}</button></div></div>
     <form class="card stack" id="plan-form" style="gap:8px"><div class="kicker">План работы</div>
       <label for="pl-course">Курс</label>
-      <select id="pl-course"><option value="">– не выбран –</option>${courseOptions(s.grade || 9).map(([k,n,ok]) => `<option value="${k}" ${k===s.course?"selected":""} ${ok?"":"disabled"}>${esc(n)}</option>`).join("")}</select>
-      <p class="small muted">Подсказка по целям ученика: ${esc(COURSES[U.planFor(s.grade || 9, s.goals || [])]?.course || "–")}.</p>
+      <select id="pl-course"><option value="">– не выбран –</option>${courseOptions(s.grade ?? 9, subjOfS(s)).map(([k,n,ok]) => `<option value="${k}" ${k===s.course?"selected":""} ${ok?"":"disabled"}>${esc(n)}</option>`).join("")}</select>
+      <p class="small muted">Подсказка по целям ученика: ${esc(U.getCourse(U.planFor(subjOfS(s), s.grade ?? 9, s.goals || []))?.course || "–")}.</p>
       <label for="pl-start">Дата первого урока (дальше – раз в неделю)</label><input type="date" id="pl-start" value="${esc(s.start_date || "")}">
       <p class="small muted">Дату любого урока можно поменять отдельно – в таблице уроков ниже.</p>
       <div><button class="btn sm" type="submit">Сохранить план</button></div></form>
+    <div class="card stack" style="gap:8px"><div class="kicker">Предметы ученика</div>
+      <div class="stack" style="gap:6px">${siblings(s).map(o => `<button class="subj" ${o.id === s.id ? 'aria-pressed="true"' : `data-student="${o.id}"`}><span class="emo">${U.subj(subjOfS(o)).e}</span><span>${esc(U.subj(subjOfS(o)).n)}<small>${o.grade != null ? U.gradeName(o.grade) : ""}${U.getCourse(o.course) ? " · " + esc(U.getCourse(o.course).course) : ""}</small></span></button>`).join("")}</div>
+      ${pending(s) ? `<p class="small muted">Второй предмет можно добавить после регистрации.</p>` : `<label for="as-subj">Добавить предмет – вход у ученика останется тем же</label>
+      <select id="as-subj">${U.SUBJECTS.filter(x => !siblings(s).some(o => subjOfS(o) === x.k)).map(x => `<option value="${x.k}">${x.e} ${esc(x.n)}</option>`).join("")}</select>
+      <select id="as-grade" aria-label="Класс">${U.subj(U.SUBJECTS.find(x => !siblings(s).some(o => subjOfS(o) === x.k))?.k || "rus").g.map(g => `<option value="${g}" ${g === s.grade ? "selected" : ""}>${U.gradeName(g)}</option>`).join("")}</select>
+      <div><button class="btn sm" data-act="add-subject">Добавить предмет</button></div>`}</div>
+    <div class="card stack" style="gap:8px"><div class="kicker">Занятие онлайн</div>
+      <p class="small muted">Ссылка на созвон: Яндекс Телемост, VK Звонки, Сферум или любая другая. Ученик видит кнопку «Подключиться» у себя.</p>
+      <div class="linkbox"><input type="url" id="call-url" value="${esc(s.call_url || "")}" placeholder="${esc(T.me?.call_url || "https://telemost.yandex.ru/j/…")}"><button class="btn ghost sm" data-act="save-call">Сохранить</button></div>
+      <div class="row"><button class="btn sm" data-act="start-lesson">📞 Начать занятие</button><button class="btn ghost sm" data-boardfor="free">Личная доска</button>
+        <a class="btn ghost sm" href="https://telemost.yandex.ru/" target="_blank" rel="noopener">Создать встречу в Телемосте</a></div></div>
     <div class="card stack" style="gap:8px"><div class="kicker">Работа в паре</div>
       <p class="small muted">Двое учеников видят одну общую доску на каждом уроке и курсоры друг друга. Результаты и работы у каждого свои.</p>
       <label for="pair-pick">Напарник</label>
@@ -231,13 +248,13 @@ function viewStudent(){
       ${T.wreview === l.id ? `<tr><td colspan="11"><div style="max-width:760px">${writingReviewHTML(s, x, l)}</div></td></tr>` : ""}`; }).join("")}
   </tbody></table></div>
   <p class="small muted" style="margin-top:8px">«Время» – сколько ученик провёл в папке урока. «Выполнено» – доля сделанного: мини-практика, тест, ДЗ-тест, письмо и отметка ДЗ.</p>`
-  : `<div class="section-title"><h2>План</h2></div><div class="card"><p>План ещё не выбран: выберите курс выше. Для ${s.grade || "этого"} класса подходит: ${esc(COURSES[U.planFor(s.grade || 9, s.goals || [])]?.course || "–")}.</p></div>`}
+  : `<div class="section-title"><h2>План</h2></div><div class="card"><p>План ещё не выбран: выберите курс выше. Подходит: ${esc(U.getCourse(U.planFor(subjOfS(s), s.grade ?? 9, s.goals || []))?.course || "–")}.</p></div>`}
   <div class="section-title"><h2>Управление</h2></div>
   <div class="card row"><button class="btn ${T.confirmDel===s.id?"danger":"ghost"} sm" data-act="del-student">${T.confirmDel===s.id?"Нажмите ещё раз, чтобы удалить навсегда":"Удалить ученика"}</button></div>`;
 }
 
 function viewBoard(){
-  const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = c.lessons.find(x => x.id === T.boardLesson);
+  const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = T.boardLesson === "free" ? FREE : c.lessons.find(x => x.id === T.boardLesson);
   const p = s.pair_id && T.students.find(x => x.id === s.pair_id);
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-student="${s.id}">← ${esc(s.name)}</button>
     <button class="btn sm" data-goto="${l.id}" data-sub2="board">Позвать ${p ? "учеников" : "ученика"} на доску</button></div>
@@ -247,18 +264,22 @@ function viewBoard(){
 }
 
 function viewMethodology(){
-  const c = COURSES[curCourse()];
+  const c = U.getCourse(curCourse());
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${esc(c.course)}</span><h1>Методика курса</h1><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   <div class="section-title"><h2>Курс</h2>${coursePick()}</div>
   <div class="stack" style="margin-top:10px;gap:26px">${(c.methodology || []).map(m => `<div class="sheet"><span class="tag label">${esc(m.h)}</span>${m.t ? `<p>${U.mark(m.t)}</p>` : ""}${m.list ? `<ul>${m.list.map(x => `<li>${U.mark(x)}</li>`).join("")}</ul>` : ""}${m.table ? `<div class="tablewrap"><table><thead><tr>${m.table[0].map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${m.table.slice(1).map(r => `<tr>${r.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : ""}</div>`).join("")}</div>`;
 }
-const coursePick = () => `<select id="course-pick" style="width:auto;max-width:100%">${Object.entries(COURSES).map(([k,x]) => `<option value="${k}" ${k===curCourse()?"selected":""}>${esc(x.course)}${access(k) ? "" : " 🔒"}</option>`).join("")}</select>`;
+const matSubject = () => T.matSubject || U.subjectOf(curCourse());
+const coursePick = () => `<select id="course-pick" style="width:auto;max-width:100%">${U.coursesOf(matSubject()).map(k => `<option value="${k}" ${k===curCourse()?"selected":""}>${esc(U.getCourse(k).course)}${access(k) ? "" : " 🔒"}</option>`).join("")}</select>`;
+const subjectPick = () => `<div class="subjects" role="group" aria-label="Предмет" style="margin-top:18px">${U.SUBJECTS.map(x => `<button class="subj" data-matsubj="${x.k}" aria-pressed="${matSubject() === x.k}"><span class="emo">${x.e}</span><span>${esc(x.n)}<small>${x.g[0] === 0 ? "дошкольники" : x.g[0] + "–" + x.g.at(-1) + " кл."}</small></span></button>`).join("")}</div>`;
 
 function viewCourse(){
   const cid = curCourse(), c = teacherCourse(cid), ok = access(cid);
-  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${ok ? "База открыта" : "Встроенная база"}</span><h1>${esc(c.course)}</h1>
-    <p>${ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
-  <div class="section-title"><h2>Уроки</h2>${coursePick()}</div>
+  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${c.virtual ? "Ваш курс" : ok ? "База открыта" : "Встроенная база"}</span><h1>${esc(c.course)}</h1>
+    <p>${c.virtual ? "Уроки, теорию, материалы, задания и тесты добавляете вы – или составляет нейросеть. Ученики курса видят их сразу." : ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
+  ${subjectPick()}
+  <div class="section-title"><h2>Курс</h2>${coursePick()}</div>
+  ${!c.lessons.length ? `<div class="card" style="margin-bottom:16px"><p>Уроков пока нет. Создайте первый урок ниже – он сразу появится у учеников этого курса. Материалы, задания и тесты добавляются внутри папки (можно составить нейросетью).</p></div>` : ""}
   ${!ok ? `<div class="card" style="margin-bottom:16px"><p>Чтобы открыть базу «${esc(U.PACKS[U.packOf(cid)])}», напишите разработчику платформы. Свои уроки и материалы можно добавлять и без неё.</p></div>` : ""}
   <div class="folders">${c.lessons.map((l,i) => `<button class="folder ${ok || l.custom ? "" : "locked"}" style="--c:${blockOf(c, l).color}" data-lesson="${l.id}"><span class="back"></span><span class="papers"><i></i><i></i></span>
     <span class="front">${ok || l.custom ? "" : `<span class="lockico">${I.lock}</span>`}<span class="num">№ ${String(i+1).padStart(2,"0")}${l.custom ? " · СВОЙ" : ""}</span><span class="ttl">${esc(l.title)}</span>
@@ -267,6 +288,7 @@ function viewCourse(){
   <form class="card stack" id="own-lesson" style="gap:8px"><p class="small muted">Урок появится в курсе у всех ваших учеников этого курса. Материалы, задания и тест добавите внутри папки.</p>
     <label for="ol-title">Тема</label><input type="text" id="ol-title" required>
     <label for="ol-date">Дата (по плану курса)</label><input type="date" id="ol-date" required>
+    ${T.me?.role === "developer" ? `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="ol-shared"> В общую базу – для всех учителей</label>` : ""}
     <div><button class="btn sm" type="submit">Создать папку</button></div></form>` : ""}`;
 }
 
@@ -285,7 +307,7 @@ function materialsTab(cid, l){
       <b>${esc(m.title || m.url || "Материал")}</b>${m.url ? ` · <a href="${esc(m.url)}" target="_blank" rel="noopener">открыть</a>` : ""}
       ${m.kind === "text" ? `<div class="small" style="white-space:pre-line;margin-top:4px">${esc((m.body || "").slice(0, 400))}</div>` : ""}
       ${m.kind === "tasks" ? `<p class="small muted">Мини-практика: ${m.data?.mini?.length || 0} · вопросы теста: ${m.data?.test?.length || 0}</p>` : ""}</div>
-      <button class="btn ghost sm" data-delmat="${m.id}">Удалить</button></div>`).join("") : `<p class="muted">Своих материалов к этому уроку пока нет.</p>`}
+      ${m.shared ? '<span class="chip">общая база</span>' : ""}${m.teacher_id === T.session?.user.id ? `<button class="btn ghost sm" data-delmat="${m.id}">Удалить</button>` : ""}</div>`).join("") : `<p class="muted">Своих материалов к этому уроку пока нет.</p>`}
     ${sb && T.session ? `<form class="card stack" id="add-mat" style="gap:8px;margin-top:14px;box-shadow:none"><div class="kicker">Добавить в папку</div>
       <select id="am-kind"><option value="link">Ссылка (Учу по ФРП, Google Диск, видео)</option><option value="file">Файл с компьютера (лист, картинка, PDF)</option><option value="text">Текст / задание</option></select>
       <label for="am-title">Название</label><input type="text" id="am-title" placeholder="${esc(l.title)} – рабочий лист">
@@ -293,6 +315,7 @@ function materialsTab(cid, l){
       <div class="stack" style="gap:8px" data-k="file" hidden><label for="am-file">Файл</label><input type="file" id="am-file"></div>
       <div class="stack" style="gap:8px" data-k="text link file"><label for="am-body">Текст (для файла и ссылки – короткое пояснение)</label><textarea id="am-body"></textarea></div>
       <p class="small muted">Материал увидят все ваши ученики этого курса в папке урока: открыть на общей доске или скачать.</p>
+      ${T.me?.role === "developer" ? `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="am-shared"> В общую базу – для всех учителей</label>` : ""}
       <div><button class="btn sm" type="submit">Добавить</button></div></form>
     <div class="ai-box stack" style="gap:8px;margin-top:14px"><div class="kicker">Задания от нейросети</div>
       <label for="ag-topic">Тема</label><input type="text" id="ag-topic" value="${esc(g?.topic || l.title)}">
@@ -304,6 +327,7 @@ function materialsTab(cid, l){
         ${U.miniHTML({id:"preview"}, 0, g.res.mini, true)}
         <ol class="small" style="padding-left:20px;margin-top:10px">${(g.res.test || []).map(q => `<li style="margin-bottom:8px">${esc(q.q)}<ul>${q.o.map((o, k) => `<li ${k === q.a ? 'style="color:var(--good);font-weight:800"' : ""}>${esc(o)}</li>`).join("")}</ul></li>`).join("")}</ol>
         <p class="small muted">Проверьте задания перед сохранением.</p>
+        ${T.me?.role === "developer" ? `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="ag-shared"> В общую базу – для всех учителей</label>` : ""}
         <div class="row"><button class="btn sm" data-act="ai-save">Сохранить в папку</button><button class="btn ghost sm" data-act="ai-gen">Составить заново</button></div></div>` : ""}</div>` : ""}`;
 }
 
@@ -387,18 +411,24 @@ function render(){
       <div class="me"><img data-m src="${U.mascot()}" alt="" style="width:44px"><div><b>${esc(T.me?.name || CFG.TEACHER_NAME || "Учитель")}</b><div class="small muted">${T.me?.role === "developer" ? "Учитель и разработчик" : "Кабинет учителя"}</div></div></div>
       <div class="group"><span class="mono">Разделы</span>${nav.map(([k,n,ic]) => `<button class="navitem" data-view="${k}" ${cur===k?'aria-current="page"':""}>${ic}${n}</button>`).join("")}
         ${T.me?.role === "developer" ? `<a class="navitem" href="dev.html">${I.code}Кабинет разработчика</a>` : ""}</div>
-      <div class="group"><span class="mono">Классы</span>${GRADES.map(g => `<button class="navitem" data-view="students" data-grade="${g}">${I.users}${g} класс<span class="chip" style="margin-left:auto">${T.students.filter(s => s.grade === g).length}</span></button>`).join("")}</div>
+      <div class="group"><span class="mono">Предметы</span>${U.SUBJECTS.map(x => { const n = T.students.filter(s => subjOfS(s) === x.k).length;
+        return `<button class="navitem" data-view="students" data-subjf="${x.k}" ${T.view === "students" && T.subject === x.k ? 'aria-current="page"' : ""}><span class="emo">${x.e}</span>${esc(x.n)}${n ? `<span class="chip" style="margin-left:auto">${n}</span>` : ""}</button>`; }).join("")}</div>
       ${logged ? `<div class="group"><button class="navitem" data-act="logout">${I.out}Выйти</button></div>` : ""}
+      <div class="drawer-foot"><button class="btn" data-act="install" style="width:100%;justify-content:center">📲 Скачать на телефон</button></div>
     </nav>
     <div style="min-width:0">
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
       <main class="main">${html}</main></div></div>`;
   if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
   if (T.view === "board" && sb && T.session){
-    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = c.lessons.find(x => x.id === T.boardLesson), owner = ownerOf(s);
+    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = T.boardLesson === "free" ? FREE : c.lessons.find(x => x.id === T.boardLesson), owner = ownerOf(s);
     T.board = Board.mount($("#board"), {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l)});
   }
 }
+
+/* установка на телефон */
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
 
 /* ---------- живая связь: кто из учеников сейчас на платформе и где; мгновенные обновления ---------- */
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || T.view === "board";
@@ -423,7 +453,8 @@ let refT = 0;
 function refreshSoon(){
   clearTimeout(refT);
   refT = setTimeout(async () => {
-    const [rs, hw, wr, ac] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*")]);
+    const [rs, hw, wr, ac, st] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*"), sb.from("students").select(ST_COLS).order("created_at")]);
+    if (!st.error) T.students = st.data;
     if (!rs.error) T.rows = rs.data; if (!hw.error) T.hw = hw.data; if (!wr.error) T.writings = wr.data; if (!ac.error) T.act = ac.data;
     if (!typing()) render(); else T.stale = true;
   }, 500);
@@ -450,7 +481,7 @@ document.addEventListener("submit", async e => {
   }
   if (id === "add-student"){
     const g = +$("#ns-grade").value, nick = $("#ns-name").value.trim();
-    const row = {name: nick ? "(" + nick + ")" : "(ожидает регистрации)", grade: g, course: "", code: U.genCode(), invite_token: U.randHex(18)};
+    const row = {name: nick ? "(" + nick + ")" : "(ожидает регистрации)", grade: g, subject: $("#ns-subj").value, course: "", code: U.genCode(), invite_token: U.randHex(18)};
     const {data, error} = await sb.from("students").insert(row).select(ST_COLS).single();
     if (error){ toast("Не удалось создать: " + error.message); return; }
     T.students.push(data); T.justInvited = data; render(); toast("Ссылка создана – скопируйте и отправьте ученику");
@@ -460,7 +491,7 @@ document.addEventListener("submit", async e => {
   }
   if (id === "own-lesson"){
     const cid = curCourse(), lid = "c" + U.randHex(4);
-    const row = {course: cid, lesson_id: lid, kind: "lesson", title: $("#ol-title").value.trim(),
+    const row = {course: cid, lesson_id: lid, kind: "lesson", shared: !!$("#ol-shared")?.checked, title: $("#ol-title").value.trim(),
                  data: {title: $("#ol-title").value.trim(), date: $("#ol-date").value, learn: [$("#ol-title").value.trim()], oge: "Свой урок", theory: [], hw: ""}};
     const {data, error} = await sb.from("materials").insert(row).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
@@ -487,13 +518,15 @@ document.addEventListener("submit", async e => {
     }
     if (kind === "link" && !url){ toast("Вставьте ссылку."); return; }
     if (kind === "text" && !body){ toast("Напишите текст."); return; }
-    const {data, error} = await sb.from("materials").insert({course: cid, lesson_id: T.open, kind, title: title || null, url: url || null, body: body || null}).select().single();
+    const {data, error} = await sb.from("materials").insert({course: cid, lesson_id: T.open, kind, title: title || null, url: url || null, body: body || null, shared: !!$("#am-shared")?.checked}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); render(); cmd("all", "refresh", {msg:"Учитель добавил материал"}); toast("Материал добавлен в папку");
   }
 });
 document.addEventListener("change", async e => {
   if (e.target.id === "course-pick"){ T.courseId = e.target.value; render(); return; }
+  if (e.target.id === "ns-subj"){ T.addSubj = e.target.value; const sel = $("#ns-grade"); sel.innerHTML = U.subj(T.addSubj).g.map(g => `<option value="${g}" ${g===9?"selected":""}>${U.gradeName(g)}</option>`).join(""); return; }
+  if (e.target.id === "as-subj"){ const sel = $("#as-grade"); sel.innerHTML = U.subj(e.target.value).g.map(g => `<option value="${g}">${U.gradeName(g)}</option>`).join(""); const s = T.students.find(x => x.id === T.sel); if (s && U.subj(e.target.value).g.includes(s.grade)) sel.value = s.grade; return; }
   if (e.target.id === "am-kind"){ document.querySelectorAll("#add-mat [data-k]").forEach(el => el.hidden = !el.dataset.k.split(" ").includes(e.target.value)); return; }
   if (e.target.dataset.date){
     const s = T.students.find(x => x.id === T.sel), dates = {...(s.dates || {}), [e.target.dataset.date]: e.target.value};
@@ -503,7 +536,8 @@ document.addEventListener("change", async e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && T.drawer){ T.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto]"); if (!t) return;
+  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto],[data-subjf],[data-matsubj]"); if (!t) return;
+  if (t.dataset.matsubj){ T.matSubject = t.dataset.matsubj; T.courseId = U.coursesOf(T.matSubject)[0]; T.view = "course"; render(); return; }
   if (t.tagName === "A") e.preventDefault();
   if (t.dataset.mascotPick){
     const set = k => { try{ localStorage.setItem("oge-mascot-t", k); }catch(_){} U.setMascot(k); render(); };
@@ -515,8 +549,9 @@ document.addEventListener("click", async e => {
     const set = k => { try{ localStorage.setItem("oge-theme-t", k); }catch(_){} U.applyTheme(k); if (sb && T.session) sb.rpc("teacher_set_theme", {p_theme: k}).then(() => {}, () => {}); render(); };
     t.dataset.themePick === "photo" ? U.pickPhoto(() => set("photo")) : set(t.dataset.themePick); return;
   }
-  if (t.dataset.view){ T.view = t.dataset.view; if (t.dataset.grade) T.grade = t.dataset.grade; T.confirmDel = null; T.drawer = false; T.justInvited = null; render(); scrollTo(0,0); return; }
+  if (t.dataset.view){ T.view = t.dataset.view; if (t.dataset.grade) T.grade = t.dataset.grade; if (t.dataset.subjf) T.subject = t.dataset.subjf; T.confirmDel = null; T.drawer = false; T.justInvited = null; render(); scrollTo(0,0); return; }
   if (t.dataset.grade){ T.grade = t.dataset.grade; render(); return; }
+  if (t.dataset.subjf){ T.subject = t.dataset.subjf; render(); return; }
   if (t.dataset.student){ T.sel = t.dataset.student; T.view = "student"; T.review = t.dataset.review || null; T.wreview = t.dataset.wreview || null; T.drawer = false; render(); if (!T.review && !T.wreview) scrollTo(0,0); return; }
   if (t.dataset.lesson){ T.open = t.dataset.lesson; T.view = "lesson"; T.sub = "method"; T.gen = null; render(); scrollTo(0,0); return; }
   if (t.dataset.sub){ T.sub = t.dataset.sub; render(); return; }
@@ -526,6 +561,7 @@ document.addEventListener("click", async e => {
     if (s.pair_id) cmd(s.pair_id, "goto", {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page});
     toast(T.online[s.id] ? "Урок открыт у ученика" : "Ученик сейчас не в сети – урок откроется, когда он зайдёт и вы нажмёте ещё раз"); return;
   }
+  if (t.dataset.boardfor === "free"){ cmd(T.sel, "goto", {lesson: "free"}); const s = T.students.find(x => x.id === T.sel); if (s?.pair_id) cmd(s.pair_id, "goto", {lesson: "free"}); }
   if (t.dataset.boardfor){ T.boardLesson = t.dataset.boardfor; T.view = "board"; render(); scrollTo(0,0); return; }
   if (t.dataset.delmat){
     if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно удалить?"; return; }
@@ -542,10 +578,38 @@ document.addEventListener("click", async e => {
   if (t.dataset.review && !t.dataset.act){ T.review = T.review === t.dataset.review ? null : t.dataset.review; T.wreview = null; render(); return; }
   if (t.dataset.wreview && !t.dataset.act){ T.wreview = T.wreview === t.dataset.wreview ? null : t.dataset.wreview; T.review = null; render(); return; }
   const a = t.dataset.act;
+  if (a === "install"){
+    if (installEvt){ installEvt.prompt(); installEvt = null; }
+    else if (window.matchMedia("(display-mode: standalone)").matches) toast("Приложение уже установлено.");
+    else toast("iPhone: Safari → «Поделиться» → «На экран Домой». Android: Chrome → ⋮ → «Добавить на главный экран».");
+    return;
+  }
+  if (a === "add-subject"){
+    const s = T.students.find(x => x.id === T.sel), sub = $("#as-subj").value, g = +$("#as-grade").value;
+    const {data, error} = await sb.rpc("teacher_add_subject", {p_student: s.id, p_subject: sub, p_grade: g, p_course: U.planFor(sub, g, s.goals || [])});
+    if (error){ toast(/subject exists/.test(error.message) ? "Этот предмет у ученика уже есть" : "Не получилось: " + error.message); return; }
+    await loadAll(); cmd(s.id, "refresh", {msg: `Добавлен предмет: ${U.subj(sub).n}`}); toast(`Предмет «${U.subj(sub).n}» добавлен. Ученик увидит его в меню под тем же логином.`); return;
+  }
+  if (a === "save-call"){
+    const v = $("#call-url").value.trim();
+    if (v && !/^https?:\/\//.test(v)){ toast("Вставьте ссылку целиком, начиная с https://"); return; }
+    if (await upd(T.sel, {call_url: v || null})){
+      if (!T.me?.call_url && v){ await sb.rpc("teacher_set_call", {p_url: v}); if (T.me) T.me.call_url = v; }
+      cmd(T.sel, "refresh", {msg: "Учитель добавил ссылку на занятие"}); render(); toast(T.me?.call_url === v ? "Ссылка сохранена (и стала ссылкой по умолчанию для всех учеников)" : "Ссылка сохранена");
+    }
+    return;
+  }
+  if (a === "start-lesson"){
+    const s = T.students.find(x => x.id === T.sel), url = ($("#call-url")?.value.trim()) || s.call_url || T.me?.call_url;
+    if (!url){ toast("Сначала вставьте ссылку на созвон (например, из Яндекс Телемоста) и сохраните."); return; }
+    window.open(url, "_blank", "noopener");
+    cmd(s.id, "call", {url}); if (s.pair_id) cmd(s.pair_id, "call", {url});
+    toast(T.online[s.id] ? "Ученику пришло приглашение на занятие" : "Ученик пока не в сети – кнопка «Подключиться» ждёт его на главной"); return;
+  }
   if (a === "open-drawer"){ T.drawer = true; render(); }
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();
-  if (a === "logout"){ await sb.auth.signOut(); T.session = null; T.me = null; render(); }
+  if (a === "logout"){ await sb.auth.signOut(); location.href = "./"; }
   if (a === "copy"){ const inp = $("#ilink"); try{ await navigator.clipboard.writeText(inp.value); toast("Ссылка скопирована"); }catch(_){ inp.select(); toast("Выделено – скопируйте вручную"); } }
   if (a === "new-invite"){
     const {data, error} = await sb.rpc("teacher_new_invite", {p_student: T.sel});
@@ -618,7 +682,7 @@ document.addEventListener("click", async e => {
   }
   if (a === "ai-save"){
     const g = T.gen, mini = (g.res.mini || []).filter(m => m.q && m.a), test = (g.res.test || []).filter(q => q.q && q.o?.length >= 2 && q.o[q.a] != null);
-    const {data, error} = await sb.from("materials").insert({course: curCourse(), lesson_id: g.lesson, kind: "tasks", title: g.res.title || g.topic, data: {mini, test}}).select().single();
+    const {data, error} = await sb.from("materials").insert({course: curCourse(), lesson_id: g.lesson, kind: "tasks", shared: !!$("#ag-shared")?.checked, title: g.res.title || g.topic, data: {mini, test}}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); T.gen = null; render(); cmd("all", "refresh", {msg:"Учитель добавил задания"}); toast("Задания сохранены: мини-практика – в «Материалах», вопросы – в тесте урока");
   }
@@ -662,12 +726,15 @@ document.addEventListener("click", async e => {
 
 /* ---------- запуск ---------- */
 (async () => {
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
   try{ const th = localStorage.getItem("oge-theme-t"); if (th) U.applyTheme(th); U.setMascot(localStorage.getItem("oge-mascot-t")); }catch(_){}
   render();
   if (!sb) return;
   const {data} = await sb.auth.getSession();
   T.session = data.session;
   sb.auth.onAuthStateChange((_e, s) => { T.session = s; });
+  const hm = location.hash.match(/^#mat-(\w+)/);
+  if (hm){ T.matSubject = hm[1]; T.courseId = U.coursesOf(hm[1])[0]; T.view = "course"; }
   if (T.session) await loadAll(); else render();
 })();
 })();

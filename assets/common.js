@@ -145,21 +145,70 @@ window.U = (() => {
       <div class="row between small muted"><span>${fmtShort(arr[0].l.date)}</span><span>${fmtShort(arr.at(-1).l.date)}</span></div>`;
   }
 
-  /* план по классу и целям */
+  /* ---------- предметы и классы ---------- */
+  const R = (a, b) => Array.from({length: b - a + 1}, (_, i) => a + i);
+  // g – классы (0 – дошкольники); exam – есть ОГЭ/ЕГЭ
+  const SUBJECTS = [
+    {k:"rus",   n:"Русский язык",        e:"📘", g:R(1, 11), exam:true},
+    {k:"lit",   n:"Литература",          e:"📖", g:R(5, 11), exam:true},
+    {k:"read",  n:"Литературное чтение", e:"📚", g:R(1, 4)},
+    {k:"math",  n:"Математика",          e:"📐", g:R(1, 11), exam:true},
+    {k:"phys",  n:"Физика",              e:"🔭", g:R(7, 11), exam:true},
+    {k:"chem",  n:"Химия",               e:"⚗️", g:R(8, 11), exam:true},
+    {k:"bio",   n:"Биология",            e:"🌿", g:R(5, 11), exam:true},
+    {k:"geo",   n:"География",           e:"🌍", g:R(5, 11), exam:true},
+    {k:"hist",  n:"История",             e:"🏛️", g:R(5, 11), exam:true},
+    {k:"soc",   n:"Обществознание",      e:"⚖️", g:R(6, 11), exam:true},
+    {k:"inf",   n:"Информатика",         e:"💻", g:R(5, 11), exam:true},
+    {k:"eng",   n:"Английский язык",     e:"🇬🇧", g:R(1, 11), exam:true},
+    {k:"ger",   n:"Немецкий язык",       e:"🇩🇪", g:R(1, 11), exam:true},
+    {k:"fre",   n:"Французский язык",    e:"🇫🇷", g:R(1, 11), exam:true},
+    {k:"chi",   n:"Китайский язык",      e:"🇨🇳", g:R(1, 11), exam:true},
+    {k:"world", n:"Окружающий мир",      e:"🌱", g:R(1, 4)},
+    {k:"prep",  n:"Подготовка к школе",  e:"✏️", g:[0]}
+  ];
+  const subj = k => SUBJECTS.find(x => x.k === k) || SUBJECTS[0];
+  const gradeName = g => +g === 0 ? "дошкольник" : g + " класс";
+  /* предмет курса по его ключу: oge-rus, rus-7, math-5, ege-phys … */
+  const subjectOf = key => { const m = String(key || "").match(/^(?:oge|ege)-(\w+)$|^(\w+)-\d+$/); return m ? (m[1] || m[2]) : "rus"; };
+
+  /* план по предмету, классу и целям */
   const GOALS = ["ОГЭ","ЕГЭ","ВПР","Контрольные и домашние","Олимпиада"];
-  function planFor(grade, goals){
-    goals = goals || [];
-    if (+grade === 9 && goals.includes("ОГЭ")) return "oge-rus";
-    if (+grade >= 10 && goals.includes("ЕГЭ")) return "ege-rus";
-    return "rus-" + grade;
+  function planFor(subject, grade, goals){
+    if (Array.isArray(grade) || grade === undefined){ goals = grade; grade = subject; subject = "rus"; } // старый вызов planFor(grade, goals)
+    goals = goals || []; const S = subj(subject);
+    if (S.exam && +grade === 9 && goals.includes("ОГЭ")) return "oge-" + S.k;
+    if (S.exam && +grade >= 10 && goals.includes("ЕГЭ")) return "ege-" + S.k;
+    return S.k + "-" + grade;
   }
-  const packOf = course => /^rus-\d+$/.test(course) ? "school-rus" : course;
+  /* курс, которого нет во встроенной базе (например, «Физика, 8 класс»): пустой, уроки добавляет учитель */
+  function getCourse(key){
+    if (!key) return null;
+    const C = window.COURSES = window.COURSES || {};
+    if (C[key]) return C[key];
+    const m = String(key).match(/^(oge|ege)-(\w+)$|^(\w+)-(\d+)$/); if (!m) return null;
+    const S = subj(m[2] || m[3]), exam = m[1], g = m[4];
+    if (!SUBJECTS.some(x => x.k === (m[2] || m[3]))) return null;
+    const rusCrit = C["oge-rus"]?.criteria || {errors: [], essay: [], izl: []};
+    return C[key] = {course: exam ? `Подготовка к ${exam.toUpperCase()}. ${S.n}` : `${S.n}, ${gradeName(g)}`, tag: exam ? exam.toUpperCase() : gradeName(g),
+      subject: S.k, grade: exam ? (exam === "oge" ? 9 : 11) : +g, goal: exam ? exam.toUpperCase() : "Школа", kind: "own", virtual: true,
+      blocks: {own: {name: "Уроки", tasks: "", color: "#8b5cf6"}}, lessons: [], events: [], texts: {}, izl: {}, criteria: rusCrit,
+      methodology: [{h: "Курс", t: "Это ваш курс: уроки, материалы, задания и тесты добавляете вы (или составляет нейросеть) в разделе «Материалы и база». Строение урока то же: теория маленькими блоками → примеры → мини-практика → задания → тест."}]};
+  }
+  /* все курсы предмета: встроенные и пустые по классам */
+  function coursesOf(subject){
+    const S = subj(subject), keys = [];
+    S.g.forEach(g => { if (subject === "rus" && g === 9) keys.push("oge-rus"); keys.push(S.k + "-" + g); if (S.exam && g === 9 && subject !== "rus") keys.push("oge-" + S.k); });
+    if (S.exam) keys.push("ege-" + S.k);
+    return [...new Set(keys)].filter(k => getCourse(k));
+  }
+  const packOf = course => { const c = getCourse(course); if (!c || c.virtual) return null; return /^rus-\d+$/.test(course) ? "school-rus" : course; };
   const PACKS = {"oge-rus":"Подготовка к ОГЭ", "ege-rus":"Подготовка к ЕГЭ", "school-rus":"Школьная программа 5–11 (ФРП)"};
   const iso = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
 
   /* курс ученика: даты (первый урок + еженедельно, плюс правки отдельных дат), свои уроки и материалы учителя */
   function courseFor(p, mats){
-    const base = window.COURSES?.[p?.course]; if (!base) return null;
+    const base = getCourse(p?.course); if (!base) return null;
     const start = p.start_date ? new Date(p.start_date + "T00:00:00") : null, ov = p.dates || {};
     mats = (mats || []).filter(m => m.course === p.course && (!m.student_id || m.student_id === p.id));
     const own = mats.filter(m => m.kind === "lesson").map(m => ({...emptyLesson(), ...m.data, id: m.lesson_id, custom: true, mid: m.id}));
@@ -207,5 +256,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

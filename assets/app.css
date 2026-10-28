@@ -336,3 +336,14 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
   .folder .ttl{font-size:.8rem;-webkit-line-clamp:6;hyphens:auto}
   .folder .lockico{width:26px;height:26px;right:8px;top:8px}
 }
+.drawer-foot{position:sticky;bottom:0;margin-top:auto;padding-top:10px;background:linear-gradient(transparent,var(--glass-2) 40%)}
+.navitem .emo{width:20px;text-align:center;flex:none;font-size:1.05rem}
+.callbar{position:fixed;z-index:55;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;
+  padding:10px 12px;border-radius:18px;background:var(--glass-2);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);border:1px solid var(--line);box-shadow:var(--shadow);font-weight:800;max-width:calc(100% - 24px)}
+.callbar .iconbtn{width:32px;height:32px}
+.bd-grid{background:#fff;background-image:linear-gradient(#e4ddf2 1px,transparent 1px),linear-gradient(90deg,#e4ddf2 1px,transparent 1px);background-size:40px 40px}
+.subjects{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr));gap:10px}
+.subj{display:flex;gap:10px;align-items:center;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:var(--glass);font-weight:800;text-align:left}
+.subj[aria-pressed="true"]{background:var(--glass-2);outline:2px solid var(--violet);outline-offset:-2px}
+.subj .emo{font-size:1.4rem}
+.subj small{display:block;font-weight:600;color:var(--muted)}

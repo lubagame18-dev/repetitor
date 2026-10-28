@@ -10,7 +10,6 @@ const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null
 const $ = s => document.querySelector(s);
 const LS = {get(k, def){ try{ return JSON.parse(localStorage.getItem("oge-" + k)) ?? def; }catch(e){ return def; } },
             set(k, v){ try{ localStorage.setItem("oge-" + k, JSON.stringify(v)); }catch(e){} }};
-const SUBJECTS = [["rus","Русский язык"],["lit","Литература"],["math","Математика"],["hist","История"],["soc","Обществознание"],["eng","Английский язык"],["bio","Биология"]];
 const I = {
   menu:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>',
@@ -33,7 +32,9 @@ const blockOf = l => S.course.blocks[l.block] || {name:"Свои уроки", co
 const tests = l => U.lessonTests(l);
 const isOpen = l => d(l.date) <= today() || (S.profile?.unlocked || []).includes(l.id) || S.forced.has(l.id);
 const grade = () => S.profile?.grade || 9;
-const entryTest = () => window.ENTRY_TESTS?.[String(grade())];
+const subjKey = () => S.profile?.subject || U.subjectOf(S.profile?.course);
+const subjName = () => U.subj(subjKey()).n;
+const entryTest = () => subjKey() === "rus" ? window.ENTRY_TESTS?.[String(grade())] : null;
 const entryRes = () => U.aggregate(S.rows, "entry")["entry-" + grade()];
 
 /* ---------- данные ---------- */
@@ -106,8 +107,16 @@ function liveStart(){
   if (!sb || !S.profile?.teacher || live) return;
   live = sb.channel(`live-${S.profile.teacher}`, {config:{presence:{key:"s-" + S.profile.id}, broadcast:{self:false}}});
   live.on("broadcast", {event:"cmd"}, async ({payload:m}) => {
-    if (!m?.cmd || (m.to !== S.profile.id && m.to !== "all")) return;
+    const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
+    if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
     if (m.type === "refresh"){ await load(); if (!typing()) render(); toast(m.msg || "Учитель обновил твои материалы"); }
+    if (m.type === "call"){
+      if (m.url) S.profile.call_url = m.url;
+      const bar = document.getElementById("callbar");
+      bar.innerHTML = `<span>📞 Учитель начал занятие</span><a class="btn sm" href="${esc(S.profile.call_url || "#")}" target="_blank" rel="noopener">Подключиться</a><button class="btn ghost sm" data-go="myboard">Доска</button><button class="iconbtn" aria-label="Скрыть" onclick="this.parentElement.hidden=true">✕</button>`;
+      bar.hidden = false; return;
+    }
+    if (m.type === "goto" && m.lesson === "free"){ S.view = "myboard"; S.drawer = false; if (m.page) S.boardPage = m.page; render(); toast("Учитель открыл личную доску"); return; }
     if (m.type === "goto" && S.course){
       const l = S.course.lessons.find(x => x.id === m.lesson); if (!l) return;
       S.forced.add(l.id); S.open = l.id; S.sub = m.sub || "theory"; if (m.page) S.boardPage = m.page; S.view = "folder"; S.drawer = false;
@@ -122,7 +131,7 @@ function liveTrack(now){
   liveT = setTimeout(() => {
     const l = S.view === "folder" && S.course?.lessons.find(x => x.id === S.open);
     const TAB = {theory:"Теория", practice:"Практика", board:"Доска", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
-    const where = S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
+    const where = S.view === "myboard" ? "на личной доске" : S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
     live.track({role:"student", id:S.profile.id, name:S.profile.name, where, lesson: l?.id || null, at: Date.now()}).catch(() => {});
   }, now ? 0 : 250);
 }
@@ -147,7 +156,7 @@ function viewRegister(){
     <h2>Регистрация прошла</h2>
     <p>Твой логин: <b class="tnum" style="font-size:1.3rem">${esc(S.regDone.login)}</b></p>
     <p class="small muted">Запиши его. С логином и паролем можно войти с другого телефона или компьютера.</p>
-    <button class="btn" data-go="entry">Пройти входной тест</button></div>`;
+    <button class="btn" data-go="${entryTest() ? "entry" : "home"}">${entryTest() ? "Пройти входной тест" : "Начать"}</button></div>`;
   if (S.inviteInfo === false) return authHero("Ссылка уже использована") + `<div class="card login stack">
     <p>Эта ссылка одноразовая и уже сработала. Если ты зарегистрировался, войди логином и паролем. Если нет – попроси у учителя новую ссылку.</p>
     <button class="btn" data-act="to-login">Войти</button></div>`;
@@ -155,10 +164,11 @@ function viewRegister(){
   return authHero("Регистрация ученика") + `<form class="card login stack" id="reg-form">
     <h2>Расскажи о себе</h2>
     <label for="r-name">Имя и фамилия</label><input type="text" id="r-name" required autocomplete="name" value="${esc(inf.name || "")}">
+    <p><span class="chip">${U.subj(inf.subject || "rus").e} ${esc(U.subj(inf.subject || "rus").n)}</span></p>
     <label for="r-grade">Класс</label>
-    <select id="r-grade" required>${[5,6,7,8,9,10,11].map(g => `<option value="${g}" ${(inf.grade || 9) === g ? "selected" : ""}>${g} класс</option>`).join("")}</select>
+    <select id="r-grade" required>${U.subj(inf.subject || "rus").g.map(g => `<option value="${g}" ${(inf.grade ?? 9) === g ? "selected" : ""}>${U.gradeName(g)}</option>`).join("")}</select>
     <fieldset style="border:0;padding:0;margin:0"><legend style="font-weight:800;font-size:.88rem;margin-bottom:8px">Цели (можно несколько)</legend>
-      <div class="goals">${U.GOALS.map(x => `<label><input type="checkbox" name="goal" value="${esc(x)}" ${x === "ОГЭ" && (inf.grade || 9) === 9 ? "checked" : ""}> ${esc(x === "ОГЭ" || x === "ЕГЭ" || x === "ВПР" ? "Подготовка к " + x : x)}</label>`).join("")}</div></fieldset>
+      <div class="goals">${U.GOALS.filter(x => U.subj(inf.subject || "rus").exam || !["ОГЭ","ЕГЭ"].includes(x)).map(x => `<label><input type="checkbox" name="goal" value="${esc(x)}" ${(() => { const ex = U.subj(inf.subject || "rus").exam && (inf.grade ?? 9) === 9; return (ex && x === "ОГЭ") || (!ex && x === "Контрольные и домашние") ? "checked" : ""; })()}> ${esc(x === "ОГЭ" || x === "ЕГЭ" || x === "ВПР" ? "Подготовка к " + x : x)}</label>`).join("")}</div></fieldset>
     <div><b style="font-size:.88rem">Фон кабинета – по настроению</b><p class="small muted" style="margin:2px 0 8px">Потом можно поменять в разделе «Оформление».</p>${U.themesHTML(S.regTheme || inf.theme)}</div>
     <div><b style="font-size:.88rem">Помощник на уроках</b><p class="small muted" style="margin:2px 0 8px">Можно загрузить свою картинку.</p>${U.mascotsHTML(S.regMascot || "kotik")}</div>
     <label for="r-contact">Телефон или Telegram (твой или родителя)</label><input type="text" id="r-contact" autocomplete="tel">
@@ -169,8 +179,15 @@ function viewRegister(){
   </form>`;
 }
 function viewLogin(){
-  return authHero(CFG.TITLE || "Подготовка к ОГЭ. Русский язык") + `<form class="card login stack" id="login-form">
-    <h2>Вход для ученика</h2>
+  const role = S.role || "student";
+  return authHero(CFG.TITLE || "Учу по ФРП · уроки") + `<div class="card login stack">
+    <div class="filters" role="group" aria-label="Кто входит"><button data-role="student" aria-pressed="${role==="student"}">Я ученик</button><button data-role="teacher" aria-pressed="${role==="teacher"}">Я учитель</button></div>
+    ${role === "teacher" ? `<form class="stack" id="teacher-form" style="gap:10px">
+      <label for="tl-email">Почта</label><input type="email" id="tl-email" autocomplete="username" required>
+      <label for="tl-pass">Пароль</label><input type="password" id="tl-pass" autocomplete="current-password" required>
+      <button class="btn" type="submit">Войти в кабинет учителя</button>
+      <p class="small" id="tl-err" hidden style="color:var(--bad)">Почта или пароль не подходят.</p></form>`
+    : `<form class="stack" id="login-form" style="gap:10px">
     ${sb ? `<label for="l-login">Логин</label><input type="text" id="l-login" autocapitalize="characters" autocomplete="username" placeholder="Например, K7M3QPA" required>
     <label for="l-pass">Пароль</label><input type="password" id="l-pass" autocomplete="current-password" required>`
     : `<p class="small muted">Демо-режим: сервер ещё не подключён, всё сохраняется только на этом устройстве.</p>
@@ -178,28 +195,33 @@ function viewLogin(){
        <label for="l-grade">Класс</label><select id="l-grade">${[5,6,7,8,9,10,11].map(g => `<option value="${g}" ${g===9?"selected":""}>${g} класс</option>`).join("")}</select>`}
     <button class="btn" type="submit">Войти</button>
     <p class="small" id="login-err" hidden style="color:var(--bad)">Логин или пароль не подходят.</p>
-    <p class="small muted">Впервые здесь? Открой ссылку-приглашение от учителя.</p>
-  </form>`;
+    <p class="small muted">Впервые здесь? Открой ссылку-приглашение от учителя.</p></form>`}
+    <button class="btn ghost" data-act="install">📲 Скачать на телефон</button>
+  </div>`;
 }
 
 /* ---------- оболочка ---------- */
 function drawerHTML(){
   const p = S.profile, ini = (p.name || "?").split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase();
-  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["stats","Статистика",I.stats],["plan","План работы",I.plan],["entry","Входной тест",I.entry],["look","Оформление",I.pen]];
+  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
+  const mine = p.subjects?.length ? p.subjects : [{id:p.id, subject:subjKey(), grade:p.grade}];
+  const others = U.SUBJECTS.filter(x => !mine.some(m => m.subject === x.k) && x.g.includes(+p.grade));
   const cur = S.view === "folder" ? "lessons" : S.view === "test" ? (S.test?.kind === "entry" ? "entry" : "lessons") : S.view;
   return `<div class="me"><div class="avatar">${esc(ini)}</div><div style="min-width:0"><b>${esc(p.name)}</b><div class="small muted">${p.grade ? p.grade + " класс" : ""}${p.goal ? " · " + esc(p.goal) : ""}</div>${p.pair ? `<div class="small pairtag">👥 в паре: ${esc(p.pair.name.split(" ")[0])}</div>` : ""}</div></div>
    <div class="group"><span class="mono">Предметы</span>
-     ${SUBJECTS.map(([k,n],i) => i === 0 ? `<button class="navitem" data-go="lessons" ${cur==="lessons"?'aria-current="page"':""}>${I.book}${n}<span class="chip" style="margin-left:auto">${p.grade || ""} кл.</span></button>`
-       : `<button class="navitem" disabled title="Скоро">${I.book}${n}<span class="lock">${I.lock}</span></button>`).join("")}</div>
+     ${mine.map(m => m.id === p.id ? `<button class="navitem" data-go="lessons" ${cur==="lessons"?'aria-current="page"':""}><span class="emo">${U.subj(m.subject).e}</span>${esc(U.subj(m.subject).n)}<span class="chip" style="margin-left:auto">${U.gradeName(m.grade).replace(" класс", " кл.")}</span></button>`
+       : `<button class="navitem" data-switch="${m.id}"><span class="emo">${U.subj(m.subject).e}</span>${esc(U.subj(m.subject).n)}<span class="chip" style="margin-left:auto">${U.gradeName(m.grade).replace(" класс", " кл.")}</span></button>`).join("")}
+     ${others.map(x => `<button class="navitem" disabled title="Подключает учитель"><span class="emo">${x.e}</span>${esc(x.n)}<span class="lock">${I.lock}</span></button>`).join("")}</div>
    <div class="group"><span class="mono">Разделы</span>
      ${nav.map(([k,n,ic]) => `<button class="navitem" data-go="${k}" ${cur===k?'aria-current="page"':""}>${ic}${n}</button>`).join("")}</div>
    <div class="group"><span class="mono">Ещё</span>
-     <button class="navitem" data-go="install">${I.phone}Установить на телефон</button>
+     ${p.call_url ? `<a class="navitem" href="${esc(p.call_url)}" target="_blank" rel="noopener">📞 Созвон с учителем</a>` : ""}
      ${CFG.BOT_USERNAME ? `<a class="navitem" href="https://t.me/${esc(CFG.BOT_USERNAME.replace(/^@/,""))}" target="_blank" rel="noopener">${I.entry}Бот в Telegram</a>` : ""}
      <button class="navitem" data-act="logout">${I.out}Выйти</button></div>
-   ${!sb ? '<p class="small muted" style="padding:0 8px">Демо-режим: данные хранятся на этом устройстве.</p>' : ""}`;
+   ${!sb ? '<p class="small muted" style="padding:0 8px">Демо-режим: данные хранятся на этом устройстве.</p>' : ""}
+   <div class="drawer-foot"><button class="btn" data-act="install" style="width:100%;justify-content:center">${I.phone.replace('<svg','<svg width="18" height="18"')} Скачать на телефон</button></div>`;
 }
-const TITLES = {look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
+const TITLES = {myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
 
 /* ---------- экраны ---------- */
 function folderHTML(l){
@@ -221,8 +243,8 @@ const lastPast = () => S.course ? [...S.course.lessons].reverse().find(l => d(l.
 function noCourse(){
   const er = entryRes();
   return `<div class="card stack"><h2>План работы готовится</h2>
-    <p>Учитель составляет план для ${grade()} класса по результатам входного теста. Как только план будет готов, здесь появятся папки уроков.</p>
-    ${er ? "" : `<div><button class="btn" data-go="entry">Пройти входной тест</button></div>`}</div>`;
+    <p>Учитель составляет план: ${esc(subjName())}, ${esc(U.gradeName(grade()))}${entryTest() ? ", по результатам входного теста" : ""}. Как только план будет готов, здесь появятся папки уроков.</p>
+    ${er || !entryTest() ? "" : `<div><button class="btn" data-go="entry">Пройти входной тест</button></div>`}</div>`;
 }
 
 function viewHome(){
@@ -255,11 +277,12 @@ function viewHome(){
   const avg = S.course ? U.avgAll(S.course, S.results) : null, avgHw = S.course ? U.avgAll(S.course, S.hwres) : null;
   const exam = (S.course?.events || []).find(e => e.kind === "exam" && daysTo(e.date) >= 0);
   const nx = nextLesson();
-  return `<section class="hero glass"><span class="mono muted">${esc(p.grade ? p.grade + " класс" : "")} · русский язык</span><span class="mono r muted">${new Date().toLocaleDateString("ru-RU")}</span>
+  return `<section class="hero glass"><span class="mono muted">${esc(p.grade != null ? U.gradeName(p.grade) : "")} · ${esc(subjName().toLowerCase())}</span><span class="mono r muted">${new Date().toLocaleDateString("ru-RU")}</span>
     <h1>Привет, ${esc((p.name || "").split(" ")[0])}!</h1>${p.pair ? `<p class="small" style="margin-top:4px">👥 Напарник: ${esc(p.pair.name)}. Доска на уроке общая.</p>` : ""}<p>${S.course ? esc(S.course.course) : "План работы скоро появится."}</p>
     <img class="cat" data-m src="${U.mascot()}" alt="Котик-отличник"></section>
   <div class="section-title"><h2>Сейчас</h2></div>
-  <div class="grid2">${cards.join("") || (S.course ? `<div class="card"><h2>Курс завершён</h2><p class="muted">Удачи на экзамене!</p></div>` : noCourse())}
+  <div class="grid2">${p.call_url ? `<div class="card"><div class="kicker">Занятие онлайн</div><h3 style="margin-top:6px">Созвон с учителем</h3><p class="small muted" style="margin:6px 0 12px">Ссылка всегда одна и та же. Во время занятия держи открытыми созвон и доску.</p><div class="row"><a class="btn" href="${esc(p.call_url)}" target="_blank" rel="noopener">📞 Подключиться</a><button class="btn ghost" data-go="myboard">Личная доска</button></div></div>` : ""}
+    ${cards.join("") || (S.course ? (S.course.lessons.length ? `<div class="card"><h2>Курс завершён</h2><p class="muted">Удачи на экзамене!</p></div>` : `<div class="card"><h2>Уроки скоро появятся</h2><p class="muted">Учитель добавляет материалы по предмету «${esc(subjName())}».</p></div>`) : noCourse())}
     ${S.course ? `<div class="card"><div class="kicker">Итоги</div><div class="row" style="margin-top:8px;gap:22px">
       <div><div class="big tnum">${avg ?? "–"}${avg!=null?"%":""}</div><div class="small muted">тесты на уроках</div></div>
       <div><div class="big tnum">${avgHw ?? "–"}${avgHw!=null?"%":""}</div><div class="small muted">качество ДЗ</div></div>
@@ -270,7 +293,7 @@ function viewHome(){
 }
 
 function viewLessons(){
-  if (!S.course) return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · русский язык</h2></div>` + noCourse();
+  if (!S.course) return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2></div>` + noCourse();
   let out = "", month = "";
   const items = [...S.course.lessons.map(l => ({date:l.date, l})), ...(S.course.events || []).map(e => ({date:e.date, e}))].sort((a,b) => a.date < b.date ? -1 : 1);
   for (const it of items){
@@ -278,7 +301,9 @@ function viewLessons(){
     if (m !== month){ month = m; out += `<div class="month">${m[0].toUpperCase() + m.slice(1)}</div>`; }
     out += it.l ? folderHTML(it.l) : `<div class="event glass ${it.e.kind}">${fmt(it.e.date)} – ${esc(it.e.title)}</div>`;
   }
-  return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · русский язык</h2><span class="chip">${esc(S.course.tag || "")}</span><span class="chip">${S.course.lessons.length} уроков</span></div>
+  if (!S.course.lessons.length) return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2></div>
+    <div class="card"><p>Учитель ещё не добавил уроки. Как только добавит – здесь появятся папки.</p></div>`;
+  return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2><span class="chip">${esc(S.course.tag || "")}</span><span class="chip">${S.course.lessons.length} уроков</span></div>
     <p class="small muted">Папка открывается в день урока. Пройденные уроки остаются открытыми.</p>
     <div class="legend" style="margin:10px 0 4px">${Object.values(S.course.blocks).filter(b => S.course.lessons.some(l => blockOf(l) === b)).map(b => `<span><i class="dot" style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div>
     <div class="folders">${out}</div>`;
@@ -451,7 +476,20 @@ function viewPlan(){
   </tbody></table></div>`;
 }
 
-const viewInstall = () => `<div class="section-title" style="margin-top:6px"><h2>Установить на телефон</h2></div>
+const FREE = {id:"free", title:"Личная доска", free:true, theory:[], practice:[], materials:[]};
+const viewMyBoard = () => `<div class="section-title" style="margin-top:6px"><h2>Личная доска</h2><span class="small muted">общая с учителем${S.profile.pair ? " и напарником" : ""}, всё сохраняется</span></div>
+  <div class="board glass" id="board"></div>`;
+/* установка на телефон: Android/Chrome – системное окно, iPhone – подсказка */
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
+async function install(){
+  if (installEvt){ installEvt.prompt(); const r = await installEvt.userChoice.catch(() => null); if (r?.outcome === "accepted") toast("Готово! Иконка появится на экране телефона."); installEvt = null; return; }
+  if (window.matchMedia("(display-mode: standalone)").matches){ toast("Приложение уже установлено."); return; }
+  S.view = "install"; S.drawer = false; render(); scrollTo(0, 0);
+}
+const viewInstall = () => `<div class="section-title" style="margin-top:6px"><h2>Скачать на телефон</h2></div>
+  <p class="small muted" style="margin-bottom:12px">Приложение ставится прямо с сайта, без магазина: на экране появится иконка, и уроки будут открываться на весь экран.</p>
+  ${installEvt ? `<div style="margin-bottom:14px"><button class="btn" data-act="install">📲 Установить сейчас</button></div>` : ""}
   <div class="grid2"><div class="card"><h3>iPhone и iPad</h3><ol class="small" style="margin:8px 0 0;padding-left:20px"><li>Открой сайт в Safari.</li><li>«Поделиться» (квадрат со стрелкой) → «На экран Домой».</li><li>«Добавить» – появится иконка с котиком.</li></ol></div>
   <div class="card"><h3>Android</h3><ol class="small" style="margin:8px 0 0;padding-left:20px"><li>Открой сайт в Chrome.</li><li>Меню ⋮ → «Добавить на главный экран».</li><li>Открывай иконку с котиком как приложение.</li></ol></div></div>`;
 
@@ -462,7 +500,7 @@ function render(){
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   const v = S.view;
-  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():viewInstall();
+  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():viewInstall();
   app.innerHTML = `<div class="shell">
     <div class="drawer-back" ${S.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${S.drawer ? "open" : ""}" aria-label="Меню">${drawerHTML()}</nav>
@@ -482,12 +520,23 @@ function render(){
       role: "student", name: S.profile.name, pages: Board.pages(S.course, l), onPage: p => S.boardPage = p
     });
   }
+  if (v === "myboard"){
+    S.board = Board.mount($("#board"), {api: Board.api("student", sb, {code:S.token, lesson:"free"}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-free` : null,
+      page: S.boardPage, role: "student", name: S.profile.name, pages: Board.pages(S.course || {}, FREE), onPage: p => S.boardPage = p});
+  }
   if (S.profile && sb){ liveStart(); liveTrack(); }
 }
 
 /* ---------- события ---------- */
 document.addEventListener("submit", async e => {
   e.preventDefault();
+  if (e.target.id === "teacher-form"){
+    const err = $("#tl-err");
+    if (!sb){ location.href = "teacher.html"; return; }
+    const {error} = await sb.auth.signInWithPassword({email: $("#tl-email").value.trim(), password: $("#tl-pass").value});
+    if (error){ err.hidden = false; return; }
+    location.href = "teacher.html"; return;
+  }
   if (e.target.id === "login-form"){
     const btn = e.target.querySelector("button"); btn.disabled = true;
     if (sb){
@@ -512,17 +561,18 @@ document.addEventListener("submit", async e => {
     if (p1 !== p2) return show("Пароли не совпадают.");
     const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true;
     if (sb){
-      const {data, error} = await sb.rpc("student_register", {p_invite:S.invite, p_name:name, p_grade:g, p_goals:goals, p_contact:$("#r-contact").value.trim(), p_password:p1, p_course:U.planFor(g, goals), p_theme:S.regTheme});
+      const {data, error} = await sb.rpc("student_register", {p_invite:S.invite, p_name:name, p_grade:g, p_goals:goals, p_contact:$("#r-contact").value.trim(), p_password:p1, p_course:U.planFor(S.inviteInfo?.subject || "rus", g, goals), p_theme:S.regTheme});
       btn.disabled = false;
       if (error || !data) return show("Не получилось: ссылка уже использована или нет связи. Попроси у учителя новую ссылку.");
       S.token = data.token; S.profile = data.profile;
       if (S.regMascot){ S.profile.mascot = S.regMascot; sb.rpc("student_set_mascot", {p_code:S.token, p_mascot:S.regMascot}).then(() => {}, () => {}); }
     } else {
       btn.disabled = false;
-      S.token = "local"; S.profile = {id:"local", mascot:S.regMascot, name, grade:g, goals, goal:goals.join(", "), course: U.planFor(g, goals), start_date: U.iso(new Date()), dates:{}, unlocked:[], login:"DEMO", theme:S.regTheme};
+      S.token = "local"; S.profile = {id:"local", subject:"rus", mascot:S.regMascot, name, grade:g, goals, goal:goals.join(", "), course: U.planFor(g, goals), start_date: U.iso(new Date()), dates:{}, unlocked:[], login:"DEMO", theme:S.regTheme};
     }
     saveSession(); await load();
     S.regDone = {login: S.profile.login}; history.replaceState(null, "", location.pathname); render();
+    setTimeout(() => liveAct("зарегистрировался"), 1500);
   }
 });
 document.addEventListener("input", e => {
@@ -533,7 +583,16 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick]"); if (!t) return;
+  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch]"); if (!t) return;
+  if (t.dataset.role){ S.role = t.dataset.role; render(); return; }
+  if (t.dataset.switch){
+    if (!sb) return;
+    const {data} = await sb.rpc("student_switch", {p_code:S.token, p_target:t.dataset.switch});
+    if (!data){ toast("Не получилось переключиться. Проверь интернет."); return; }
+    if (live){ sb.removeChannel(live); live = null; }
+    S.token = data.token; S.profile = data.profile; S.view = "home"; S.drawer = false; S.forced = new Set(); saveSession(); await load(); render(); scrollTo(0, 0);
+    toast(`Предмет: ${subjName()}`); return;
+  }
   if (t.dataset.mascotPick){
     const set = k => { U.setMascot(k);
       if (S.invite){ S.regMascot = k; document.querySelectorAll("[data-mascot-pick]").forEach(b => b.setAttribute("aria-pressed", b.dataset.mascotPick === k)); return; }
@@ -570,6 +629,7 @@ document.addEventListener("click", async e => {
     T.picked = k; if (k === q.a) T.score++; else T.wrong.push(q.tag); render(); return;
   }
   const a = t.dataset.act;
+  if (a === "install"){ install(); return; }
   if (a === "open-drawer"){ S.drawer = true; render(); }
   if (a === "close-drawer"){ S.drawer = false; render(); }
   if (a === "start-entry" || a === "retry-entry") startTest(null, "entry");
@@ -630,6 +690,8 @@ document.addEventListener("click", async e => {
     S.invite = invite;
     if (sb){ const {data} = await sb.rpc("invite_info", {p_invite: invite}); S.inviteInfo = data || false; if (data?.theme){ S.regTheme = data.theme; U.applyTheme(data.theme); } }
     else S.inviteInfo = {};
+  } else if (!sess?.token && sb && !qp.has("student")){
+    const {data} = await sb.auth.getSession(); if (data?.session){ location.replace("teacher.html"); return; }
   } else if (sess?.token){
     S.token = sess.token; S.profile = sess.profile; recompute();
     const c = LS.get("cache", null);

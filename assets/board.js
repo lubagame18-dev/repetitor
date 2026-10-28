@@ -248,6 +248,8 @@ window.Board = (() => {
 
   /* листы доски для занятия */
   function pages(course, l){
+    if (l.free) return [{key:"p1", label:"Лист 1", html:`<div class="bd-sheet"></div>`}, {key:"p2", label:"Лист 2", html:`<div class="bd-sheet"></div>`},
+      {key:"lined", label:"В линейку", html:`<div class="bd-sheet bd-lined"></div>`}, {key:"grid", label:"В клетку", html:`<div class="bd-sheet bd-grid"></div>`}];
     const out = [], noInputs = h => h.replace(/<button[\s\S]*?<\/button>/g, "").replace(/<input[^>]*>/g, '<span class="blank" style="min-width:160px"></span>');
     if (l.practice?.length) out.push({key:"practice", label:"Практика", html:`<div class="bd-sheet"><h2>${esc(l.title)}: практика</h2>${U.practiceHTML(l, false)}</div>`});
     out.push({key:"theory", label:"Теория", html:`<div class="bd-sheet">${noInputs(U.theoryHTML(l))}</div>`});

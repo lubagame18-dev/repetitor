@@ -1,6 +1,7 @@
 /* Кабинет разработчика: ключи нейросети, оформление сайта, учителя и доступ к встроенным базам */
 (() => {
 const {esc, toast} = U;
+const CFG = window.APP_CONFIG || {};
 const sb = U.supa();
 const D = {session:null, me:null, secrets:[], settings:{}, teachers:[], stats:null, test:null};
 const $ = s => document.querySelector(s);
@@ -17,8 +18,9 @@ const tail = k => D.secrets.find(s => s.key === k)?.tail;
 
 function view(){
   if (!sb) return `<div class="card"><h2>Сервер не подключён</h2><p>Заполните config.js – см. README.</p></div>`;
-  if (!D.session) return `<form class="card login stack" id="d-login"><h2>Вход разработчика</h2>
-    <label for="d-email">Почта</label><input type="email" id="d-email" required autocomplete="username">
+  if (!D.session) return `<form class="card login stack" id="d-login"><h2>Режим разработчика</h2>
+    <p class="small muted">Доступ ко всем предметам и кабинетам, ключам нейросети, оформлению и общей методической базе.</p>
+    ${CFG.DEV_EMAIL ? `<input type="hidden" id="d-email" value="${esc(CFG.DEV_EMAIL)}">` : `<label for="d-email">Почта</label><input type="email" id="d-email" required autocomplete="username">`}
     <label for="d-pass">Пароль</label><input type="password" id="d-pass" required autocomplete="current-password">
     <button class="btn" type="submit">Войти</button><p class="small" id="d-err" hidden style="color:var(--bad)"></p></form>`;
   if (!D.me) return `<p class="muted">Загружаю…</p>`;
@@ -43,6 +45,13 @@ function view(){
       <button class="btn ghost sm" type="button" data-act="del-keys">Удалить все ключи</button></div>
     ${D.test ? `<p class="small ${D.test.ok ? "" : ""}" style="color:${D.test.error ? "var(--bad)" : "var(--good)"}">${esc(D.test.error || "Нейросеть отвечает: " + (D.test.hello || "ok"))}</p>` : ""}
   </form>
+
+  <div class="section-title"><h2>Методические материалы – общая база</h2></div>
+  <div class="card stack" style="gap:10px">
+    <p class="small muted">Уроки, материалы и задания, которые вы создаёте в режиме разработчика с галочкой «В общую базу», видят все учителя платформы и их ученики этого курса. Строение урока как в «Учу по ФРП»: теория маленькими блоками → примеры → мини-практика → задания → тест.</p>
+    <div class="subjects">${U.SUBJECTS.map(x => `<a class="subj" href="teacher.html#mat-${x.k}" style="text-decoration:none;color:inherit"><span class="emo">${x.e}</span><span>${esc(x.n)}<small>${x.g[0] === 0 ? "дошкольники" : x.g[0] + "–" + x.g.at(-1) + " кл."}</small></span></a>`).join("")}</div>
+    <div class="row"><a class="btn" href="teacher.html">Открыть кабинет учителя (все предметы)</a><a class="btn ghost" href="./?student">Посмотреть как ученик</a></div>
+  </div>
 
   <div class="section-title"><h2>Оформление сайта</h2></div>
   <form class="card stack" id="look-form" style="gap:10px">
