@@ -240,6 +240,8 @@ function viewStudent(){
       <div class="linkbox"><input type="url" id="call-url" value="${esc(s.call_url || "")}" placeholder="${esc(T.me?.call_url || "https://telemost.yandex.ru/j/…")}"><button class="btn ghost sm" data-act="save-call">Сохранить</button></div>
       <div class="row"><button class="btn sm" data-act="start-lesson">📞 Начать занятие</button><button class="btn ghost sm" data-boardfor="free">Личная доска</button>
         <a class="btn ghost sm" href="https://telemost.yandex.ru/" target="_blank" rel="noopener">Создать встречу в Телемосте</a></div></div>
+    ${!pending(s) && sb ? `<div class="card stack" style="gap:8px"><div class="kicker">Урок из другого класса или предмета</div>
+      <p class="small muted">Любой урок базы – для повторения, опережения или другой программы. Он копируется в план только этого ученика${s.pair_id ? " и напарника" : ""}, вместе с заданиями и ключами.</p>${takePick(s, "student")}</div>` : ""}
     <div class="card stack" style="gap:8px"><div class="kicker">Работа в паре</div>
       <p class="small muted">Двое учеников видят одну общую доску на каждом уроке и курсоры друг друга. Результаты и работы у каждого свои.</p>
       <label for="pair-pick">Напарник</label>
@@ -256,7 +258,7 @@ function viewStudent(){
     const byDate = d(l.date) <= today(), early = unlocked.includes(l.id);
     const wcell = !w ? "–" : w.status === "sent" ? `<span class="chip mid">ждёт</span>` : w.max ? `<span class="chip ${lvl(Math.round(w.total/w.max*100))}">${w.total}/${w.max}</span>` : `<span class="chip">${w.status === "redo" ? "доработка" : "проверено"}</span>`;
     return `<tr><td class="tnum">${i+1}</td><td><input type="date" value="${esc(l.date)}" data-date="${l.id}" style="width:150px;padding:6px 8px" aria-label="Дата урока ${i+1}">${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
-      <td><i class="dot" style="background:${blockOf(c, l).color}"></i> ${esc(l.title)}${l.writing ? `<div class="small muted">${esc(U.KIND_NAME[l.writing.type])}</div>` : ""}${l.custom ? '<div class="small muted">свой урок</div>' : ""}</td>
+      <td><i class="dot" style="background:${blockOf(c, l).color}"></i> ${esc(l.title)}${l.writing ? `<div class="small muted">${esc(U.KIND_NAME[l.writing.type])}</div>` : ""}${l.custom ? (T.mats.find(m => m.id === l.mid)?.student_id ? `<div class="small muted">из курса «${esc(l.oge)}» <button class="linkbtn" data-act="del-copy" data-mid="${l.mid}">убрать</button></div>` : '<div class="small muted">свой урок</div>') : ""}</td>
       <td>${byDate ? '<span class="chip good">открыт</span>' : early ? `<button class="btn ghost sm" data-unlock="${l.id}" data-on="0">Закрыть</button>` : `<button class="btn ghost sm" data-unlock="${l.id}" data-on="1">${I.lock} Открыть сейчас</button>`}</td>
       <td class="tnum">${mins(x.time[l.id])}</td>
       <td class="tnum">${dn == null ? "–" : `<span class="chip ${lvl(dn)}">${dn}%</span>`}</td>
@@ -421,7 +423,11 @@ function viewLesson(){
       <label for="sh-note">Заметка для ученика</label><input type="text" id="sh-note" value="${esc(sh.note||"")}">
       <div><button class="btn sm" data-act="save-sheet">Сохранить – ученики курса увидят ссылку</button></div>` : `<p class="muted small">Чтобы прикреплять рабочие листы, подключите Supabase и войдите.</p>`}</div>`;
   }
-  return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="course">← Все уроки</button>
+  const studs = T.students.filter(x => x.registered_at && x.course);
+  const toPlan = sb && T.session && ok && studs.length ? `<div class="card row" style="gap:8px;margin-bottom:12px"><span class="small"><b>В план ученика</b> (на ближайший урок, остальные сдвинутся):</span>
+    <select id="lt-student" style="width:auto" aria-label="Ученик">${studs.map(x => `<option value="${x.id}">${esc(x.name)} · ${esc(U.subj(subjOfS(x)).n)}${x.grade != null ? ", " + x.grade + " кл." : ""}</option>`).join("")}</select>
+    <button class="btn sm" data-act="lesson-to">Добавить</button></div>` : "";
+  return toPlan + `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="course">← Все уроки</button>
     <div class="row">${i>0?`<button class="btn ghost sm" data-lesson="${c.lessons[i-1].id}">‹ № ${i}</button>`:""}${i<c.lessons.length-1?`<button class="btn ghost sm" data-lesson="${c.lessons[i+1].id}">№ ${i+2} ›</button>`:""}</div></div>
   <article class="window glass" style="--c:${b.color}">
     <div class="head"><div class="corners"><div class="mono muted">Дата по плану:<br><b style="color:var(--ink)">${fmt(l.date,{day:"numeric",month:"long",year:"numeric"})}</b></div><div class="mono muted">${esc(c.goal || "Раздел")}:<br><b style="color:var(--ink)">${esc(l.oge)}</b></div></div>
@@ -462,6 +468,44 @@ function viewLook(){
   <div class="card stack" style="margin-top:16px"><h3>Помощник</h3>${U.mascotsHTML(localStorage.getItem("oge-mascot-t") || "kotik")}</div>`;
 }
 
+/* ---------- уроки из любого класса и предмета: копия в план конкретного ученика (и напарника) ---------- */
+const nextWeek = d => U.iso(new Date(new Date(d + "T00:00:00").getTime() + 7 * 864e5));
+function nextLessonDate(s){ const L = U.courseFor(s, T.mats)?.lessons || []; return (L.find(l => l.date >= isoToday()) || {}).date || isoToday(); }
+async function insertLesson(s, srcCid, srcLid, date, shift){
+  await ensureCourses([srcCid]);
+  const src = teacherCourse(srcCid), l = src?.lessons.find(x => x.id === srcLid);
+  if (!l || !(access(srcCid) || l.custom)){ toast("Этот урок недоступен в вашем тарифе"); return null; }
+  const lid = "x" + U.randHex(4), keys = keysFor(srcCid, l);
+  const data = {title: l.title, date, learn: l.learn?.length ? l.learn : [l.title], oge: src.course, theory: l.theory || [], practice: l.practice || [], test: l.test || [], hwtest: l.hwtest || [], hw: l.hw || "", writing: null, method: l.method || null, from: `${srcCid}/${srcLid}`};
+  const ids = [s.id, s.pair_id].filter(id => { const o = T.students.find(x => x.id === id); return o && o.course === s.course; });
+  for (const id of ids){
+    const o = T.students.find(x => x.id === id), dates = {...(o.dates || {})};
+    if (shift){ const L = U.courseFor(o, T.mats)?.lessons || [], k = L.findIndex(x => x.date >= date);
+      if (k >= 0){ const slots = [...L.slice(k).map(x => x.date), nextWeek(L[L.length - 1].date)]; L.slice(k).forEach((x, j) => dates[x.id] = slots[j + 1]); } }
+    const {data: m, error} = await sb.from("materials").insert({course: s.course, lesson_id: lid, kind: "lesson", student_id: id, title: l.title, data}).select().single();
+    if (error){ toast("Не сохранилось: " + error.message); return null; }
+    T.mats.push(m);
+    if (shift) await upd(id, {dates});
+    cmd(id, "refresh", {msg: `В план добавлен урок «${l.title}»`});
+  }
+  if (keys.some(k => k)){ const {data: km} = await sb.from("materials").insert({course: s.course, lesson_id: lid, kind: "keys", title: "Ключи", data: Object.fromEntries(keys.map((k, i) => [i, k]).filter(x => x[1]))}).select().single(); if (km) T.mats.push(km); }
+  return lid;
+}
+function takePick(s, mode){
+  const tk = T.take = T.take || {}, subj = tk.subj || subjOfS(s), cids = U.coursesOf(subj);
+  const cid = cids.includes(tk.course) ? tk.course : cids.includes(s.course) ? s.course : cids[0];
+  const c = cid && teacherCourse(cid);
+  if (c?.locked && T.me?.base && window.CATALOG?.[cid] && !T.loaded?.has(cid)) ensureCourses([cid]).then(ok => ok && render());
+  const L = !c ? [] : access(cid) ? c.lessons : c.lessons.filter(l => l.custom);
+  return `<div class="stack" style="gap:8px">
+    <div class="row" style="gap:8px"><select id="tk-subj" aria-label="Предмет" style="width:auto">${U.SUBJECTS.map(x => `<option value="${x.k}" ${x.k === subj ? "selected" : ""}>${x.e} ${esc(x.n)}</option>`).join("")}</select>
+    <select id="tk-course" aria-label="Класс и курс" style="width:auto;max-width:100%">${cids.map(k => `<option value="${k}" ${k === cid ? "selected" : ""}>${esc(U.getCourse(k).course)}${access(k) ? "" : " 🔒"}</option>`).join("")}</select></div>
+    ${L.length ? `<select id="tk-lesson" aria-label="Урок">${L.map((l, i) => `<option value="${l.id}">№ ${i + 1} · ${esc(l.title)}</option>`).join("")}</select>`
+      : `<p class="small muted">${c?.locked && T.me?.base ? "Загружаю уроки…" : access(cid) ? "В этом курсе пока нет уроков." : "Курс откроется в тарифе «С материалами»."}</p>`}
+    ${mode === "student" ? `<label for="tk-date">Дата урока</label><input type="date" id="tk-date" value="${esc(nextLessonDate(s))}" style="width:auto">
+      <label class="small row" style="gap:8px"><input type="checkbox" id="tk-shift" checked style="width:auto"> Вместо урока на эту дату – следующие уроки сдвинутся</label>` : ""}
+    ${L.length ? `<div><button class="btn sm" data-act="take" data-mode="${mode}">${mode === "room" ? "Провести сейчас" : "Добавить в план ученика"}</button></div>` : ""}</div>`;
+}
 /* ---------- урок онлайн: звонок + общая доска + интерактивные задания ученика, всё сразу ---------- */
 const isoToday = () => U.iso(new Date());
 function lessonNow(c){
@@ -533,9 +577,11 @@ function viewRoom(){
       <div class="row" style="gap:8px">
         <select id="room-lesson" aria-label="Урок"><option value="free" ${r.lesson === "free" ? "selected" : ""}>Свободная доска</option>${c.lessons.map((x, i) => `<option value="${x.id}" ${x.id === r.lesson ? "selected" : ""}>№ ${i + 1} · ${esc(x.title)}</option>`).join("")}</select>
         ${r.url ? `<a class="btn sm" href="${esc(r.url)}" target="_blank" rel="noopener">📞 Звонок</a>` : `<span class="linkbox" style="min-width:240px"><input type="url" id="room-url" placeholder="Ссылка на созвон (Телемост)"><button class="btn sm" data-act="room-url">📞</button></span>`}
+        <button class="btn ghost sm" data-act="room-take" aria-pressed="${!!r.take}">+ Из другого класса</button>
         <button class="btn ghost sm" data-act="room-invite" title="Ещё раз отправить приглашение">Позвать</button>
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
       ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : r.planned && r.lesson === "free" ? "" : ""}</div>
+  ${r.take ? `<div class="card" style="margin-bottom:14px"><div class="kicker">Сегодня – урок из другого класса или предмета</div><p class="small muted">Урок встанет на сегодняшнее занятие, папки по плану сдвинутся на следующие.</p>${takePick(s, "room")}</div>` : ""}
   <div class="room">
     <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head"><h1 style="font-size:1.25rem">${esc(l.title)}</h1></div>
       <div class="pane"><div class="board glass" id="board"></div></div></article>
@@ -724,6 +770,8 @@ document.addEventListener("submit", async e => {
   }
 });
 document.addEventListener("change", async e => {
+  if (e.target.id === "tk-subj"){ T.take = {subj: e.target.value}; render(); return; }
+  if (e.target.id === "tk-course"){ T.take = {...(T.take || {}), course: e.target.value}; render(); return; }
   if (e.target.id === "room-lesson" && T.room){ T.room.lesson = e.target.value; T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
   if (e.target.id === "course-pick"){ T.courseId = e.target.value; render(); return; }
   if (e.target.id === "ns-subj"){ T.addSubj = e.target.value; const sel = $("#ns-grade"); sel.innerHTML = U.subj(T.addSubj).g.map(g => `<option value="${g}" ${g===9?"selected":""}>${U.gradeName(g)}</option>`).join(""); return; }
@@ -833,6 +881,32 @@ document.addEventListener("click", async e => {
   if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
   if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
   if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }
+  if (a === "del-copy"){
+    const m = T.mats.find(x => x.id === +t.dataset.mid); if (!m) return;
+    const {error} = await sb.from("materials").delete().eq("id", m.id); if (error){ toast("Не удалилось: " + error.message); return; }
+    T.mats = T.mats.filter(x => x.id !== m.id); cmd(m.student_id, "refresh", {msg: "Учитель изменил план"}); render(); toast("Урок убран из плана ученика"); return;
+  }
+  if (a === "room-take"){ T.room.take = !T.room.take; render(); return; }
+  if (a === "take"){
+    const room = t.dataset.mode === "room", s = T.students.find(x => x.id === (room ? T.room.sid : T.sel)), cid = $("#tk-course").value, lid = $("#tk-lesson")?.value;
+    if (!s || !lid) return;
+    t.disabled = true;
+    if (room){
+      const r = T.room; if (r.moved){ r.lesson = r.planned; await roomReplan(); }
+      const P = U.courseFor(s, T.mats)?.lessons.find(x => x.id === r.planned)?.date || isoToday();
+      const nid = await insertLesson(s, cid, lid, P, true); if (!nid){ t.disabled = false; return; }
+      r.to.forEach(id => r.base[id] = {...(T.students.find(x => x.id === id)?.dates || {})});
+      r.planned = nid; r.lesson = nid; r.take = false; r.moved = false; r.tab = null; T.take = null; roomSend("lesson"); render(); toast("Урок открыт у ученика, план сдвинут на занятие вперёд"); return;
+    }
+    const nid = await insertLesson(s, cid, lid, $("#tk-date").value || nextLessonDate(s), $("#tk-shift").checked);
+    if (nid){ T.take = null; render(); toast("Урок добавлен в план ученика"); } else t.disabled = false;
+    return;
+  }
+  if (a === "lesson-to"){
+    const s = T.students.find(x => x.id === $("#lt-student").value); if (!s) return;
+    const d0 = nextLessonDate(s), nid = await insertLesson(s, curCourse(), T.open, d0, true);
+    if (nid) toast(`Урок добавлен в план: ${s.name}, ${fmt(d0, {day: "numeric", month: "long"})}. Следующие уроки сдвинулись.`); return;
+  }
   if (a === "room-invite"){ roomSend("lesson"); toast("Приглашение отправлено ещё раз"); return; }
   if (a === "room-url"){ const u = $("#room-url").value.trim(); if (!/^https?:\/\//.test(u)){ toast("Вставьте ссылку, которая начинается с https://"); return; }
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
