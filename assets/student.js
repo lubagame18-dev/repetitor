@@ -105,7 +105,7 @@ function uploadPhoto(lessonId){
 }
 /* ---------- живая связь с учителем: где ученик сейчас, мгновенные обновления ---------- */
 let live = null, liveT = 0;
-const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || (S.view === "folder" && S.sub === "board");
+const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || (S.view === "folder" && S.sub === "board") || S.view === "room";
 function liveStart(){
   if (!sb || !S.profile?.teacher || live) return;
   live = sb.channel(`live-${S.profile.teacher}`, {config:{presence:{key:"s-" + S.profile.id}, broadcast:{self:false}}});
@@ -113,6 +113,8 @@ function liveStart(){
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
     if (m.type === "refresh"){ await load(); if (!typing()) render(); toast(m.msg || "Учитель обновил твои материалы"); }
+    if (m.type === "lesson"){ invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()}); return; }
+    if (m.type === "endlesson"){ S.room = null; S.roomEnded = Date.now(); document.getElementById("callbar").hidden = true; closeJoin(); if (S.view === "room"){ S.view = "home"; render(); } toast("Учитель завершил урок. Молодец!"); return; }
     if (m.type === "call"){
       if (m.url) S.profile.call_url = m.url;
       const bar = document.getElementById("callbar");
@@ -126,6 +128,11 @@ function liveStart(){
       render(); scrollTo(0, 0); toast(`Учитель открыл урок «${l.title}»`);
     }
   });
+  live.on("presence", {event:"sync"}, () => {
+    const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];
+    const t = Object.values(live.presenceState()).flat().find(p => p.role === "teacher" && p.room && p.room.to?.some(id => mine.includes(id)));
+    if (t && (t.room.at || 0) > (S.roomEnded || 0) && (!S.room || S.room.lesson !== t.room.lesson)) invite({...t.room, title: S.course?.lessons.find(x => x.id === t.room.lesson)?.title || ""});
+  });
   live.subscribe(st => { if (st === "SUBSCRIBED") liveTrack(true); });
 }
 function liveTrack(now){
@@ -134,6 +141,8 @@ function liveTrack(now){
   liveT = setTimeout(() => {
     const l = S.view === "folder" && S.course?.lessons.find(x => x.id === S.open);
     const TAB = {theory:"Теория", practice:"Практика", board:"Доска", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
+    const rl = S.view === "room" && roomLesson();
+    if (rl){ live.track({role:"student", id:S.profile.id, name:S.profile.name, where:`на уроке «${rl.title}» · ${{work:"задания", theory:"теория", mats:"материалы"}[S.roomTab] || "доска"}`, lesson: rl.id, at: Date.now()}).catch(() => {}); return; }
     const where = S.view === "myboard" ? "на личной доске" : S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
     live.track({role:"student", id:S.profile.id, name:S.profile.name, where, lesson: l?.id || null, at: Date.now()}).catch(() => {});
   }, now ? 0 : 250);
@@ -261,6 +270,7 @@ function drawerHTML(){
      ${mine.map(m => m.id === p.id ? `<button class="navitem" data-go="lessons" ${cur==="lessons"?'aria-current="page"':""}><span class="emo">${U.subj(m.subject).e}</span>${esc(U.subj(m.subject).n)}<span class="chip" style="margin-left:auto">${U.gradeName(m.grade).replace(" класс", " кл.")}</span></button>`
        : `<button class="navitem" data-switch="${m.id}"><span class="emo">${U.subj(m.subject).e}</span>${esc(U.subj(m.subject).n)}<span class="chip" style="margin-left:auto">${U.gradeName(m.grade).replace(" класс", " кл.")}</span></button>`).join("")}
      ${others.map(x => `<button class="navitem" disabled title="Подключает учитель"><span class="emo">${x.e}</span>${esc(x.n)}<span class="lock">${I.lock}</span></button>`).join("")}</div>
+   ${S.room && S.view !== "room" ? `<div class="group"><button class="navitem" data-act="join-open"><span class="live-dot" aria-hidden="true"></span>Подключиться к уроку</button></div>` : ""}
    <div class="group"><span class="mono">Разделы</span>
      ${nav.map(([k,n,ic]) => `<button class="navitem" data-go="${k}" ${cur===k?'aria-current="page"':""}>${ic}${n}</button>`).join("")}</div>
    <div class="group"><span class="mono">Ещё</span>
@@ -270,7 +280,7 @@ function drawerHTML(){
    ${!sb ? '<p class="small muted" style="padding:0 8px">Демо-режим: данные хранятся на этом устройстве.</p>' : ""}
    <div class="drawer-foot"><button class="btn" data-act="install" style="width:100%;justify-content:center">${I.phone.replace('<svg','<svg width="18" height="18"')} Скачать на телефон</button></div>`;
 }
-const TITLES = {myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
+const TITLES = {room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
 
 /* ---------- экраны ---------- */
 function folderHTML(l){
@@ -299,6 +309,9 @@ function noCourse(){
 function viewHome(){
   const p = S.profile, er = entryRes(), et = entryTest();
   const cards = [];
+  if (S.room) cards.push(`<div class="card accent"><div class="kicker"><span class="live-dot" aria-hidden="true"></span> Идёт урок</div><h2 style="margin-top:6px">${esc(roomLesson().title)}</h2>
+      <p class="small" style="margin:6px 0 12px">Учитель ждёт. Выбери, что открыть на этом устройстве: доску, звонок или то и другое.</p>
+      <button class="btn" data-act="join-open">Подключиться к уроку</button></div>`);
   if (et && !er) cards.push(`<div class="card accent"><div class="kicker">Сначала</div><h2 style="margin-top:6px">Входной тест</h2>
       <p class="small" style="margin:6px 0 12px">${et.q.length} вопросов по материалу прошлого года. По результатам учитель выстроит план.</p>
       <button class="btn" data-go="entry">Начать</button></div>`);
@@ -444,6 +457,7 @@ function viewFolder(){
       <div class="row" style="margin-top:12px"><button class="btn" data-test="${l.id}" data-kind="lesson">${r ? "Пройти ещё раз" : "Начать тест"}</button></div>`;
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-go="lessons">← Все уроки</button>
     <div class="row">${i>0 && isOpen(L[i-1])?`<button class="btn ghost sm" data-open="${L[i-1].id}">‹ № ${i}</button>`:""}${i<L.length-1 && isOpen(L[i+1])?`<button class="btn ghost sm" data-open="${L[i+1].id}">№ ${i+2} ›</button>`:""}
+      <button class="btn sm" data-act="start-room" title="Доска с заданиями и звонок с учителем">▶ Начать урок</button>
       <button class="btn ghost sm" data-act="download" title="Скачать урок как документ Word">⤓ Скачать</button></div></div>
   <article class="window glass" style="--c:${b.color}">
     <div class="head">
@@ -555,6 +569,65 @@ const viewInstall = () => `<div class="section-title" style="margin-top:6px"><h2
   <div class="grid2"><div class="card"><h3>iPhone и iPad</h3><ol class="small" style="margin:8px 0 0;padding-left:20px"><li>Открой сайт в Safari.</li><li>«Поделиться» (квадрат со стрелкой) → «На экран Домой».</li><li>«Добавить» – появится иконка с котиком.</li></ol></div>
   <div class="card"><h3>Android</h3><ol class="small" style="margin:8px 0 0;padding-left:20px"><li>Открой сайт в Chrome.</li><li>Меню ⋮ → «Добавить на главный экран».</li><li>Открывай иконку с котиком как приложение.</li></ol></div></div>`;
 
+/* ---------- урок с учителем: ученик выбирает, что открыть на этом устройстве ---------- */
+const JOIN = {board: "Доска и задания", call: "Звонок", both: "И то и другое"};
+function roomLesson(){ const id = S.room?.lesson; return !id || id === "free" ? FREE : S.course?.lessons.find(x => x.id === id) || FREE; }
+function callURL(){ return S.room?.url || S.profile.call_url || ""; }
+function closeJoin(){ document.getElementById("joinbox")?.remove(); }
+/* приглашение учителя (или ученик сам начал урок – self) */
+function invite(r, self){
+  const same = S.room && S.room.lesson === r.lesson;
+  S.room = {...r, url: r.url || S.profile.call_url || "", self};
+  if (r.lesson && r.lesson !== "free") S.forced.add(r.lesson);
+  if (S.view === "room"){ if (!same){ S.open = r.lesson; S.roomTab = null; render(); toast(`Учитель открыл урок «${roomLesson().title}»`); } return; }
+  const how = LS.get("join-how", null);
+  if (how && !self){ applyJoin(how, true); return; }
+  joinBox(self);
+}
+function joinBox(self){
+  closeJoin(); const l = roomLesson(), url = callURL(), how = LS.get("join-how", null);
+  const box = document.createElement("div"); box.id = "joinbox"; box.className = "joinbox";
+  box.innerHTML = `<div class="card stack" role="dialog" aria-modal="true" aria-labelledby="jb-h" style="gap:10px">
+    <div class="kicker">${self ? "Начинаем урок" : "Учитель начал урок"}</div><h2 id="jb-h" style="margin:0">${esc(l.title)}</h2>
+    <p class="small muted">Что открыть на этом устройстве? Можно звонок на телефоне, а доску – на компьютере: просто зайди с двух устройств и выбери разное.</p>
+    <button class="btn" data-act="join" data-how="board">🖊 ${JOIN.board}</button>
+    ${url ? `<a class="btn ghost" href="${esc(url)}" target="_blank" rel="noopener" data-act="join" data-how="call">📞 ${JOIN.call}</a>
+    <a class="btn ghost" href="${esc(url)}" target="_blank" rel="noopener" data-act="join" data-how="both">🖊 + 📞 ${JOIN.both}</a>` : `<p class="small muted">Ссылку на звонок учитель ещё не добавил – пока можно открыть доску.</p>`}
+    <label class="row small" style="gap:8px"><input type="checkbox" id="jb-remember" ${how ? "checked" : ""} style="width:auto"> Запомнить выбор на этом устройстве</label>
+    <button class="linkbtn" data-act="join-close">Позже</button></div>`;
+  document.body.appendChild(box); box.querySelector("[data-how]")?.focus();
+}
+function applyJoin(how, auto){
+  closeJoin(); const l = roomLesson(), url = callURL();
+  if (how !== "board" && url && auto){
+    const bar = document.getElementById("callbar");
+    bar.innerHTML = `<span>📞 Урок «${esc(l.title)}»</span><a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" onclick="this.parentElement.hidden=true">Подключиться к звонку</a><button class="iconbtn" aria-label="Скрыть" onclick="this.parentElement.hidden=true">✕</button>`;
+    bar.hidden = false;
+  }
+  if (S.room?.self) liveAct2({room: true, lesson: S.room.lesson, title: l.title}, `начинает урок «${l.title}» (${JOIN[how].toLowerCase()})`);
+  if (how === "call"){ if (S.view === "room"){ S.view = "home"; render(); } toast(auto ? "Звонок – на этом устройстве (так ты выбрал раньше)" : "Звонок открыт в новой вкладке"); liveTrack(); return; }
+  S.open = l.id; S.roomTab = null; S.view = "room"; S.drawer = false; render(); scrollTo(0, 0);
+  if (auto) toast(`Учитель начал урок – открыта ${how === "both" ? "доска, звонок – кнопкой вверху" : "доска"}`);
+}
+function viewRoom(){
+  const l = roomLesson(), url = callURL(), how = LS.get("join-how", null);
+  const tabs = [l.practice?.length && ["work", "Задания"], l.theory?.length && ["theory", "Теория"], (l.materials || []).length && ["mats", "Материалы"]].filter(Boolean);
+  const tab = tabs.some(t => t[0] === S.roomTab) ? S.roomTab : tabs[0]?.[0];
+  let pane = "";
+  if (tab === "work") pane = `<div class="wk-root" id="wk-root">${Work.toolbar()}${l.practice.map((p, i) => Work.task(p, i, (S.works?.[l.id] || {})[i] || {})).join("")}</div>`;
+  if (tab === "theory") pane = U.theoryHTML(l);
+  if (tab === "mats") pane = materialsHTML(l);
+  return `<div class="roombar glass"><div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок с учителем</b></div>
+      <div class="row" style="gap:8px">${url ? `<a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener">📞 Звонок</a>` : ""}
+      ${how ? `<button class="btn ghost sm" data-act="join-reset" title="Сейчас: ${esc(JOIN[how])}">Выбор устройства</button>` : ""}
+      <button class="btn ghost sm" data-act="room-leave">Выйти</button></div></div>
+  <div class="room">
+    <article class="window glass room-board" style="--c:${l.free ? "var(--violet)" : blockOf(l).color}"><div class="head"><h1 style="font-size:1.25rem">${esc(l.title)}</h1></div>
+      <div class="pane"><div class="board glass" id="board"></div><p class="small muted" style="margin-top:8px">Доска общая с учителем${S.profile.pair ? ` и с ${esc(S.profile.pair.name.split(" ")[0])}` : ""}. На телефоне ✋ – листать, двумя пальцами – увеличить.</p></div></article>
+    ${tabs.length ? `<article class="window glass room-side"><div class="pane"><div class="seg" role="group" aria-label="Материалы урока">${tabs.map(([k, n]) => `<button data-act="room-tab" data-tab="${k}" aria-pressed="${tab === k}">${n}</button>`).join("")}</div><div class="room-pane">${pane}</div></div></article>` : ""}
+  </div>`;
+}
+function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text, ...extra}}).catch(() => {}); }
 /* ---------- отрисовка ---------- */
 function render(){
   if (S.board){ S.board.destroy(); S.board = null; }
@@ -562,7 +635,7 @@ function render(){
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   const v = S.view;
-  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():viewInstall();
+  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():viewInstall();
   app.innerHTML = `<div class="shell">
     <div class="drawer-back" ${S.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${S.drawer ? "open" : ""}" aria-label="Меню">${drawerHTML()}</nav>
@@ -585,6 +658,12 @@ function render(){
   if (v === "folder" && S.sub === "practice" && $("#wk-root")){
     const l = S.course.lessons.find(x => x.id === S.open), states = (S.works = S.works || {})[l.id] = S.works[l.id] || {};
     Work.bind($("#wk-root"), states, (i, st) => saveWork(l.id, i, st));
+  }
+  if (v === "room"){
+    const l = roomLesson();
+    S.board = Board.mount($("#board"), {api: Board.api("student", sb, {code:S.token, lesson:l.id}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null,
+      page: S.boardPage, role: "student", name: S.profile.name, pages: Board.pages(S.course || {}, l), onPage: p => S.boardPage = p});
+    if ($("#wk-root")){ const states = (S.works = S.works || {})[l.id] = S.works[l.id] || {}; Work.bind($("#wk-root"), states, (i, st) => saveWork(l.id, i, st)); }
   }
   if (v === "myboard"){
     S.board = Board.mount($("#board"), {api: Board.api("student", sb, {code:S.token, lesson:"free"}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-free` : null,
@@ -760,6 +839,13 @@ document.addEventListener("click", async e => {
   }
   const a = t.dataset.act;
   if (a === "install"){ install(); return; }
+  if (a === "join"){ if (t.tagName !== "A") e.preventDefault(); const how = t.dataset.how; if ($("#jb-remember")?.checked) LS.set("join-how", how); else LS.set("join-how", null); applyJoin(how, false); return; }
+  if (a === "join-close"){ closeJoin(); render(); return; }
+  if (a === "join-open"){ joinBox(S.room?.self); return; }
+  if (a === "join-reset"){ LS.set("join-how", null); joinBox(S.room?.self); return; }
+  if (a === "room-tab"){ S.roomTab = t.dataset.tab; render(); return; }
+  if (a === "room-leave"){ S.view = S.room?.lesson && S.room.lesson !== "free" ? "folder" : "home"; S.sub = "theory"; render(); return; }
+  if (a === "start-room"){ invite({lesson: S.open, url: S.profile.call_url || "", at: Date.now()}, true); return; }
   if (a === "resend"){
     const email = S.signupDone || S.lastEmail || $("#tl-email")?.value.trim(); if (!email || !sb) return;
     const {error} = await sb.auth.resend({type: "signup", email, options: {emailRedirectTo: U.siteURL("teacher.html")}});

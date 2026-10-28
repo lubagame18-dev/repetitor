@@ -236,7 +236,7 @@ function viewStudent(){
       <select id="as-grade" aria-label="Класс">${U.subj(U.SUBJECTS.find(x => !siblings(s).some(o => subjOfS(o) === x.k))?.k || "rus").g.map(g => `<option value="${g}" ${g === s.grade ? "selected" : ""}>${U.gradeName(g)}</option>`).join("")}</select>
       <div><button class="btn sm" data-act="add-subject">Добавить предмет</button></div>`}</div>
     <div class="card stack" style="gap:8px"><div class="kicker">Занятие онлайн</div>
-      <p class="small muted">Ссылка на созвон: Яндекс Телемост, VK Звонки, Сферум или любая другая. Ученик видит кнопку «Подключиться» у себя.</p>
+      <p class="small muted">Ссылка на созвон: Яндекс Телемост, VK Звонки, Сферум или любая другая – своя для каждого ученика. «Начать занятие» сразу открывает звонок, общую доску и задания текущего урока, а ученику приходит приглашение: он выбирает доску, звонок или то и другое (можно с разных устройств).</p>
       <div class="linkbox"><input type="url" id="call-url" value="${esc(s.call_url || "")}" placeholder="${esc(T.me?.call_url || "https://telemost.yandex.ru/j/…")}"><button class="btn ghost sm" data-act="save-call">Сохранить</button></div>
       <div class="row"><button class="btn sm" data-act="start-lesson">📞 Начать занятие</button><button class="btn ghost sm" data-boardfor="free">Личная доска</button>
         <a class="btn ghost sm" href="https://telemost.yandex.ru/" target="_blank" rel="noopener">Создать встречу в Телемосте</a></div></div>
@@ -264,7 +264,7 @@ function viewStudent(){
       <td class="tnum">${hr ? `<span class="chip ${lvl(pct(hr.last))}">${pct(hr.last)}%</span>` : "–"}</td>
       <td>${wcell}${w ? `<div style="margin-top:4px"><button class="btn ghost sm" data-wreview="${l.id}">Проверить</button></div>` : ""}</td>
       <td><span class="chip ${hs.c}">${hs.t}</span>${h?.note?`<div class="small" style="margin-top:4px">${/^https?:/.test(h.note)?`<a href="${esc(h.note)}" target="_blank" rel="noopener">ссылка ученика</a>`:esc(h.note)}</div>`:""}<div style="margin-top:4px"><button class="btn ghost sm" data-review="${l.id}">Оценить</button></div></td>
-      <td><div class="stack" style="gap:6px"><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button>${l.practice?.length ? `<button class="btn ghost sm" data-workfor="${l.id}">Тетрадь${(T.works || []).some(w => w.student_id === s.id && w.lesson_id === l.id) ? " ✓" : ""}</button>` : ""}<button class="btn ghost sm" data-goto="${l.id}" title="Откроет этот урок на экране ученика">Показать ученику</button></div></td></tr>
+      <td><div class="stack" style="gap:6px"><button class="btn sm" data-act="start-lesson" data-rl="${l.id}" title="Звонок, доска и задания этого урока">▶ Урок</button><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button>${l.practice?.length ? `<button class="btn ghost sm" data-workfor="${l.id}">Тетрадь${(T.works || []).some(w => w.student_id === s.id && w.lesson_id === l.id) ? " ✓" : ""}</button>` : ""}<button class="btn ghost sm" data-goto="${l.id}" title="Откроет этот урок на экране ученика">Показать ученику</button></div></td></tr>
       ${T.review === l.id ? `<tr><td colspan="11"><div class="stack" style="gap:6px;max-width:520px"><b>ДЗ: ${esc(l.title)}</b><p class="small">${esc(l.hw || "")}</p>
           ${hr ? `<p class="small muted">ДЗ-тест: ${esc(U.recText(hr.last))}</p>` : ""}
           <input type="text" id="rv-grade" placeholder="Оценка" value="${esc(h?.grade||"")}"><textarea id="rv-comment" placeholder="Комментарий ученику">${esc(h?.comment||"")}</textarea>
@@ -462,6 +462,86 @@ function viewLook(){
   <div class="card stack" style="margin-top:16px"><h3>Помощник</h3>${U.mascotsHTML(localStorage.getItem("oge-mascot-t") || "kotik")}</div>`;
 }
 
+/* ---------- урок онлайн: звонок + общая доска + интерактивные задания ученика, всё сразу ---------- */
+const isoToday = () => U.iso(new Date());
+function lessonNow(c){
+  const L = c?.lessons || []; if (!L.length) return "free";
+  return (L.find(l => l.date >= isoToday()) || L[L.length - 1]).id;
+}
+function callOf(s){ return ($("#call-url")?.value.trim()) || s.call_url || T.me?.call_url || ""; }
+function roomSend(type){
+  const r = T.room; if (!r) return;
+  const s = T.students.find(x => x.id === r.sid), c = U.courseFor(s, T.mats), l = r.lesson === "free" ? FREE : c?.lessons.find(x => x.id === r.lesson);
+  r.to.forEach(id => cmd(id, type, {lesson: r.lesson, url: r.url, title: l?.title || ""}));
+  roomTrack();
+}
+function roomTrack(){ if (T.live && T.liveOk) T.live.track({role:"teacher", room: T.room ? {to: T.room.to, lesson: T.room.lesson, url: T.room.url, at: T.room.at} : null}).catch(() => {}); }
+/* учитель решил провести сегодня другой урок: он встаёт на дату урока по плану, а пропущенные папки сдвигаются на следующие занятия */
+function replanDates(s, base, planned, chosen){
+  const c = U.courseFor({...s, dates: base}, T.mats), L = c?.lessons || [];
+  const pi = L.findIndex(l => l.id === planned), qi = L.findIndex(l => l.id === chosen);
+  if (pi < 0 || qi < 0 || pi === qi) return null;
+  const next = d => U.iso(new Date(new Date(d + "T00:00:00").getTime() + 7 * 864e5));
+  const seq = qi > pi ? [L[qi], ...L.slice(pi, qi)] : [L[qi], ...L.slice(pi)];
+  const slots = qi > pi ? L.slice(pi, qi + 1).map(l => l.date) : [...L.slice(pi).map(l => l.date), next(L[L.length - 1].date)];
+  const dates = {...base}; seq.forEach((l, k) => dates[l.id] = slots[k]); return dates;
+}
+async function roomReplan(){
+  const r = T.room; if (!r?.planned) return;
+  const ids = r.to.filter(id => { const o = T.students.find(x => x.id === id); return o && o.course === T.students.find(x => x.id === r.sid).course; });
+  let changed = false;
+  for (const id of ids){
+    const o = T.students.find(x => x.id === id), base = r.base[id] || {};
+    const dates = r.lesson === "free" || r.lesson === r.planned ? base : replanDates(o, base, r.planned, r.lesson) || base;
+    if (JSON.stringify(dates) !== JSON.stringify(o.dates || {})){ if (await upd(id, {dates})){ changed = true; cmd(id, "refresh", {msg: "Учитель перестроил план уроков"}); } }
+  }
+  r.moved = r.lesson !== "free" && r.lesson !== r.planned;
+  if (changed){ render(); const s = T.students.find(x => x.id === r.sid), P = U.courseFor(s, T.mats)?.lessons.find(x => x.id === r.planned);
+    toast(r.moved ? `План перестроен: «${P?.title || "урок по плану"}» перенесён на следующее занятие, остальные сдвинулись` : "План уроков возвращён как был"); }
+}
+function startRoom(s, lesson, keepPlan){
+  const url = callOf(s), c = U.courseFor(s, T.mats), planned = c?.lessons.length ? lessonNow(c) : null;
+  if (url) window.open(url, "_blank", "noopener");
+  const to = [s.id, s.pair_id].filter(Boolean);
+  T.room = {sid: s.id, to, lesson: lesson || planned || "free", planned, base: Object.fromEntries(to.map(id => [id, {...(T.students.find(x => x.id === id)?.dates || {})}])), url, at: Date.now(), tab: null, who: s.id};
+  T.sel = s.id; T.view = "room"; T.drawer = false; render(); scrollTo(0, 0);
+  roomSend("lesson"); if (T.room.lesson !== planned && !keepPlan) roomReplan();
+  toast(!url ? "Урок начат без звонка: вставьте ссылку на созвон вверху." : T.online[s.id] ? "Ученику пришло приглашение на урок" : "Ученик пока не в сети – приглашение появится, как только он зайдёт");
+}
+function roomPane(s, c, l){
+  const tab = T.room.tab || (l.practice?.length ? "work" : "theory");
+  const who = T.students.find(x => x.id === T.room.who) || s, pair = s.pair_id && T.students.find(x => x.id === s.pair_id);
+  let body = "";
+  if (tab === "work"){
+    const keys = keysFor(who.course, l), st = Object.fromEntries((T.works || []).filter(w => w.student_id === who.id && w.lesson_id === l.id).map(w => [w.task, w.data]));
+    body = (pair ? `<div class="seg" role="group" aria-label="Чья тетрадь">${[s, pair].map(o => `<button data-act="room-who" data-id="${o.id}" aria-pressed="${o.id === who.id}">${esc(o.name.split(" ")[0])}</button>`).join("")}</div>` : "")
+      + `<p class="small muted">Тетрадь ${esc(who.name.split(" ")[0])} – обновляется вживую, рядом ключи.</p>`
+      + `<div id="wk-view">${l.practice.map((p, i) => Work.task({...p, key: keys[i]}, i, st[i] || {}, true).replace('class="task wk"', 'class="task wk ro"')).join("")}</div>`;
+  }
+  if (tab === "theory") body = l.theory?.length ? U.theoryHTML(l, true) : `<p class="muted">У этого урока нет теории.</p>`;
+  if (tab === "mats") body = (l.materials || []).length ? (l.materials || []).map(m => `<div class="mat"><span class="ic">${{link:"🔗", file:"📎", text:"📝", tasks:"✏️"}[m.kind] || "•"}</span><div style="min-width:0;flex:1">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || m.url)}</a>` : `<b>${esc(m.title || "Материал")}</b>`}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body)}</div>` : ""}</div></div>`).join("") : `<p class="muted">Своих материалов к уроку нет.</p>`;
+  const tabs = [l.practice?.length && ["work", "Тетрадь"], ["theory", "Теория"], ["mats", "Материалы"]].filter(Boolean);
+  return `<div class="seg" role="group" aria-label="Материалы урока">${tabs.map(([k, n]) => `<button data-act="room-tab" data-tab="${k}" aria-pressed="${tab === k}">${n}</button>`).join("")}</div><div class="room-pane">${body}</div>`;
+}
+function viewRoom(){
+  const r = T.room, s = r && T.students.find(x => x.id === r.sid);
+  if (!s){ T.view = "students"; return viewStudents(); }
+  const c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = r.lesson === "free" ? FREE : c.lessons.find(x => x.id === r.lesson) || FREE;
+  const pair = s.pair_id && T.students.find(x => x.id === s.pair_id);
+  return `<div class="roombar glass">
+      <div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок: ${esc(s.name)}${pair ? " и " + esc(pair.name) : ""}</b><span data-online="${s.id}"></span></div>
+      <div class="row" style="gap:8px">
+        <select id="room-lesson" aria-label="Урок"><option value="free" ${r.lesson === "free" ? "selected" : ""}>Свободная доска</option>${c.lessons.map((x, i) => `<option value="${x.id}" ${x.id === r.lesson ? "selected" : ""}>№ ${i + 1} · ${esc(x.title)}</option>`).join("")}</select>
+        ${r.url ? `<a class="btn sm" href="${esc(r.url)}" target="_blank" rel="noopener">📞 Звонок</a>` : `<span class="linkbox" style="min-width:240px"><input type="url" id="room-url" placeholder="Ссылка на созвон (Телемост)"><button class="btn sm" data-act="room-url">📞</button></span>`}
+        <button class="btn ghost sm" data-act="room-invite" title="Ещё раз отправить приглашение">Позвать</button>
+        <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
+      ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : r.planned && r.lesson === "free" ? "" : ""}</div>
+  <div class="room">
+    <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head"><h1 style="font-size:1.25rem">${esc(l.title)}</h1></div>
+      <div class="pane"><div class="board glass" id="board"></div></div></article>
+    <article class="window glass room-side"><div class="pane">${l.free ? `<p class="muted">Свободная доска: листы в клетку, в линейку и пустые. Чтобы дать задания, выберите урок вверху.</p>` : roomPane(s, c, l)}</div></article>
+  </div>`;
+}
 function render(){
   if (T.board){ T.board.destroy(); T.board = null; }
   const need = ["course","lesson","methodology"].includes(T.view) ? [curCourse()] : T.view === "student" ? [T.students.find(x => x.id === T.sel)?.course] : [];
@@ -476,8 +556,8 @@ function render(){
   else if (!sb) html = viewNoServer();
   else if (T.view === "newpass") html = viewNewPass();
   else if (!T.session) html = viewLogin();
-  else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : T.view === "work" ? viewWork() : viewStudents();
-  const cur = ["students","student","board"].includes(T.view) ? "students" : ["course","lesson"].includes(T.view) ? "course" : T.view;
+  else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : T.view === "work" ? viewWork() : T.view === "room" ? viewRoom() : viewStudents();
+  const cur = ["students","student","board","room"].includes(T.view) ? "students" : ["course","lesson"].includes(T.view) ? "course" : T.view;
   const nav = [["students","Ученики",I.users],["course","Материалы и база",I.book],["methodology","Методика курса",I.method],["sub","Подписка",I.code.replace(/<path[^>]*\/>/, '<path d="M3 7h18v10H3zM3 11h18"/>')],["look","Оформление",I.pen]];
   $("#app").innerHTML = `<div class="shell">
     <div class="drawer-back" ${T.drawer ? "" : "hidden"} data-act="close-drawer"></div>
@@ -494,8 +574,9 @@ function render(){
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
       <main class="main">${["students","course","student"].includes(T.view) && T.session ? subBanner() : ""}${html}</main></div></div>`;
   if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
-  if (T.view === "board" && sb && T.session){
-    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = T.boardLesson === "free" ? FREE : c.lessons.find(x => x.id === T.boardLesson), owner = ownerOf(s);
+  if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
+    const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
+    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = bl === "free" ? FREE : c.lessons.find(x => x.id === bl) || FREE, owner = ownerOf(s);
     T.board = Board.mount($("#board"), {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l)});
   }
 }
@@ -521,7 +602,7 @@ let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
 
 /* ---------- живая связь: кто из учеников сейчас на платформе и где; мгновенные обновления ---------- */
-const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || T.view === "board";
+const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || ["board","room"].includes(T.view);
 function liveStart(){
   if (!sb || !T.session || T.live) return;
   T.live = sb.channel(`live-${T.session.user.id}`, {config:{presence:{key:"t-" + T.session.user.id}, broadcast:{self:false}}});
@@ -532,15 +613,21 @@ function liveStart(){
     if (!m?.act) return;
     if (m.work){
       T.works = (T.works || []).filter(w => !(w.student_id === m.id && w.lesson_id === m.lesson && w.task === m.task)).concat({student_id: m.id, lesson_id: m.lesson, task: m.task, data: m.data});
-      if (T.view === "work" && T.sel === m.id && T.workLesson === m.lesson){
+      if ((T.view === "work" && T.sel === m.id && T.workLesson === m.lesson) || (T.view === "room" && T.room?.who === m.id && T.room.lesson === m.lesson)){
         const s = T.students.find(x => x.id === m.id), c = U.courseFor(s, T.mats), l = c?.lessons.find(x => x.id === m.lesson), el = document.querySelector(`#wk-view [data-task="${m.task}"]`);
         if (l && el){ const keys = keysFor(s.course, l); el.outerHTML = Work.task({...l.practice[m.task], key: keys[m.task]}, m.task, m.data, true).replace('class="task wk"', 'class="task wk ro"'); }
       }
       return;
     }
+    if (m.room && T.room?.to.includes(m.id)){ toast(`${m.name.split(" ")[0]}: ${m.text}`); return; }
+    if (m.room){
+      const bar = document.getElementById("callbar");
+      bar.innerHTML = `<span>🎒 ${esc(m.name.split(" ")[0])} начинает урок «${esc(m.title || "")}»</span><button class="btn sm" data-act="join-room" data-id="${esc(m.id)}" data-rl="${esc(m.lesson)}">📞 Подключиться</button><button class="iconbtn" aria-label="Скрыть" onclick="this.parentElement.hidden=true">✕</button>`;
+      bar.hidden = false;
+    }
     T.feed.unshift({...m, at: Date.now()}); T.feed = T.feed.slice(0, 30);
     toast(`${m.name.split(" ")[0]}: ${m.text}`); refreshSoon();
-  }).subscribe(st => { if (st === "SUBSCRIBED") T.live.track({role:"teacher"}).catch(() => {}); });
+  }).subscribe(st => { if (st === "SUBSCRIBED"){ T.liveOk = true; roomTrack(); } });
 }
 /* точечно обновляем значки «онлайн», не перерисовывая страницу (чтобы не сбить ввод и доску) */
 function paintOnline(){
@@ -637,6 +724,7 @@ document.addEventListener("submit", async e => {
   }
 });
 document.addEventListener("change", async e => {
+  if (e.target.id === "room-lesson" && T.room){ T.room.lesson = e.target.value; T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
   if (e.target.id === "course-pick"){ T.courseId = e.target.value; render(); return; }
   if (e.target.id === "ns-subj"){ T.addSubj = e.target.value; const sel = $("#ns-grade"); sel.innerHTML = U.subj(T.addSubj).g.map(g => `<option value="${g}" ${g===9?"selected":""}>${U.gradeName(g)}</option>`).join(""); return; }
   if (e.target.id === "as-subj"){ const sel = $("#as-grade"); sel.innerHTML = U.subj(e.target.value).g.map(g => `<option value="${g}">${U.gradeName(g)}</option>`).join(""); const s = T.students.find(x => x.id === T.sel); if (s && U.subj(e.target.value).g.includes(s.grade)) sel.value = s.grade; return; }
@@ -740,13 +828,17 @@ document.addEventListener("click", async e => {
     }
     return;
   }
-  if (a === "start-lesson"){
-    const s = T.students.find(x => x.id === T.sel), url = ($("#call-url")?.value.trim()) || s.call_url || T.me?.call_url;
-    if (!url){ toast("Сначала вставьте ссылку на созвон (например, из Яндекс Телемоста) и сохраните."); return; }
-    window.open(url, "_blank", "noopener");
-    cmd(s.id, "call", {url}); if (s.pair_id) cmd(s.pair_id, "call", {url});
-    toast(T.online[s.id] ? "Ученику пришло приглашение на занятие" : "Ученик пока не в сети – кнопка «Подключиться» ждёт его на главной"); return;
-  }
+  if (a === "start-lesson"){ const s = T.students.find(x => x.id === (t.dataset.id || T.sel)); if (s) startRoom(s, t.dataset.rl); return; }
+  if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); return; }
+  if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
+  if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
+  if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }
+  if (a === "room-invite"){ roomSend("lesson"); toast("Приглашение отправлено ещё раз"); return; }
+  if (a === "room-url"){ const u = $("#room-url").value.trim(); if (!/^https?:\/\//.test(u)){ toast("Вставьте ссылку, которая начинается с https://"); return; }
+    T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
+    upd(s.id, {call_url: u});
+    roomSend("lesson"); render(); return; }
+  if (a === "room-end"){ const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
   if (a === "open-drawer"){ T.drawer = true; render(); }
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();

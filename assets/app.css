@@ -388,3 +388,21 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
 .wk.ro .wk-w{cursor:default}
 .keyedit{display:flex;gap:8px;align-items:flex-start;margin-top:8px}
 .keyedit textarea{min-height:60px}
+
+/* урок онлайн: звонок + доска + задания */
+.roombar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:var(--r);margin-bottom:14px}
+.roombar select{width:auto;max-width:min(360px,100%);padding:6px 10px}
+.room{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
+.room .window{margin:0}
+.room-side{position:sticky;top:84px;max-height:calc(100vh - 100px);overflow:auto}
+.room-pane{margin-top:12px}
+@media (max-width:980px){.room{grid-template-columns:1fr}.room-side{position:static;max-height:none}}
+.seg{display:inline-flex;flex-wrap:wrap;gap:4px;padding:4px;border-radius:999px;background:var(--chip)}
+.seg button{border:0;background:transparent;color:var(--ink);font:inherit;font-size:.9rem;padding:6px 14px;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--paper);box-shadow:var(--shadow);font-weight:600}
+.live-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 0 color-mix(in srgb,var(--bad) 60%,transparent);animation:livepulse 1.6s infinite;flex:none;vertical-align:middle}
+@keyframes livepulse{70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
+.joinbox{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:16px;background:color-mix(in srgb,#000 40%,transparent)}
+.joinbox .card{width:min(440px,100%);background:var(--paper)}
+.joinbox .btn{justify-content:center;width:100%}
