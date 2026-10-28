@@ -91,6 +91,16 @@ function viewNoServer(){
     <p class="muted small">Материалы курса и методика доступны и без сервера.</p>
     <div class="row"><button class="btn" data-view="course">Материалы курса</button><button class="btn ghost" data-view="methodology">Методика курса</button></div></div>`;
 }
+/* код разработчика прямо в кабинете: проверяет сервер, вводится один раз */
+function viewDevCode(){
+  if (T.me?.role === "developer") return `<div class="card login stack"><h2>Вы разработчик</h2><p>Ключи нейросети, тарифы, оплата, встроенная база и учителя – в кабинете разработчика.</p><div><a class="btn" href="dev.html">Открыть кабинет разработчика</a></div></div>`;
+  return `<form class="card login stack" id="devcode-form" autocomplete="off"><h2>Режим разработчика</h2>
+    <p class="small">Кабинет: <b>${esc(T.me?.email || T.session?.user?.email || "")}</b></p>
+    <label for="dc-code">Код разработчика <span class="small muted">(не пароль от кабинета)</span></label>
+    ${U.pass("dc-code", 'required autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"')}
+    <p class="small muted">Код вводится один раз: после этого кабинет навсегда получает права разработчика.</p>
+    <button class="btn" type="submit">Войти в режим разработчика</button><p class="formmsg bad" id="dc-err" role="status"></p></form>`;
+}
 function viewNewPass(){
   return `<form class="card login stack" id="newpass-form"><h2>Новый пароль</h2>
     <p class="small muted">Придумайте новый пароль для кабинета${T.session?.user?.email ? " " + esc(T.session.user.email) : ""}.</p>
@@ -440,6 +450,7 @@ function render(){
   if (T.view === "methodology") html = viewMethodology();
   else if (T.view === "look") html = viewLook();
   else if (T.view === "sub" && sb && T.session) html = viewSub();
+  else if (T.view === "devcode" && sb && T.session) html = viewDevCode();
   else if (["course","lesson"].includes(T.view)) html = T.view === "course" ? viewCourse() : viewLesson();
   else if (!sb) html = viewNoServer();
   else if (T.view === "newpass") html = viewNewPass();
@@ -452,7 +463,7 @@ function render(){
     <nav class="drawer glass ${T.drawer ? "open" : ""}" aria-label="Меню">
       <div class="me"><img data-m src="${U.mascot()}" alt="" style="width:44px"><div><b>${esc(T.me?.name || CFG.TEACHER_NAME || "Учитель")}</b><div class="small muted">${T.me?.role === "developer" ? "Учитель и разработчик" : "Кабинет учителя"}</div></div></div>
       <div class="group"><span class="mono">Разделы</span>${nav.map(([k,n,ic]) => `<button class="navitem" data-view="${k}" ${cur===k?'aria-current="page"':""}>${ic}${n}</button>`).join("")}
-        ${T.me?.role === "developer" ? `<a class="navitem" href="dev.html">${I.code}Кабинет разработчика</a>` : ""}</div>
+        ${T.me?.role === "developer" ? `<a class="navitem" href="dev.html">${I.code}Кабинет разработчика</a>` : logged ? `<button class="navitem" data-view="devcode" ${T.view === "devcode" ? 'aria-current="page"' : ""}>${I.code}Режим разработчика</button>` : ""}</div>
       <div class="group"><span class="mono">Предметы</span>${U.SUBJECTS.map(x => { const n = T.students.filter(s => subjOfS(s) === x.k).length;
         return `<button class="navitem" data-view="students" data-subjf="${x.k}" ${T.view === "students" && T.subject === x.k ? 'aria-current="page"' : ""}><span class="emo">${x.e}</span>${esc(x.n)}${n ? `<span class="chip" style="margin-left:auto">${n}</span>` : ""}</button>`; }).join("")}</div>
       ${logged ? `<div class="group"><button class="navitem" data-act="logout">${I.out}Выйти</button></div>` : ""}
@@ -516,6 +527,14 @@ const upd = async (id, row) => { const {error} = await sb.from("students").updat
 document.addEventListener("submit", async e => {
   e.preventDefault();
   const id = e.target.id;
+  if (id === "devcode-form"){
+    const btn = e.target.querySelector("button[type=submit]"), err = $("#dc-err"); btn.disabled = true; btn.textContent = "Проверяю…";
+    const {data, error} = await sb.rpc("dev_join", {p_code: $("#dc-code").value});
+    btn.disabled = false; btn.textContent = "Войти в режим разработчика";
+    if (error){ err.textContent = /dev_join|does not exist/i.test(error.message) ? "Обновите базу: в Supabase → SQL Editor заново выполните supabase/schema.sql." : U.authErr(error); return; }
+    if (!data){ err.textContent = "Код не подошёл. Если код ещё не задан – выполните в SQL Editor: select public.dev_set_code('ваш-код');"; return; }
+    toast("Вы в режиме разработчика"); await loadAll(); T.view = "devcode"; render(); return;
+  }
   if (id === "newpass-form"){
     const pw = $("#np-pass").value, err = $("#np-err");
     if (pw.length < 8){ err.textContent = "Пароль – не меньше 8 знаков."; err.hidden = false; return; }
