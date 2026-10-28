@@ -38,17 +38,17 @@ async function loadAll(){
   if (me.error) toast(/does not exist|function/i.test(me.error.message) ? "База ещё не настроена: выполните supabase/schema.sql в Supabase." : U.authErr(me.error));
   T.loaded = new Set();
   if (T.me.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
-  const [st, rs, hw, wr, sh, mt, ac, ar] = await Promise.all([
+  const [st, rs, hw, wr, sh, mt, ac, ar, wk] = await Promise.all([
     sb.from("students").select(ST_COLS).order("created_at"),
     sb.from("results").select("*").order("created_at"),
     sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("sheets").select("*"),
     sb.from("materials").select("*").order("id"), sb.from("activity").select("*"),
-    sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200)
+    sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200), sb.from("works").select("*")
   ]);
   const err = [st, rs, hw, wr, sh, mt, ac, ar].find(x => x.error)?.error;
   if (err) toast("Ошибка загрузки: " + err.message + ". Выполните заново supabase/schema.sql.");
   T.students = st.data || []; T.rows = rs.data || []; T.hw = hw.data || []; T.writings = wr.data || []; T.sheets = sh.data || [];
-  T.mats = mt.data || []; T.act = ac.data || []; T.reports = ar.data || [];
+  T.mats = mt.data || []; T.act = ac.data || []; T.reports = ar.data || []; T.works = wk.data || [];
   await ensureCourses([...new Set([...T.students.map(x => x.course), curCourse()])]);
   T.loading = false; render();
 }
@@ -264,7 +264,7 @@ function viewStudent(){
       <td class="tnum">${hr ? `<span class="chip ${lvl(pct(hr.last))}">${pct(hr.last)}%</span>` : "–"}</td>
       <td>${wcell}${w ? `<div style="margin-top:4px"><button class="btn ghost sm" data-wreview="${l.id}">Проверить</button></div>` : ""}</td>
       <td><span class="chip ${hs.c}">${hs.t}</span>${h?.note?`<div class="small" style="margin-top:4px">${/^https?:/.test(h.note)?`<a href="${esc(h.note)}" target="_blank" rel="noopener">ссылка ученика</a>`:esc(h.note)}</div>`:""}<div style="margin-top:4px"><button class="btn ghost sm" data-review="${l.id}">Оценить</button></div></td>
-      <td><div class="stack" style="gap:6px"><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button><button class="btn ghost sm" data-goto="${l.id}" title="Откроет этот урок на экране ученика">Показать ученику</button></div></td></tr>
+      <td><div class="stack" style="gap:6px"><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button>${l.practice?.length ? `<button class="btn ghost sm" data-workfor="${l.id}">Тетрадь${(T.works || []).some(w => w.student_id === s.id && w.lesson_id === l.id) ? " ✓" : ""}</button>` : ""}<button class="btn ghost sm" data-goto="${l.id}" title="Откроет этот урок на экране ученика">Показать ученику</button></div></td></tr>
       ${T.review === l.id ? `<tr><td colspan="11"><div class="stack" style="gap:6px;max-width:520px"><b>ДЗ: ${esc(l.title)}</b><p class="small">${esc(l.hw || "")}</p>
           ${hr ? `<p class="small muted">ДЗ-тест: ${esc(U.recText(hr.last))}</p>` : ""}
           <input type="text" id="rv-grade" placeholder="Оценка" value="${esc(h?.grade||"")}"><textarea id="rv-comment" placeholder="Комментарий ученику">${esc(h?.comment||"")}</textarea>
@@ -275,6 +275,18 @@ function viewStudent(){
   : `<div class="section-title"><h2>План</h2></div><div class="card"><p>План ещё не выбран: выберите курс выше. Подходит: ${esc(U.getCourse(U.planFor(subjOfS(s), s.grade ?? 9, s.goals || []))?.course || "–")}.</p></div>`}
   <div class="section-title"><h2>Управление</h2></div>
   <div class="card row"><button class="btn ${T.confirmDel===s.id?"danger":"ghost"} sm" data-act="del-student">${T.confirmDel===s.id?"Нажмите ещё раз, чтобы удалить навсегда":"Удалить ученика"}</button></div>`;
+}
+
+/* тетрадь ученика: его подчёркивания, буквы, знаки и ответы – вживую, рядом ключи */
+function viewWork(){
+  const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: []}, l = c.lessons.find(x => x.id === T.workLesson);
+  if (!l) return viewStudent();
+  const keys = keysFor(s.course, l), st = Object.fromEntries((T.works || []).filter(w => w.student_id === s.id && w.lesson_id === l.id).map(w => [w.task, w.data]));
+  return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-student="${s.id}">← ${esc(s.name)}</button>
+    <div class="row"><span data-online="${s.id}"></span><button class="btn sm" data-goto="${l.id}" data-sub2="practice">Открыть у ученика</button></div></div>
+  <article class="window glass" style="--c:${blockOf(c, l).color}"><div class="head"><div class="corners"><div class="mono muted">Тетрадь</div><div class="mono muted">${esc(s.name)}</div></div><h1>${esc(l.title)}</h1></div>
+    <div class="pane"><p class="small muted">Видно в реальном времени: как только ученик отмечает или вписывает, здесь обновляется.</p>
+      <div id="wk-view">${l.practice.map((p, i) => Work.task({...p, key: keys[i]}, i, st[i] || {}, true).replace('class="task wk"', 'class="task wk ro"')).join("")}</div></div></article>`;
 }
 
 function viewBoard(){
@@ -362,7 +374,7 @@ function materialsTab(cid, l){
 function viewLesson(){
   const cid = curCourse(), c = teacherCourse(cid), l = c.lessons.find(x => x.id === T.open); if (!l) { T.view = "course"; return viewCourse(); }
   const i = c.lessons.indexOf(l), b = blockOf(c, l), ok = access(cid) || l.custom;
-  const keys = (window.COURSE_KEYS?.[cid] || {})[l.id] || [];
+  const keys = keysFor(cid, l);
   const lk = {...l, practice: l.practice.map((p,k) => ({...p, key: keys[k]}))};
   const sh = sheetFor(cid, l.id), Tt = U.lessonTests(l);
   const tabs = [["method","Методика"],["theory","Теория"], l.practice.length && ["practice","Практика"], l.writing && ["writing","Письмо"], Tt.test.length && ["test","Тест"], l.hwtest?.length && ["hwtest","ДЗ-тест"], ["mats","Свои материалы"], ["sheet","Лист и ДЗ"], l.custom && ["edit","Изменить урок"]].filter(Boolean);
@@ -377,7 +389,10 @@ function viewLesson(){
       ${l.method?.tips?.length ? `<h3 style="margin-top:14px">Методические советы</h3><ul>${l.method.tips.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       ${l.stub ? `<p class="small" style="margin-top:12px">Содержание урока – по ФРП. Добавьте материалы и задания во вкладке «Свои материалы» – можно составить их нейросетью.</p>` : ""}`;
   if (T.sub === "theory") body = U.theoryHTML(l, true) + (Tt.mini.length ? `<div class="tblock">${U.miniHTML({id:"own"}, 0, Tt.mini, true)}</div>` : "");
-  if (T.sub === "practice") body = U.practiceHTML(lk, true);
+  if (T.sub === "practice") body = `<p class="small muted">Ключи видите только вы. ✎ – изменить ключ${T.me?.role === "developer" ? " (в режиме разработчика – сразу во встроенной базе для всех)" : " (ваши ключи – только для вас)"}.</p>` + lk.practice.map((p, k) => `<div class="task">
+      <b>Задание ${k+1}.</b> ${esc(p.t)}${p.text ? `<div class="ttext">${esc(p.text)}</div>` : ""}${p.items?.length ? `<ol class="items">${p.items.map((x, j) => `<li>${/^\d+\)/.test(x) ? "" : (j + 1) + ") "}${esc(x)}</li>`).join("")}</ol>` : ""}
+      ${T.editKey === k ? `<div class="keyedit"><textarea id="key-edit" aria-label="Ключ">${esc(p.key || "")}</textarea><div class="stack" style="gap:6px"><button class="btn sm" data-act="key-save" data-k="${k}">Сохранить</button><button class="btn ghost sm" data-act="key-cancel">Отмена</button></div></div>`
+        : `<div class="key"><b>Ключ:</b> ${esc(p.key || "– нет –")} <button class="btn ghost sm" data-act="key-edit" data-k="${k}" style="margin-left:6px">✎</button></div>`}</div>`).join("");
   if (T.sub === "writing"){
     const w = l.writing, kinds = w.type === "choice" ? ["13.1","13.2","13.3"] : [w.type === "izl" ? "izl" : (["thesis","example"].includes(w.type) ? "13.3" : w.type)];
     body = `<div class="theory">${U.stepHTML(w.step)}</div>
@@ -461,7 +476,7 @@ function render(){
   else if (!sb) html = viewNoServer();
   else if (T.view === "newpass") html = viewNewPass();
   else if (!T.session) html = viewLogin();
-  else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : viewStudents();
+  else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : T.view === "work" ? viewWork() : viewStudents();
   const cur = ["students","student","board"].includes(T.view) ? "students" : ["course","lesson"].includes(T.view) ? "course" : T.view;
   const nav = [["students","Ученики",I.users],["course","Материалы и база",I.book],["methodology","Методика курса",I.method],["sub","Подписка",I.code.replace(/<path[^>]*\/>/, '<path d="M3 7h18v10H3zM3 11h18"/>')],["look","Оформление",I.pen]];
   $("#app").innerHTML = `<div class="shell">
@@ -485,6 +500,13 @@ function render(){
   }
 }
 
+/* ключи к заданиям: из базы + свои правки учителя */
+function keysFor(cid, l){
+  const base = [...((window.COURSE_KEYS?.[cid] || {})[l.id] || [])];
+  const own = T.mats.find(m => m.kind === "keys" && m.course === cid && m.lesson_id === l.id && m.teacher_id === T.session?.user.id);
+  Object.entries(own?.data || {}).forEach(([k, v]) => base[+k] = v);
+  return base;
+}
 /* встроенная база грузится по курсам, когда нужна (вся база – десятки мегабайт) */
 async function ensureCourses(keys){
   if (!sb || !T.me?.base) return false;
@@ -508,6 +530,14 @@ function liveStart(){
     paintOnline();
   }).on("broadcast", {event:"act"}, ({payload:m}) => {
     if (!m?.act) return;
+    if (m.work){
+      T.works = (T.works || []).filter(w => !(w.student_id === m.id && w.lesson_id === m.lesson && w.task === m.task)).concat({student_id: m.id, lesson_id: m.lesson, task: m.task, data: m.data});
+      if (T.view === "work" && T.sel === m.id && T.workLesson === m.lesson){
+        const s = T.students.find(x => x.id === m.id), c = U.courseFor(s, T.mats), l = c?.lessons.find(x => x.id === m.lesson), el = document.querySelector(`#wk-view [data-task="${m.task}"]`);
+        if (l && el){ const keys = keysFor(s.course, l); el.outerHTML = Work.task({...l.practice[m.task], key: keys[m.task]}, m.task, m.data, true).replace('class="task wk"', 'class="task wk ro"'); }
+      }
+      return;
+    }
     T.feed.unshift({...m, at: Date.now()}); T.feed = T.feed.slice(0, 30);
     toast(`${m.name.split(" ")[0]}: ${m.text}`); refreshSoon();
   }).subscribe(st => { if (st === "SUBSCRIBED") T.live.track({role:"teacher"}).catch(() => {}); });
@@ -619,7 +649,7 @@ document.addEventListener("change", async e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && T.drawer){ T.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto],[data-subjf],[data-matsubj],[data-pay]"); if (!t) return;
+  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto],[data-subjf],[data-matsubj],[data-pay],[data-workfor]"); if (!t) return;
   if (t.dataset.pay){
     t.disabled = true; t.textContent = "Открываю оплату…";
     const {data, error} = await sb.functions.invoke("pay", {body: {action: "create", plan: t.dataset.pay, return_url: location.origin + location.pathname + "#paid"}});
@@ -651,6 +681,7 @@ document.addEventListener("click", async e => {
     if (s.pair_id) cmd(s.pair_id, "goto", {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page});
     toast(T.online[s.id] ? "Урок открыт у ученика" : "Ученик сейчас не в сети – урок откроется, когда он зайдёт и вы нажмёте ещё раз"); return;
   }
+  if (t.dataset.workfor){ T.workLesson = t.dataset.workfor; T.view = "work"; render(); scrollTo(0, 0); return; }
   if (t.dataset.boardfor === "free"){ cmd(T.sel, "goto", {lesson: "free"}); const s = T.students.find(x => x.id === T.sel); if (s?.pair_id) cmd(s.pair_id, "goto", {lesson: "free"}); }
   if (t.dataset.boardfor){ T.boardLesson = t.dataset.boardfor; T.view = "board"; render(); scrollTo(0,0); return; }
   if (t.dataset.delmat){
@@ -668,6 +699,26 @@ document.addEventListener("click", async e => {
   if (t.dataset.review && !t.dataset.act){ T.review = T.review === t.dataset.review ? null : t.dataset.review; T.wreview = null; render(); return; }
   if (t.dataset.wreview && !t.dataset.act){ T.wreview = T.wreview === t.dataset.wreview ? null : t.dataset.wreview; T.review = null; render(); return; }
   const a = t.dataset.act;
+  if (a === "key-edit"){ T.editKey = +t.dataset.k; render(); $("#key-edit")?.focus(); return; }
+  if (a === "key-cancel"){ T.editKey = null; render(); return; }
+  if (a === "key-save"){
+    const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open), k = +t.dataset.k, v = $("#key-edit").value.trim();
+    if (T.me?.role === "developer" && window.COURSE_KEYS?.[cid] && !l.custom){
+      const all = {...(window.COURSE_KEYS[cid] || {})}; const arr = [...(all[l.id] || [])]; arr[k] = v; all[l.id] = arr;
+      const {error} = await sb.from("course_data").update({keys: all, updated_at: new Date().toISOString()}).eq("key", cid);
+      if (error){ toast("Не сохранилось: " + error.message); return; }
+      window.COURSE_KEYS[cid] = all; toast("Ключ обновлён во встроенной базе");
+    } else {
+      const own = T.mats.find(m => m.kind === "keys" && m.course === cid && m.lesson_id === l.id && m.teacher_id === T.session.user.id);
+      const data = {...(own?.data || {}), [k]: v};
+      const q = own ? sb.from("materials").update({data}).eq("id", own.id).select().single() : sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "keys", title: "Ключи", data}).select().single();
+      const {data: row, error} = await q;
+      if (error){ toast("Не сохранилось: " + error.message); return; }
+      if (own) own.data = data; else T.mats.push(row);
+      toast("Ключ сохранён");
+    }
+    T.editKey = null; render(); return;
+  }
   if (a === "install"){
     if (installEvt){ installEvt.prompt(); installEvt = null; }
     else if (window.matchMedia("(display-mode: standalone)").matches) toast("Приложение уже установлено.");

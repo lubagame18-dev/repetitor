@@ -51,11 +51,12 @@ async function load(){
     S.sheets = Object.fromEntries((data.sheets || []).map(h => [h.lesson_id, h]));
     S.writings = Object.fromEntries((data.writings || []).map(h => [h.lesson_id, h]));
     S.mats = data.materials || [];
+    S.works = {}; (data.works || []).forEach(w => (S.works[w.lesson_id] = S.works[w.lesson_id] || {})[w.task] = w.data);
     S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
     U.loadBase(S.base);
     LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
   } else {
-    S.rows = LS.get("rows", []); S.hw = LS.get("hw", {}); S.writings = LS.get("writings", {}); S.sheets = {};
+    S.rows = LS.get("rows", []); S.hw = LS.get("hw", {}); S.writings = LS.get("writings", {}); S.sheets = {}; S.works = LS.get("works", {});
   }
   recompute();
 }
@@ -139,6 +140,15 @@ function liveTrack(now){
 }
 /* сообщить учителю о сделанном – у него всё обновится сразу */
 function liveAct(text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text}}).catch(() => {}); }
+
+/* интерактивная тетрадь: сохраняем через секунду тишины, учителю – сразу */
+const workT = {}, workLive = {};
+function saveWork(lessonId, i, st){
+  const k = lessonId + ":" + i;
+  try{ const all = LS.get("works", {}); (all[lessonId] = all[lessonId] || {})[i] = st; LS.set("works", all); }catch(_){}
+  clearTimeout(workLive[k]); workLive[k] = setTimeout(() => { if (live) live.send({type:"broadcast", event:"act", payload:{act:true, work:true, id:S.profile.id, name:S.profile.name, lesson:lessonId, task:i, data:st, text:"работает в тетради"}}).catch(() => {}); }, 300);
+  clearTimeout(workT[k]); workT[k] = setTimeout(() => { if (sb) sb.rpc("student_save_work", {p_code:S.token, p_lesson:lessonId, p_task:i, p_data:st}).then(() => {}, () => toast("Не сохранилось: нет связи. Отметки остались на устройстве.")); }, 1000);
+}
 
 /* время в папке урока: раз в минуту, пока вкладка на экране */
 setInterval(() => {
@@ -409,7 +419,9 @@ function viewFolder(){
   if (S.sub === "theory") pane = (l.theory.length ? U.theoryHTML(l) : `<p class="muted">Теорию к этому уроку учитель даст на занятии – загляни во вкладку «Материалы».</p>`)
       + (l.practice?.length ? `<div class="card" style="margin-top:16px;box-shadow:none"><div class="kicker">Дальше</div><p style="margin-top:4px">Теория и мини-практика пройдены – переходи к заданиям в формате экзамена.</p><div style="margin-top:8px"><button class="btn sm" data-sub="practice">К практике →</button></div></div>` : "") + toBoard("theory");
   if (S.sub === "practice") pane = `${sh.url ? `<p style="margin-bottom:10px"><a class="btn yellow sm" href="${esc(sh.url)}" target="_blank" rel="noopener">${esc(sh.name || "Рабочий лист")}</a></p>` : ""}
-      ${sh.note ? `<p class="small" style="margin-bottom:8px">${esc(sh.note)}</p>` : ""}${U.practiceHTML(l, false)}${toBoard("practice")}
+      ${sh.note ? `<p class="small" style="margin-bottom:8px">${esc(sh.note)}</p>` : ""}
+      <div class="wk-root" id="wk-root">${Work.toolbar()}${l.practice.map((p, i) => Work.task(p, i, (S.works?.[l.id] || {})[i] || {})).join("")}</div>
+      <p class="small muted" style="margin-top:8px">Всё, что ты отмечаешь, сохраняется само и сразу видно учителю.</p>${toBoard("practice")}
       ${S.course.goal === "ОГЭ" ? `<p class="small muted" style="margin-top:14px">Реальные задания: <a href="${FIPI}" target="_blank" rel="noopener">открытый банк ФИПИ</a> · <a href="${RESHU}" target="_blank" rel="noopener">«Решу ОГЭ»</a></p>` : ""}
       ${S.course.goal === "ЕГЭ" ? `<p class="small muted" style="margin-top:14px">Реальные задания: <a href="https://ege.fipi.ru/bank/" target="_blank" rel="noopener">открытый банк ФИПИ</a> · <a href="https://rus-ege.sdamgia.ru" target="_blank" rel="noopener">«Решу ЕГЭ»</a></p>` : ""}`;
   if (S.sub === "board") pane = `<div class="board glass" id="board"></div><p class="small muted" style="margin-top:8px">Доска общая с учителем${S.profile.pair ? ` и с ${esc(S.profile.pair.name.split(" ")[0])}` : ""}: видно курсоры и всё, что рисуют. Чтобы листать на телефоне – выбери ✋, увеличить – двумя пальцами.</p>`;
@@ -454,7 +466,7 @@ function startTest(id, kind){
   let qs, title;
   if (kind === "entry"){ const et = entryTest(); qs = et.q; title = et.title; id = "entry-" + grade(); }
   else { const l = S.course.lessons.find(x => x.id === id); qs = kind === "hw" ? l.hwtest : tests(l).test; title = l.title; }
-  S.test = {id, kind, qs, title, i:0, picked:null, score:0, wrong:[], t0:Date.now(), order:qs.map(q => U.shuffle(q.o.map((_,k) => k)))};
+  S.test = {id, kind, qs, title, i:0, picked:null, score:0, wrong:[], t0:Date.now(), order:qs.map(q => q.o ? U.shuffle(q.o.map((_,k) => k)) : [])};
   S.view = "test"; render(); scrollTo(0,0);
 }
 function viewTest(){
@@ -472,6 +484,16 @@ function viewTest(){
       </article>`;
   }
   const q = T.qs[T.i], ord = T.order[T.i];
+  if (!q.o){   // вопрос с вводом ответа
+    const done = T.picked != null, ok = done && T.picked === 1;
+    return `<div class="row between" style="margin-bottom:10px"><button class="btn ghost sm" ${back}>✕ Выйти</button><span class="chip tnum">${label} · ${T.i+1} из ${n}</span></div>
+    <div class="progress"><i style="width:${T.i/n*100}%"></i></div>
+    <article class="card" style="margin-top:14px"><div class="kicker">${esc(T.title)}</div><p class="q">${esc(q.q)}</p>
+      <form class="row" id="tin-form" style="flex-wrap:nowrap"><input type="text" id="tin" autocomplete="off" autocapitalize="none" spellcheck="false" ${done ? "readonly" : ""} value="${esc(T.typed || "")}" style="${done ? `border-color:${ok ? "var(--good)" : "var(--bad)"}` : ""}"><button class="btn" type="submit" ${done ? "hidden" : ""}>Ответить</button></form>
+      ${done ? `${T.kind === "entry" ? "" : `<div class="expl"><b>${ok ? "Верно." : "Неверно."}</b> ${ok ? "" : "Правильно: " + esc(String(q.a).split("|")[0]) + ". "}${esc(q.e || "")}</div>`}
+        <div style="margin-top:14px"><button class="btn" data-act="next-q">${T.i===n-1?"Завершить":"Дальше"}</button></div>` : ""}
+    </article>`;
+  }
   return `<div class="row between" style="margin-bottom:10px"><button class="btn ghost sm" ${back}>✕ Выйти</button><span class="chip tnum">${label} · ${T.i+1} из ${n}</span></div>
   <div class="progress"><i style="width:${T.i/n*100}%"></i></div>
   <article class="card" style="margin-top:14px">
@@ -560,6 +582,10 @@ function render(){
       role: "student", name: S.profile.name, pages: Board.pages(S.course, l), onPage: p => S.boardPage = p
     });
   }
+  if (v === "folder" && S.sub === "practice" && $("#wk-root")){
+    const l = S.course.lessons.find(x => x.id === S.open), states = (S.works = S.works || {})[l.id] = S.works[l.id] || {};
+    Work.bind($("#wk-root"), states, (i, st) => saveWork(l.id, i, st));
+  }
   if (v === "myboard"){
     S.board = Board.mount($("#board"), {api: Board.api("student", sb, {code:S.token, lesson:"free"}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-free` : null,
       page: S.boardPage, role: "student", name: S.profile.name, pages: Board.pages(S.course || {}, FREE), onPage: p => S.boardPage = p});
@@ -587,6 +613,10 @@ document.addEventListener("submit", async e => {
       S.signupDone = email; S.lastEmail = email; S.authMsg = null; render();
     }catch(er){ btn.textContent = "Зарегистрироваться"; say(U.authErr(er)); }
     return;
+  }
+  if (e.target.id === "tin-form"){
+    const T = S.test, q = T.qs[T.i], v = $("#tin").value.trim(); if (!v) return;
+    T.typed = v; const ok = U.miniCheck(v, q.a); T.picked = ok ? 1 : 0; if (ok) T.score++; else T.wrong.push(q.tag || "ввод ответа"); render(); return;
   }
   if (e.target.id === "ssignup-form"){
     const code = $("#ss-code").value.trim().toUpperCase(), name = $("#ss-name").value.trim(), sub = $("#ss-subj").value, g = +$("#ss-grade").value, p1 = $("#ss-pass").value;
@@ -740,7 +770,7 @@ document.addEventListener("click", async e => {
   if (a === "start-entry" || a === "retry-entry") startTest(null, "entry");
   if (a === "to-login"){ S.invite = null; history.replaceState(null, "", location.pathname); render(); }
   if (a === "next-q"){
-    const T = S.test; T.i++; T.picked = null;
+    const T = S.test; T.i++; T.picked = null; T.typed = "";
     if (T.i >= T.qs.length){
       await sendResult(T.id, T.kind, T.score, T.qs.length, T.wrong, Math.round((Date.now() - T.t0) / 1000));
       if (T.kind === "hw" && !S.hw[T.id]?.status) await sendHw(T.id, `ДЗ-тест пройден: ${T.score}/${T.qs.length}`, true);

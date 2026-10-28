@@ -157,6 +157,19 @@ create table if not exists public.materials (
   created_at  timestamptz not null default now()
 );
 create index if not exists materials_idx on public.materials(teacher_id, course);
+-- kind 'keys' – свои ключи учителя к заданиям урока (ученикам не отдаются)
+alter table public.materials drop constraint if exists materials_kind_check;
+alter table public.materials add constraint materials_kind_check check (kind in ('link','file','text','tasks','lesson','keys'));
+
+-- интерактивная работа ученика с заданием: подчёркивания, подписи, вставленные буквы, знаки, ответ
+create table if not exists public.works (
+  student_id  uuid not null references public.students(id) on delete cascade,
+  lesson_id   text not null,
+  task        int  not null,
+  data        jsonb not null default '{}'::jsonb,
+  updated_at  timestamptz not null default now(),
+  primary key (student_id, lesson_id, task)
+);
 alter table public.materials add column if not exists shared boolean not null default false;  -- общая база разработчика: видна всем учителям и их ученикам курса
 
 -- Общая доска: штрихи и надписи. lesson_id = 'l01:practice' и т. п. У пары – общая доска (student_id младшего по id).
@@ -207,6 +220,7 @@ alter table public.ai_reports   enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.app_secrets  enable row level security;
 alter table public.payments     enable row level security;
+alter table public.works        enable row level security;
 alter table public.course_data  enable row level security;
 
 create or replace function public.is_dev()
@@ -245,7 +259,7 @@ drop policy if exists "students_need_plan" on public.students;
 create policy "students_need_plan" on public.students as restrictive for insert to authenticated with check (public.plan_active(auth.uid()) is not null);
 
 do $$ declare t text; begin
-  foreach t in array array['results','activity','homework','writings','board_items'] loop
+  foreach t in array array['results','activity','homework','writings','board_items','works'] loop
     execute format('drop policy if exists "teacher_%1$s" on public.%1$s', t);
     execute format('create policy "teacher_%1$s" on public.%1$s for all to authenticated
       using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
@@ -368,6 +382,14 @@ begin
   on conflict (key) do update set value = excluded.value, updated_at = now();
 end $$;
 revoke all on function public.dev_set_code(text) from public, anon, authenticated;
+
+-- сменить код разработчика из кабинета (только разработчик)
+create or replace function public.dev_change_code(p_code text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not is_dev() then raise exception 'developer only'; end if;
+  perform dev_set_code(p_code);
+end $$;
 
 -- вход в режим разработчика: проверка кода на сервере; при успехе учётная запись получает роль разработчика
 create or replace function public.dev_join(p_code text)
@@ -529,9 +551,10 @@ returns json language sql security definer set search_path = public stable as $$
                           from writings w where w.student_id = s.id), '[]'::json),
     'sheets',   coalesce((select json_agg(json_build_object('lesson_id', x.lesson_id, 'name', x.name, 'url', x.url, 'note', x.note))
                           from sheets x where x.teacher_id = s.teacher_id and x.course = s.course), '[]'::json),
+    'works',    coalesce((select json_agg(json_build_object('lesson_id', x.lesson_id, 'task', x.task, 'data', x.data)) from works x where x.student_id = s.id), '[]'::json),
     'course_data', (select c.data from course_data c where c.key = s.course and can_read_base(s.teacher_id)),
     'materials', coalesce((select json_agg(json_build_object('id', m.id, 'course', m.course, 'lesson_id', m.lesson_id, 'student_id', m.student_id, 'shared', m.shared, 'kind', m.kind, 'title', m.title, 'body', m.body, 'url', m.url, 'data', m.data) order by m.id)
-                          from materials m where m.course = s.course and ((m.teacher_id = s.teacher_id and (m.student_id is null or m.student_id = s.id)) or (m.shared and m.student_id is null and can_read_base(s.teacher_id)))), '[]'::json)
+                          from materials m where m.kind <> 'keys' and m.course = s.course and ((m.teacher_id = s.teacher_id and (m.student_id is null or m.student_id = s.id)) or (m.shared and m.student_id is null and can_read_base(s.teacher_id)))), '[]'::json)
   ) from s;
 $$;
 
@@ -561,6 +584,16 @@ create or replace function public.student_set_theme(p_code text, p_theme text)
 returns void language sql security definer set search_path = public as $$
   update students set theme = left(p_theme, 20) where id = student_id_by_code(p_code);
 $$;
+
+create or replace function public.student_save_work(p_code text, p_lesson text, p_task int, p_data jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare sid uuid := student_id_by_code(p_code);
+begin
+  if sid is null then raise exception 'unknown code'; end if;
+  if length(p_data::text) > 50000 then raise exception 'too big'; end if;
+  insert into works(student_id, lesson_id, task, data) values (sid, left(p_lesson, 40), p_task, p_data)
+  on conflict (student_id, lesson_id, task) do update set data = excluded.data, updated_at = now();
+end $$;
 
 create or replace function public.student_set_mascot(p_code text, p_mascot text)
 returns void language sql security definer set search_path = public as $$
@@ -630,14 +663,14 @@ do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
     'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
-    'public.student_set_theme(text, text)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
+    'public.student_set_theme(text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;
   foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
-    'public.dev_join(text)', 'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
+    'public.dev_join(text)', 'public.dev_change_code(text)', 'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
     execute 'revoke all on function ' || f || ' from public, anon';
     execute 'grant execute on function ' || f || ' to authenticated';
   end loop;

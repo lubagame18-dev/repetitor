@@ -111,6 +111,13 @@ function view(){
     <div class="row"><input type="file" id="base-file" accept=".json,application/json" hidden><button class="btn" data-act="base-upload">Загрузить base.json</button></div>
   </div>
 
+  <div class="section-title"><h2>Код разработчика</h2></div>
+  <form class="card stack" id="code-form" style="gap:8px" autocomplete="off">
+    <p class="small muted">Код, по которому учётная запись получает права разработчика. Хранится только в виде хэша.</p>
+    <label for="nc-code">Новый код (не меньше 6 знаков)</label>${U.pass("nc-code", 'minlength="6" required autocomplete="off" data-lpignore="true" data-1p-ignore="true"')}
+    <div><button class="btn" type="submit">Сменить код</button></div>
+  </form>
+
   <div class="section-title"><h2>Встроенная база по предметам и классам</h2></div>
   ${baseEditor()}
 
@@ -148,6 +155,11 @@ function render(){
 
 document.addEventListener("submit", async e => {
   e.preventDefault();
+  if (e.target.id === "code-form"){
+    const v = $("#nc-code").value; if (v.length < 6){ toast("Код – не меньше 6 знаков"); return; }
+    const {error} = await sb.rpc("dev_change_code", {p_code: v});
+    toast(error ? "Не получилось: " + error.message : "Код разработчика изменён"); if (!error) $("#nc-code").value = ""; return;
+  }
   if (e.target.id === "base-add"){
     const key = bCourse(), lid = $("#ba-lesson").value, files = [...$("#ba-files").files], url = $("#ba-url").value.trim(), title = $("#ba-title").value.trim(), body = $("#ba-body").value.trim();
     const msg = $("#ba-msg"), rows = [];
