@@ -357,3 +357,6 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
 .linkbtn{border:0;background:none;padding:0;color:var(--violet);font-weight:700;text-decoration:underline;font-size:.88rem;text-align:left}
 .formmsg{font-size:.88rem}
 .formmsg.bad{color:var(--bad)} .formmsg.good{color:var(--good)}
+.authtabs.two{grid-template-columns:repeat(2,1fr)}
+.regline{display:flex;gap:8px;justify-content:center;align-items:center;padding-top:10px;margin-top:4px;border-top:1px dashed var(--hair);font-size:.92rem}
+.regline .linkbtn{font-size:.92rem}

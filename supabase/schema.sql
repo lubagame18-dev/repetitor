@@ -50,6 +50,7 @@ alter table public.teachers add column if not exists call_url      text;   -- с
 alter table public.teachers add column if not exists plan          text not null default 'basic';
 alter table public.teachers add column if not exists paid_until    timestamptz;
 alter table public.teachers add column if not exists trial         boolean not null default false;
+alter table public.teachers add column if not exists join_code     text unique;   -- код, по которому ученики регистрируются сами
 
 -- платежи (ЮKassa)
 create table if not exists public.payments (
@@ -279,7 +280,7 @@ create policy "settings_dev" on public.app_settings for all to authenticated usi
 -- ---------- Учитель ----------
 -- профиль учителя (создаётся при первом входе)
 create or replace function public.me()
-returns json language plpgsql security definer set search_path = public as $$
+returns json language plpgsql security definer set search_path = public, extensions as $$
 declare uid uuid := auth.uid(); r teachers; first boolean; days int;
 begin
   if uid is null then return null; end if;
@@ -290,8 +291,15 @@ begin
           'teacher',
           'full', case when days > 0 then now() + make_interval(days => days) end, days > 0)
   on conflict (id) do nothing;
+  if (select join_code from teachers where id = uid) is null then
+    loop
+      begin
+        update teachers set join_code = upper(substr(encode(gen_random_bytes(5), 'hex'), 1, 6)) where id = uid; exit;
+      exception when unique_violation then null; end;
+    end loop;
+  end if;
   select * into r from teachers where id = uid;
-  return json_build_object('id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url,
+  return json_build_object('join_code', r.join_code, 'id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url,
     'plan', r.plan, 'paid_until', r.paid_until, 'trial', r.trial, 'active', plan_active(r.id), 'base', can_read_base(r.id),
     'prices', (select value from app_settings where key = 'prices'));
 end $$;
@@ -456,6 +464,32 @@ begin
   return json_build_object('token', tok, 'profile', student_profile_json(sid));
 end $$;
 
+-- ученик регистрируется сам по коду учителя (без ссылки-приглашения)
+create or replace function public.teacher_by_code(p_code text)
+returns json language sql security definer set search_path = public stable as $$
+  select json_build_object('name', coalesce(name, 'Учитель'), 'active', plan_active(id) is not null) from teachers where join_code = upper(trim(p_code));
+$$;
+create or replace function public.student_signup(p_teacher_code text, p_name text, p_subject text, p_grade int, p_goals text[], p_contact text, p_password text, p_course text default null, p_theme text default null)
+returns json language plpgsql security definer set search_path = public, extensions as $$
+declare t teachers; sid uuid; tok text; c text; pack text;
+begin
+  select * into t from teachers where join_code = upper(trim(p_teacher_code));
+  if t.id is null then raise exception 'teacher code not found'; end if;
+  if plan_active(t.id) is null then raise exception 'teacher subscription inactive'; end if;
+  if length(coalesce(p_password, '')) < 6 then raise exception 'short password'; end if;
+  if p_grade < 0 or p_grade > 11 then raise exception 'bad grade'; end if;
+  if length(trim(coalesce(p_name, ''))) < 2 then raise exception 'name required'; end if;
+  loop c := upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 7)); exit when not exists (select 1 from students where code = c); end loop;
+  pack := case when p_course ~ '^rus-(5|6|7|8|9|10|11)$' then 'school-rus' when p_course in ('oge-rus','ege-rus') then p_course else null end;
+  tok := encode(gen_random_bytes(24), 'hex');
+  insert into students(teacher_id, name, course, code, grade, goals, goal, contact, password_hash, access_token, registered_at, start_date, subject, theme)
+  values (t.id, left(trim(p_name), 120), case when p_course is null then '' when pack is null or can_read_base(t.id) then left(p_course, 40) else '' end,
+          c, p_grade, coalesce(p_goals, '{}'), array_to_string(p_goals, ', '), left(p_contact, 200), crypt(p_password, gen_salt('bf')), tok, now(), current_date,
+          left(coalesce(p_subject, 'rus'), 20), left(p_theme, 20))
+  returning id into sid;
+  return json_build_object('token', tok, 'profile', student_profile_json(sid));
+end $$;
+
 create or replace function public.student_login(p_login text, p_password text)
 returns json language plpgsql security definer set search_path = public, extensions as $$
 declare r students; tok text;
@@ -595,7 +629,7 @@ do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
     'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
-    'public.student_set_theme(text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
+    'public.student_set_theme(text, text)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
     execute 'revoke all on function ' || f || ' from public';

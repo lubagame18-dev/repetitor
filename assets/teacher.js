@@ -147,6 +147,10 @@ function viewStudents(){
       <div><button class="btn" type="submit">Создать ссылку-приглашение</button></div>
     </form>
     ${T.justInvited ? inviteBox(T.justInvited) : ""}
+    ${T.me?.join_code ? `<div class="card stack" style="gap:8px;margin-top:14px"><div class="kicker">Ученики могут зарегистрироваться сами</div>
+      <p>Ваш код для учеников: <b class="tnum" style="font-size:1.3rem;letter-spacing:.08em">${esc(T.me.join_code)}</b></p>
+      <div class="linkbox"><input type="text" id="jlink" readonly value="${esc(U.siteURL("?t=" + T.me.join_code))}"><button class="btn sm" data-act="copy-join">Копировать ссылку</button></div>
+      <p class="small muted">Ученик открывает ссылку (или на главной: «Я ученик» → «Зарегистрироваться» и вводит код), выбирает предмет, класс и цели – и сразу появляется у вас в списке. Ссылка многоразовая.</p></div>` : ""}
 
     <div class="section-title"><h2>Ждут проверки</h2></div>
     <div class="card">${(() => {
@@ -662,6 +666,7 @@ document.addEventListener("click", async e => {
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();
   if (a === "logout"){ await sb.auth.signOut(); location.href = "./"; }
+  if (a === "copy-join"){ const inp = $("#jlink"); try{ await navigator.clipboard.writeText(inp.value); toast("Ссылка скопирована"); }catch(_){ inp.select(); toast("Выделено – скопируйте вручную"); } return; }
   if (a === "copy"){ const inp = $("#ilink"); try{ await navigator.clipboard.writeText(inp.value); toast("Ссылка скопирована"); }catch(_){ inp.select(); toast("Выделено – скопируйте вручную"); } }
   if (a === "new-invite"){
     const {data, error} = await sb.rpc("teacher_new_invite", {p_student: T.sel});
