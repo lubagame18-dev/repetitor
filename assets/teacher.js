@@ -239,7 +239,8 @@ function viewStudent(){
       <p class="small muted">Ссылка на созвон: Яндекс Телемост, VK Звонки, Сферум или любая другая – своя для каждого ученика. «Начать занятие» сразу открывает звонок, общую доску и задания текущего урока, а ученику приходит приглашение: он выбирает доску, звонок или то и другое (можно с разных устройств).</p>
       <div class="linkbox"><input type="url" id="call-url" value="${esc(s.call_url || "")}" placeholder="${esc(T.me?.call_url || "https://telemost.yandex.ru/j/…")}"><button class="btn ghost sm" data-act="save-call">Сохранить</button></div>
       <div class="row"><button class="btn sm" data-act="start-lesson">📞 Начать занятие</button><button class="btn ghost sm" data-boardfor="free">Личная доска</button>
-        <a class="btn ghost sm" href="https://telemost.yandex.ru/" target="_blank" rel="noopener">Создать встречу в Телемосте</a></div></div>
+        <a class="btn ghost sm" href="https://telemost.yandex.ru/" target="_blank" rel="noopener" data-act="new-meeting">Создать встречу в Телемосте</a></div>
+      <p class="small muted">Создайте встречу, скопируйте её ссылку и вернитесь сюда – ссылка сама закрепится за учеником. Или просто вставьте её в поле: сохранять не нужно.</p></div>
     ${!pending(s) && sb ? `<div class="card stack" style="gap:8px"><div class="kicker">Урок из другого класса или предмета</div>
       <p class="small muted">Любой урок базы – для повторения, опережения или другой программы. Он копируется в план только этого ученика${s.pair_id ? " и напарника" : ""}, вместе с заданиями и ключами.</p>${takePick(s, "student")}</div>` : ""}
     <div class="card stack" style="gap:8px"><div class="kicker">Работа в паре</div>
@@ -508,11 +509,31 @@ function takePick(s, mode){
 }
 /* ---------- урок онлайн: звонок + общая доска + интерактивные задания ученика, всё сразу ---------- */
 const isoToday = () => U.iso(new Date());
+/* урок по плану: тот, чья дата ближе всего к сегодняшней (сегодняшний – в первую очередь; при равенстве – ближайший следующий) */
 function lessonNow(c){
   const L = c?.lessons || []; if (!L.length) return "free";
-  return (L.find(l => l.date >= isoToday()) || L[L.length - 1]).id;
+  const t0 = new Date(isoToday() + "T00:00:00").getTime(), dist = l => new Date(l.date + "T00:00:00").getTime() - t0;
+  return L.reduce((best, l) => { const a = Math.abs(dist(l)), b = Math.abs(dist(best)); return a < b || (a === b && dist(l) > 0 && dist(best) < 0) ? l : best; }, L[0]).id;
 }
-function callOf(s){ return ($("#call-url")?.value.trim()) || s.call_url || T.me?.call_url || ""; }
+/* у каждого ученика своя ссылка на созвон: что вставлено – сразу закрепляется за ним */
+const isCall = u => /^https?:\/\/\S+$/.test(u || "");
+async function saveCall(s, u, quiet){
+  u = (u || "").trim(); if (!isCall(u) || u === s.call_url) return false;
+  if (!(await upd(s.id, {call_url: u}))) return false;
+  if (T.room?.sid === s.id) T.room.url = u;
+  cmd(s.id, "refresh", {msg: "Учитель добавил ссылку на занятие"});
+  if (!quiet) toast(`Ссылка закреплена за учеником: ${s.name}`);
+  return true;
+}
+function callOf(s){ const v = $("#call-url")?.value.trim(); return isCall(v) ? v : s.call_url || ""; }
+/* «Создать встречу в Телемосте» → скопировали ссылку → вернулись на сайт: подхватываем её из буфера обмена */
+window.addEventListener("focus", async () => {
+  const sid = T.awaitLink; if (!sid || !navigator.clipboard?.readText) return;
+  try{
+    const u = (await navigator.clipboard.readText()).trim(), s = T.students.find(x => x.id === sid);
+    if (s && /^https:\/\/telemost\.(yandex|360\.yandex)\.ru\/j\/\S+$/.test(u) && u !== s.call_url){ T.awaitLink = null; if (await saveCall(s, u)) render(); }
+  }catch(_){}
+});
 function roomSend(type){
   const r = T.room; if (!r) return;
   const s = T.students.find(x => x.id === r.sid), c = U.courseFor(s, T.mats), l = r.lesson === "free" ? FREE : c?.lessons.find(x => x.id === r.lesson);
@@ -544,7 +565,8 @@ async function roomReplan(){
     toast(r.moved ? `План перестроен: «${P?.title || "урок по плану"}» перенесён на следующее занятие, остальные сдвинулись` : "План уроков возвращён как был"); }
 }
 function startRoom(s, lesson, keepPlan){
-  const url = callOf(s), c = U.courseFor(s, T.mats), planned = c?.lessons.length ? lessonNow(c) : null;
+  const url = callOf(s); if (url !== s.call_url) saveCall(s, url, true);
+  const c = U.courseFor(s, T.mats), planned = c?.lessons.length ? lessonNow(c) : null;
   if (url) window.open(url, "_blank", "noopener");
   const to = [s.id, s.pair_id].filter(Boolean);
   T.room = {sid: s.id, to, lesson: lesson || planned || "free", planned, base: Object.fromEntries(to.map(id => [id, {...(T.students.find(x => x.id === id)?.dates || {})}])), url, at: Date.now(), tab: null, who: s.id};
@@ -575,8 +597,8 @@ function viewRoom(){
   return `<div class="roombar glass">
       <div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок: ${esc(s.name)}${pair ? " и " + esc(pair.name) : ""}</b><span data-online="${s.id}"></span></div>
       <div class="row" style="gap:8px">
-        <select id="room-lesson" aria-label="Урок"><option value="free" ${r.lesson === "free" ? "selected" : ""}>Свободная доска</option>${c.lessons.map((x, i) => `<option value="${x.id}" ${x.id === r.lesson ? "selected" : ""}>№ ${i + 1} · ${esc(x.title)}</option>`).join("")}</select>
-        ${r.url ? `<a class="btn sm" href="${esc(r.url)}" target="_blank" rel="noopener">📞 Звонок</a>` : `<span class="linkbox" style="min-width:240px"><input type="url" id="room-url" placeholder="Ссылка на созвон (Телемост)"><button class="btn sm" data-act="room-url">📞</button></span>`}
+        <select id="room-lesson" aria-label="Урок"><option value="free" ${r.lesson === "free" ? "selected" : ""}>Свободная доска</option>${c.lessons.map((x, i) => `<option value="${x.id}" ${x.id === r.lesson ? "selected" : ""}>№ ${i + 1} · ${esc(x.title)}${x.id === r.planned ? " · по плану" : ""}</option>`).join("")}</select>
+        ${r.url ? `<a class="btn sm" href="${esc(r.url)}" target="_blank" rel="noopener">📞 Звонок</a>` : `<span class="linkbox" style="min-width:240px"><input type="url" id="room-url" placeholder="Вставьте ссылку на созвон"><button class="btn sm" data-act="room-url">📞</button></span><a class="btn ghost sm" href="https://telemost.yandex.ru/" target="_blank" rel="noopener" data-act="new-meeting">Создать в Телемосте</a>`}
         <button class="btn ghost sm" data-act="room-take" aria-pressed="${!!r.take}">+ Из другого класса</button>
         <button class="btn ghost sm" data-act="room-invite" title="Ещё раз отправить приглашение">Позвать</button>
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
@@ -769,7 +791,12 @@ document.addEventListener("submit", async e => {
     T.mats.push(data); render(); cmd("all", "refresh", {msg:"Учитель добавил материал"}); toast("Материал добавлен в папку");
   }
 });
+document.addEventListener("paste", e => {
+  if (!["call-url", "room-url"].includes(e.target.id)) return;
+  setTimeout(async () => { const s = T.students.find(x => x.id === (e.target.id === "room-url" ? T.room?.sid : T.sel)); if (s && await saveCall(s, e.target.value)) render(); }, 0);
+});
 document.addEventListener("change", async e => {
+  if (e.target.id === "call-url" || e.target.id === "room-url"){ const s = T.students.find(x => x.id === (e.target.id === "room-url" ? T.room?.sid : T.sel)); if (s && await saveCall(s, e.target.value)) render(); return; }
   if (e.target.id === "tk-subj"){ T.take = {subj: e.target.value}; render(); return; }
   if (e.target.id === "tk-course"){ T.take = {...(T.take || {}), course: e.target.value}; render(); return; }
   if (e.target.id === "room-lesson" && T.room){ T.room.lesson = e.target.value; T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
@@ -871,8 +898,7 @@ document.addEventListener("click", async e => {
     const v = $("#call-url").value.trim();
     if (v && !/^https?:\/\//.test(v)){ toast("Вставьте ссылку целиком, начиная с https://"); return; }
     if (await upd(T.sel, {call_url: v || null})){
-      if (!T.me?.call_url && v){ await sb.rpc("teacher_set_call", {p_url: v}); if (T.me) T.me.call_url = v; }
-      cmd(T.sel, "refresh", {msg: "Учитель добавил ссылку на занятие"}); render(); toast(T.me?.call_url === v ? "Ссылка сохранена (и стала ссылкой по умолчанию для всех учеников)" : "Ссылка сохранена");
+      cmd(T.sel, "refresh", {msg: "Учитель добавил ссылку на занятие"}); render(); toast("Ссылка закреплена за учеником");
     }
     return;
   }
@@ -886,6 +912,7 @@ document.addEventListener("click", async e => {
     const {error} = await sb.from("materials").delete().eq("id", m.id); if (error){ toast("Не удалилось: " + error.message); return; }
     T.mats = T.mats.filter(x => x.id !== m.id); cmd(m.student_id, "refresh", {msg: "Учитель изменил план"}); render(); toast("Урок убран из плана ученика"); return;
   }
+  if (a === "new-meeting"){ T.awaitLink = T.view === "room" ? T.room.sid : T.sel; window.open("https://telemost.yandex.ru/", "_blank", "noopener"); return; }
   if (a === "room-take"){ T.room.take = !T.room.take; render(); return; }
   if (a === "take"){
     const room = t.dataset.mode === "room", s = T.students.find(x => x.id === (room ? T.room.sid : T.sel)), cid = $("#tk-course").value, lid = $("#tk-lesson")?.value;
@@ -910,7 +937,7 @@ document.addEventListener("click", async e => {
   if (a === "room-invite"){ roomSend("lesson"); toast("Приглашение отправлено ещё раз"); return; }
   if (a === "room-url"){ const u = $("#room-url").value.trim(); if (!/^https?:\/\//.test(u)){ toast("Вставьте ссылку, которая начинается с https://"); return; }
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
-    upd(s.id, {call_url: u});
+    await saveCall(s, u, true);
     roomSend("lesson"); render(); return; }
   if (a === "room-end"){ const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
   if (a === "open-drawer"){ T.drawer = true; render(); }
