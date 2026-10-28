@@ -6,13 +6,12 @@ const CFG = window.APP_CONFIG || {};
 const sb = U.supa();
 const T = {session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
-           loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false};
+           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false};
 const $ = s => document.querySelector(s);
 const GRADES = [5,6,7,8,9,10,11];
 const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme";
 const inviteLink = tok => `${location.origin}${location.pathname.replace(/teacher\.html$/, "")}?invite=${tok}`;
-const BLOCK_OWN = {name:"Свои уроки", color:"#8b5cf6"};
-const blockOf = (c, l) => c.blocks[l.block] || BLOCK_OWN;
+const blockOf = (c, l) => c.blocks[l.block] || {name:"Свои уроки", color:U.ownColor()};
 const I = {
   menu:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
   users:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>',
@@ -108,13 +107,14 @@ function viewStudents(){
   const wait = T.writings.filter(w => w.status === "sent").length + T.hw.filter(h => h.status === "sent").length;
   const nameOf = id => T.students.find(x => x.id === id);
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Кабинет учителя</span>
-      <h1>Ученики</h1><p>${T.students.length} учеников · на проверку: ${wait}</p><img class="cat" src="assets/kotik.webp" alt=""></section>
+      <h1>Ученики</h1><p>${T.students.length} учеников · на проверку: ${wait}</p><div id="online-count" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
     <div class="section-title"><div class="filters" role="group" aria-label="Класс">${[["all","Все"],...GRADES.map(g => [String(g), g + " кл."]),["new","Ждут регистрации"]].map(([k,n]) => `<button data-grade="${k}" aria-pressed="${T.grade===k}">${n}</button>`).join("")}</div>
       <button class="btn ghost sm" data-act="reload">Обновить</button></div>
     ${T.loading ? `<p class="muted">Загружаю…</p>` : ""}
     <div class="grid2">${list.map(s => { const x = sData(s), avg = x.c ? U.avgAll(x.c, x.results) : null, p = s.pair_id && nameOf(s.pair_id);
       return `<button class="card" data-student="${s.id}" style="text-align:left">
         <div class="row between"><h2>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h2>${x.waiting ? `<span class="chip mid">проверить: ${x.waiting}</span>` : ""}</div>
+        <div data-online="${s.id}"></div>
         <p class="small muted" style="margin-top:4px">${s.grade ? s.grade + " класс" : "класс не указан"}${s.goal ? " · " + esc(s.goal) : ""} · логин ${esc(s.code)}</p>
         ${p ? `<p class="small" style="margin-top:4px">👥 в паре с ${esc(p.name)}</p>` : ""}
         <div class="row" style="margin-top:10px;gap:20px">
@@ -185,7 +185,7 @@ function viewStudent(){
   const unlocked = s.unlocked || [], others = T.students.filter(o => o.id !== s.id && !pending(o));
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="students">← Все ученики</button><button class="btn ghost sm" data-act="reload">Обновить</button></div>
   <section class="hero glass" style="min-height:150px"><span class="mono muted">${s.grade ? s.grade + " класс" : "класс не указан"} · ${esc(c ? c.course : "план не выбран")}</span>
-    <h1>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h1><p>${s.goal ? esc(s.goal) + " · " : ""}логин ${esc(s.code)}</p><img class="cat" src="assets/kotik.webp" alt=""></section>
+    <h1>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h1><p>${s.goal ? esc(s.goal) + " · " : ""}логин ${esc(s.code)}</p><div data-online="${s.id}" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   ${inviteBox(s)}
   <div class="grid2" style="margin-top:16px">
     <div class="card stack" style="gap:6px"><div class="kicker">Анкета</div>
@@ -223,7 +223,7 @@ function viewStudent(){
       <td class="tnum">${hr ? `<span class="chip ${lvl(pct(hr.last))}">${pct(hr.last)}%</span>` : "–"}</td>
       <td>${wcell}${w ? `<div style="margin-top:4px"><button class="btn ghost sm" data-wreview="${l.id}">Проверить</button></div>` : ""}</td>
       <td><span class="chip ${hs.c}">${hs.t}</span>${h?.note?`<div class="small" style="margin-top:4px">${/^https?:/.test(h.note)?`<a href="${esc(h.note)}" target="_blank" rel="noopener">ссылка ученика</a>`:esc(h.note)}</div>`:""}<div style="margin-top:4px"><button class="btn ghost sm" data-review="${l.id}">Оценить</button></div></td>
-      <td><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button></td></tr>
+      <td><div class="stack" style="gap:6px"><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button><button class="btn ghost sm" data-goto="${l.id}" title="Откроет этот урок на экране ученика">Показать ученику</button></div></td></tr>
       ${T.review === l.id ? `<tr><td colspan="11"><div class="stack" style="gap:6px;max-width:520px"><b>ДЗ: ${esc(l.title)}</b><p class="small">${esc(l.hw || "")}</p>
           ${hr ? `<p class="small muted">ДЗ-тест: ${esc(U.recText(hr.last))}</p>` : ""}
           <input type="text" id="rv-grade" placeholder="Оценка" value="${esc(h?.grade||"")}"><textarea id="rv-comment" placeholder="Комментарий ученику">${esc(h?.comment||"")}</textarea>
@@ -240,7 +240,7 @@ function viewBoard(){
   const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = c.lessons.find(x => x.id === T.boardLesson);
   const p = s.pair_id && T.students.find(x => x.id === s.pair_id);
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-student="${s.id}">← ${esc(s.name)}</button>
-    <span class="small muted">Ученик: папка № ${c.lessons.indexOf(l)+1} → «Доска»</span></div>
+    <button class="btn sm" data-goto="${l.id}" data-sub2="board">Позвать ${p ? "учеников" : "ученика"} на доску</button></div>
   <article class="window glass" style="--c:${blockOf(c, l).color}"><div class="head"><div class="corners"><div class="mono muted">Доска</div><div class="mono muted">${esc(s.name)}${p ? " и " + esc(p.name) : ""}</div></div><h1>${esc(l.title)}</h1></div>
     <div class="pane"><div class="board glass" id="board"></div>
     <p class="small muted" style="margin-top:8px">Когда вы переключаете лист, у ${p ? "учеников" : "ученика"} он переключается тоже. «Очистить» стирает лист у всех.</p></div></article>`;
@@ -248,7 +248,7 @@ function viewBoard(){
 
 function viewMethodology(){
   const c = COURSES[curCourse()];
-  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${esc(c.course)}</span><h1>Методика курса</h1><img class="cat" src="assets/kotik.webp" alt=""></section>
+  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${esc(c.course)}</span><h1>Методика курса</h1><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   <div class="section-title"><h2>Курс</h2>${coursePick()}</div>
   <div class="stack" style="margin-top:10px;gap:26px">${(c.methodology || []).map(m => `<div class="sheet"><span class="tag label">${esc(m.h)}</span>${m.t ? `<p>${U.mark(m.t)}</p>` : ""}${m.list ? `<ul>${m.list.map(x => `<li>${U.mark(x)}</li>`).join("")}</ul>` : ""}${m.table ? `<div class="tablewrap"><table><thead><tr>${m.table[0].map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${m.table.slice(1).map(r => `<tr>${r.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : ""}</div>`).join("")}</div>`;
 }
@@ -257,7 +257,7 @@ const coursePick = () => `<select id="course-pick" style="width:auto;max-width:1
 function viewCourse(){
   const cid = curCourse(), c = teacherCourse(cid), ok = access(cid);
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${ok ? "База открыта" : "Встроенная база"}</span><h1>${esc(c.course)}</h1>
-    <p>${ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" src="assets/kotik.webp" alt=""></section>
+    <p>${ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   <div class="section-title"><h2>Уроки</h2>${coursePick()}</div>
   ${!ok ? `<div class="card" style="margin-bottom:16px"><p>Чтобы открыть базу «${esc(U.PACKS[U.packOf(cid)])}», напишите разработчику платформы. Свои уроки и материалы можно добавлять и без неё.</p></div>` : ""}
   <div class="folders">${c.lessons.map((l,i) => `<button class="folder ${ok || l.custom ? "" : "locked"}" style="--c:${blockOf(c, l).color}" data-lesson="${l.id}"><span class="back"></span><span class="papers"><i></i><i></i></span>
@@ -365,7 +365,8 @@ function viewLesson(){
 
 function viewLook(){
   return `<div class="section-title" style="margin-top:6px"><h2>Оформление</h2></div>
-  <div class="card stack"><p>Фон кабинета по настроению или своё фото (фото хранится только на этом устройстве).</p>${U.themesHTML(localStorage.getItem("oge-theme-t") || T.me?.theme)}</div>`;
+  <div class="card stack"><h3>Тема</h3><p class="small muted">Фон, стекло, папки и кнопки – в одной гамме. Своё фото: цвета подберутся по нему (хранится только на этом устройстве).</p>${U.themesHTML(localStorage.getItem("oge-theme-t") || T.me?.theme)}</div>
+  <div class="card stack" style="margin-top:16px"><h3>Помощник</h3>${U.mascotsHTML(localStorage.getItem("oge-mascot-t") || "kotik")}</div>`;
 }
 
 function render(){
@@ -383,7 +384,7 @@ function render(){
   $("#app").innerHTML = `<div class="shell">
     <div class="drawer-back" ${T.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${T.drawer ? "open" : ""}" aria-label="Меню">
-      <div class="me"><img src="assets/kotik.webp" alt="" style="width:44px"><div><b>${esc(T.me?.name || CFG.TEACHER_NAME || "Учитель")}</b><div class="small muted">${T.me?.role === "developer" ? "Учитель и разработчик" : "Кабинет учителя"}</div></div></div>
+      <div class="me"><img data-m src="${U.mascot()}" alt="" style="width:44px"><div><b>${esc(T.me?.name || CFG.TEACHER_NAME || "Учитель")}</b><div class="small muted">${T.me?.role === "developer" ? "Учитель и разработчик" : "Кабинет учителя"}</div></div></div>
       <div class="group"><span class="mono">Разделы</span>${nav.map(([k,n,ic]) => `<button class="navitem" data-view="${k}" ${cur===k?'aria-current="page"':""}>${ic}${n}</button>`).join("")}
         ${T.me?.role === "developer" ? `<a class="navitem" href="dev.html">${I.code}Кабинет разработчика</a>` : ""}</div>
       <div class="group"><span class="mono">Классы</span>${GRADES.map(g => `<button class="navitem" data-view="students" data-grade="${g}">${I.users}${g} класс<span class="chip" style="margin-left:auto">${T.students.filter(s => s.grade === g).length}</span></button>`).join("")}</div>
@@ -392,11 +393,43 @@ function render(){
     <div style="min-width:0">
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
       <main class="main">${html}</main></div></div>`;
+  if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
   if (T.view === "board" && sb && T.session){
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = c.lessons.find(x => x.id === T.boardLesson), owner = ownerOf(s);
     T.board = Board.mount($("#board"), {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l)});
   }
 }
+
+/* ---------- живая связь: кто из учеников сейчас на платформе и где; мгновенные обновления ---------- */
+const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || T.view === "board";
+function liveStart(){
+  if (!sb || !T.session || T.live) return;
+  T.live = sb.channel(`live-${T.session.user.id}`, {config:{presence:{key:"t-" + T.session.user.id}, broadcast:{self:false}}});
+  T.live.on("presence", {event:"sync"}, () => {
+    T.online = {}; Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role === "student") T.online[p.id] = p; });
+    paintOnline();
+  }).on("broadcast", {event:"act"}, ({payload:m}) => {
+    if (!m?.act) return;
+    T.feed.unshift({...m, at: Date.now()}); T.feed = T.feed.slice(0, 30);
+    toast(`${m.name.split(" ")[0]}: ${m.text}`); refreshSoon();
+  }).subscribe(st => { if (st === "SUBSCRIBED") T.live.track({role:"teacher"}).catch(() => {}); });
+}
+/* точечно обновляем значки «онлайн», не перерисовывая страницу (чтобы не сбить ввод и доску) */
+function paintOnline(){
+  document.querySelectorAll("[data-online]").forEach(el => { const p = T.online[el.dataset.online]; el.innerHTML = p ? `<span class="live">онлайн${p.where ? " · " + esc(p.where) : ""}</span>` : ""; });
+  const n = Object.keys(T.online).length, el = document.getElementById("online-count"); if (el) el.innerHTML = n ? `<span class="live">сейчас онлайн: ${n}</span>` : "";
+}
+let refT = 0;
+function refreshSoon(){
+  clearTimeout(refT);
+  refT = setTimeout(async () => {
+    const [rs, hw, wr, ac] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*")]);
+    if (!rs.error) T.rows = rs.data; if (!hw.error) T.hw = hw.data; if (!wr.error) T.writings = wr.data; if (!ac.error) T.act = ac.data;
+    if (!typing()) render(); else T.stale = true;
+  }, 500);
+}
+/* команда ученику: обновить данные или открыть урок */
+function cmd(to, type, extra){ if (T.live) T.live.send({type:"broadcast", event:"cmd", payload:{cmd:true, to, type, ...extra}}).catch(() => {}); }
 
 /* ---------- нейросеть ---------- */
 async function ai(body){
@@ -423,7 +456,7 @@ document.addEventListener("submit", async e => {
     T.students.push(data); T.justInvited = data; render(); toast("Ссылка создана – скопируйте и отправьте ученику");
   }
   if (id === "plan-form"){
-    if (await upd(T.sel, {course: $("#pl-course").value, start_date: $("#pl-start").value || null})){ render(); toast("План сохранён – ученик увидит уроки по этим датам"); }
+    if (await upd(T.sel, {course: $("#pl-course").value, start_date: $("#pl-start").value || null})){ render(); cmd(T.sel, "refresh", {msg:"Учитель обновил твой план"}); toast("План сохранён – ученик увидит уроки по этим датам"); }
   }
   if (id === "own-lesson"){
     const cid = curCourse(), lid = "c" + U.randHex(4);
@@ -439,7 +472,7 @@ document.addEventListener("submit", async e => {
     const data = {...m.data, title: $("#el-title").value.trim(), date: $("#el-date").value, theory, hw: $("#el-hw").value.trim(), learn: [$("#el-title").value.trim()]};
     const {error} = await sb.from("materials").update({data, title: data.title}).eq("id", m.id);
     if (error){ toast("Не сохранилось: " + error.message); return; }
-    m.data = data; m.title = data.title; T.sub = "theory"; render(); toast("Урок сохранён");
+    m.data = data; m.title = data.title; T.sub = "theory"; render(); cmd("all", "refresh", {msg:"Учитель обновил урок"}); toast("Урок сохранён");
   }
   if (id === "add-mat"){
     const cid = curCourse(), kind = $("#am-kind").value, title = $("#am-title").value.trim();
@@ -456,7 +489,7 @@ document.addEventListener("submit", async e => {
     if (kind === "text" && !body){ toast("Напишите текст."); return; }
     const {data, error} = await sb.from("materials").insert({course: cid, lesson_id: T.open, kind, title: title || null, url: url || null, body: body || null}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
-    T.mats.push(data); render(); toast("Материал добавлен в папку");
+    T.mats.push(data); render(); cmd("all", "refresh", {msg:"Учитель добавил материал"}); toast("Материал добавлен в папку");
   }
 });
 document.addEventListener("change", async e => {
@@ -465,13 +498,19 @@ document.addEventListener("change", async e => {
   if (e.target.dataset.date){
     const s = T.students.find(x => x.id === T.sel), dates = {...(s.dates || {}), [e.target.dataset.date]: e.target.value};
     if (!e.target.value) delete dates[e.target.dataset.date];
-    if (await upd(s.id, {dates})){ render(); toast("Дата урока изменена"); }
+    if (await upd(s.id, {dates})){ render(); cmd(s.id, "refresh", {msg:"Учитель перенёс урок"}); toast("Дата урока изменена"); }
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && T.drawer){ T.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick]"); if (!t) return;
+  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto]"); if (!t) return;
   if (t.tagName === "A") e.preventDefault();
+  if (t.dataset.mascotPick){
+    const set = k => { try{ localStorage.setItem("oge-mascot-t", k); }catch(_){} U.setMascot(k); render(); };
+    let hasOwn = false; try{ hasOwn = !!localStorage.getItem("oge-mascot-img"); }catch(_){}
+    if (t.dataset.mascotPick === "own" && (!hasOwn || t.getAttribute("aria-pressed") === "true")) U.pickMascot(() => set("own")); else set(t.dataset.mascotPick);
+    return;
+  }
   if (t.dataset.themePick){
     const set = k => { try{ localStorage.setItem("oge-theme-t", k); }catch(_){} U.applyTheme(k); if (sb && T.session) sb.rpc("teacher_set_theme", {p_theme: k}).then(() => {}, () => {}); render(); };
     t.dataset.themePick === "photo" ? U.pickPhoto(() => set("photo")) : set(t.dataset.themePick); return;
@@ -481,6 +520,12 @@ document.addEventListener("click", async e => {
   if (t.dataset.student){ T.sel = t.dataset.student; T.view = "student"; T.review = t.dataset.review || null; T.wreview = t.dataset.wreview || null; T.drawer = false; render(); if (!T.review && !T.wreview) scrollTo(0,0); return; }
   if (t.dataset.lesson){ T.open = t.dataset.lesson; T.view = "lesson"; T.sub = "method"; T.gen = null; render(); scrollTo(0,0); return; }
   if (t.dataset.sub){ T.sub = t.dataset.sub; render(); return; }
+  if (t.dataset.goto){
+    const s = T.students.find(x => x.id === T.sel);
+    cmd(s.id, "goto", {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page});
+    if (s.pair_id) cmd(s.pair_id, "goto", {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page});
+    toast(T.online[s.id] ? "Урок открыт у ученика" : "Ученик сейчас не в сети – урок откроется, когда он зайдёт и вы нажмёте ещё раз"); return;
+  }
   if (t.dataset.boardfor){ T.boardLesson = t.dataset.boardfor; T.view = "board"; render(); scrollTo(0,0); return; }
   if (t.dataset.delmat){
     if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно удалить?"; return; }
@@ -491,7 +536,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.unlock){
     const s = T.students.find(x => x.id === T.sel), set = new Set(s.unlocked || []);
     t.dataset.on === "1" ? set.add(t.dataset.unlock) : set.delete(t.dataset.unlock);
-    if (await upd(s.id, {unlocked: [...set]})){ render(); toast(t.dataset.on === "1" ? "Урок открыт для ученика" : "Урок снова закрыт до дня занятия"); }
+    if (await upd(s.id, {unlocked: [...set]})){ render(); cmd(s.id, "refresh", {msg: t.dataset.on === "1" ? "Учитель открыл урок" : "Расписание обновлено"}); toast(t.dataset.on === "1" ? "Урок открыт для ученика" : "Урок снова закрыт до дня занятия"); }
     return;
   }
   if (t.dataset.review && !t.dataset.act){ T.review = T.review === t.dataset.review ? null : t.dataset.review; T.wreview = null; render(); return; }
@@ -513,12 +558,12 @@ document.addEventListener("click", async e => {
     if (error){ toast("Не получилось: " + error.message); return; }
     T.students.forEach(x => { if (x.id === s.id || x.pair_id === s.id || x.id === v || x.pair_id === v) x.pair_id = null; });
     if (v){ s.pair_id = v; T.students.find(x => x.id === v).pair_id = s.id; }
-    render(); toast(v ? "Пара сохранена: доска на уроках общая" : "Ученик занимается один");
+    render(); cmd(s.id, "refresh", {msg:"Учитель обновил работу в паре"}); if (v) cmd(v, "refresh", {msg:"Учитель обновил работу в паре"}); toast(v ? "Пара сохранена: доска на уроках общая" : "Ученик занимается один");
   }
   if (a === "shift"){
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), dates = {...(s.dates || {})}, now = U.iso(new Date());
     c.lessons.filter(l => l.date >= now).forEach(l => dates[l.id] = U.iso(new Date(new Date(l.date + "T00:00:00").getTime() + 7 * 864e5)));
-    if (await upd(s.id, {dates})){ render(); toast("Будущие уроки перенесены на неделю"); }
+    if (await upd(s.id, {dates})){ render(); cmd(s.id, "refresh", {msg:"Учитель перенёс уроки"}); toast("Будущие уроки перенесены на неделю"); }
   }
   if (a === "review"){
     const row = {student_id: T.sel, lesson_id: T.review, status: t.dataset.st, grade: $("#rv-grade").value.trim(), comment: $("#rv-comment").value.trim(), reviewed_at: new Date().toISOString()};
@@ -526,7 +571,7 @@ document.addEventListener("click", async e => {
     if (error){ toast("Не сохранилось: " + error.message); return; }
     const i = T.hw.findIndex(h => h.student_id === row.student_id && h.lesson_id === row.lesson_id);
     if (i >= 0) T.hw[i] = {...T.hw[i], ...row}; else T.hw.push(row);
-    T.review = null; render(); toast(row.status === "accepted" ? "ДЗ принято" : "Отправлено на доработку");
+    T.review = null; render(); cmd(T.sel, "refresh", {msg:"Учитель проверил ДЗ"}); toast(row.status === "accepted" ? "ДЗ принято" : "Отправлено на доработку");
   }
   if (a === "ai-check"){
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = c.lessons.find(x => x.id === T.wreview), w = T.writings.find(x => x.student_id === s.id && x.lesson_id === l.id);
@@ -561,7 +606,7 @@ document.addEventListener("click", async e => {
       data: {title: p.title, date, oge: "Повторение", learn: [p.title], theory: [{h: "Зачем этот урок", t: p.why}, ...(p.tasks?.length ? [{h: "План урока", list: p.tasks}] : [])], hw: ""}};
     const {data, error} = await sb.from("materials").insert(row).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
-    T.mats.push(data); t.disabled = true; render(); toast(`Урок «${p.title}» добавлен на ${fmt(date)} – дату можно поменять в таблице`);
+    T.mats.push(data); t.disabled = true; render(); cmd(s.id, "refresh", {msg:"В план добавлен новый урок"}); toast(`Урок «${p.title}» добавлен на ${fmt(date)} – дату можно поменять в таблице`);
   }
   if (a === "ai-gen"){
     const l = teacherCourse(curCourse()).lessons.find(x => x.id === T.open);
@@ -575,7 +620,7 @@ document.addEventListener("click", async e => {
     const g = T.gen, mini = (g.res.mini || []).filter(m => m.q && m.a), test = (g.res.test || []).filter(q => q.q && q.o?.length >= 2 && q.o[q.a] != null);
     const {data, error} = await sb.from("materials").insert({course: curCourse(), lesson_id: g.lesson, kind: "tasks", title: g.res.title || g.topic, data: {mini, test}}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
-    T.mats.push(data); T.gen = null; render(); toast("Задания сохранены: мини-практика – в «Материалах», вопросы – в тесте урока");
+    T.mats.push(data); T.gen = null; render(); cmd("all", "refresh", {msg:"Учитель добавил задания"}); toast("Задания сохранены: мини-практика – в «Материалах», вопросы – в тесте урока");
   }
   if (a === "del-lesson"){
     if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно удалить урок?"; return; }
@@ -598,14 +643,14 @@ document.addEventListener("click", async e => {
                  total: crit.length ? Object.values(scores).reduce((x,y) => x+y, 0) : null, max: crit.length ? crit.reduce((x,[,,m]) => x+m, 0) : null};
     const {error} = await sb.from("writings").update(row).eq("student_id", T.sel).eq("lesson_id", T.wreview);
     if (error){ toast("Не сохранилось: " + error.message); return; }
-    Object.assign(w, row); T.wreview = null; render(); toast(row.status === "redo" ? "Работа возвращена на доработку" : "Оценка сохранена – ученик её видит");
+    Object.assign(w, row); T.wreview = null; render(); cmd(T.sel, "refresh", {msg:"Учитель проверил твою работу"}); toast(row.status === "redo" ? "Работа возвращена на доработку" : "Оценка сохранена – ученик её видит");
   }
   if (a === "save-sheet"){
     const cid = curCourse();
     const row = {teacher_id: T.session.user.id, course: cid, lesson_id: T.open, name: $("#sh-name").value.trim(), url: $("#sh-url").value.trim(), note: $("#sh-note").value.trim()};
     const {error} = await sb.from("sheets").upsert(row, {onConflict: "teacher_id,course,lesson_id"});
     if (error){ toast("Не сохранилось: " + error.message); return; }
-    T.sheets = T.sheets.filter(x => !(x.course === cid && x.lesson_id === T.open)).concat(row); render(); toast("Рабочий лист прикреплён");
+    T.sheets = T.sheets.filter(x => !(x.course === cid && x.lesson_id === T.open)).concat(row); render(); cmd("all", "refresh", {msg:"Учитель прикрепил рабочий лист"}); toast("Рабочий лист прикреплён");
   }
   if (a === "del-student"){
     if (T.confirmDel !== T.sel){ T.confirmDel = T.sel; render(); return; }
@@ -617,7 +662,7 @@ document.addEventListener("click", async e => {
 
 /* ---------- запуск ---------- */
 (async () => {
-  try{ const th = localStorage.getItem("oge-theme-t"); if (th) U.applyTheme(th); }catch(_){}
+  try{ const th = localStorage.getItem("oge-theme-t"); if (th) U.applyTheme(th); U.setMascot(localStorage.getItem("oge-mascot-t")); }catch(_){}
   render();
   if (!sb) return;
   const {data} = await sb.auth.getSession();

@@ -253,7 +253,7 @@ tr.ev td{font-weight:700;background:var(--chip)}
 .bd-bg{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;color:#24183d}
 .bd-cv{position:absolute;left:0;top:0}
 .bd-cursors{position:absolute;inset:0;pointer-events:none}
-.bd-cursor{position:absolute;left:0;top:0;display:flex;align-items:flex-start;gap:2px;transition:transform .09s linear;color:#7b4cf5}
+.bd-cursor{position:absolute;left:0;top:0;display:flex;align-items:flex-start;gap:2px;transition:transform .05s linear;color:#7b4cf5}
 .bd-cursor span{background:currentColor;border-radius:8px;padding:1px 7px;font-size:12px;font-weight:800;white-space:nowrap;line-height:1.5}
 .bd-cursor span::after{content:attr(data-n);color:#fff}
 .bd-input{position:absolute;z-index:3;min-width:220px;font:600 16px Manrope,system-ui,sans-serif;border:2px solid var(--violet);border-radius:8px;padding:4px 6px;background:#fff;color:#24183d}
@@ -271,27 +271,39 @@ tr.ev td{font-weight:700;background:var(--chip)}
   @media (prefers-color-scheme: dark){:root{--glass:rgba(34,25,56,.92);--glass-2:rgba(44,33,70,.96)}}
 }
 
-/* ---------- фон настроения ---------- */
-html[data-theme]:not([data-theme="lavender"]) body::before{background:var(--bg-img) center/cover no-repeat,var(--base);filter:none;inset:0}
-body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.22;mix-blend-mode:overlay;
+/* ---------- фон темы и зерно ---------- */
+body::before{background:var(--bg),var(--base)!important;filter:none!important}
+body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.2;mix-blend-mode:overlay;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
-html[data-theme="photo"] body::after{opacity:0}
-html[data-theme="bordo"]{--bg-img:url(bg/bordo.webp);--base:#4a0c1c}
-html[data-theme="lemon"]{--bg-img:url(bg/lemon.webp);--base:#d9d9cf}
-html[data-theme="peach"]{--bg-img:url(bg/peach.webp);--base:#f6c3a6}
-html[data-theme="hvoya"]{--bg-img:url(bg/hvoya.webp);--base:#173a2b}
-html[data-theme="photo"]{--base:#2a2233}
-html[data-theme="photo"] body::before{background:linear-gradient(rgba(20,12,34,.18),rgba(20,12,34,.18)),var(--bg-img) center/cover no-repeat,var(--base)}
-/* тёмные фоны: светлый текст на тёмном стекле */
-html[data-theme="bordo"],html[data-theme="hvoya"],html[data-theme="photo"]{
-  --ink:#fbf4f6;--muted:#e3ccd3;--line:rgba(255,255,255,.22);--hair:rgba(255,255,255,.16);
-  --glass:rgba(30,10,20,.34);--glass-2:rgba(30,10,20,.52);--chip:rgba(255,255,255,.14);--field:rgba(255,255,255,.12);color-scheme:dark}
-html[data-theme="hvoya"]{--glass:rgba(8,30,20,.34);--glass-2:rgba(8,30,20,.52);--muted:#cfe3d4;--violet:#a98bff}
-html[data-theme="bordo"]{--violet:#c4a6ff}
-html[data-theme="photo"]{--glass:rgba(20,14,30,.42);--glass-2:rgba(20,14,30,.6);--muted:#ddd3ec;--violet:#c4a6ff}
-/* светлые фоны держим светлыми и в тёмном режиме системы */
-html[data-theme="lemon"],html[data-theme="peach"]{--ink:#231a3a;--muted:#5d5470;--line:rgba(255,255,255,.7);--hair:rgba(35,26,58,.12);
-  --glass:rgba(255,255,255,.42);--glass-2:rgba(255,255,255,.66);--chip:rgba(35,26,58,.07);--field:rgba(255,255,255,.75);color-scheme:light}
+html[data-theme="photo"] body::after{opacity:.08}
+.btn{background:linear-gradient(120deg,var(--btn-a,var(--violet)),var(--btn-b,var(--pink)));color:var(--btn-ink,#fff);box-shadow:0 8px 20px -10px var(--btn-a,var(--violet))}
+.btn.ghost{background:var(--glass-2);color:var(--ink)}
+.btn.yellow{background:var(--sun);color:var(--sun-ink)}
+/* папки в гамме темы: полупрозрачное стекло с оттенком раздела */
+.folder .num,.folder .ttl,.folder .arrow{color:var(--folder-ink,#1d1433)}
+html[data-mode="dark"] .folder .front{background:linear-gradient(165deg,color-mix(in srgb,var(--c) 46%,rgba(255,255,255,.14)),color-mix(in srgb,var(--c) 62%,rgba(0,0,0,.12)));border-color:rgba(255,255,255,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 16px 30px -14px rgba(0,0,0,.6)}
+html[data-mode="dark"] .folder .ttl{text-shadow:0 1px 2px rgba(0,0,0,.35)}
+html[data-mode="dark"] .folder.locked .front{background:linear-gradient(165deg,rgba(255,255,255,.16),color-mix(in srgb,var(--c) 30%,rgba(0,0,0,.2)))}
+html[data-mode="dark"] .folder .papers i{background-color:#f4f1ea}
+html[data-mode="dark"] .window .tabs button{background:rgba(255,255,255,.06)}
+html[data-mode="dark"] .u-x::before{color:var(--sun)}
+/* персонаж: фото – в кружке, наклейка – как есть */
+html[data-mascot="photo"] img[data-m]{border-radius:50%;object-fit:cover;aspect-ratio:1;border:3px solid var(--glass-2);box-shadow:var(--shadow)}
+html[data-mascot="photo"] .hero .cat{width:min(30%,150px);right:16px;bottom:14px;filter:none}
+html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
+.mascots{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px}
+.mascot-opt{border:2px solid transparent;border-radius:16px;padding:8px;background:var(--glass-2);display:flex;flex-direction:column;align-items:center;gap:6px;font-weight:800;font-size:.84rem}
+.mascot-opt img{width:64px;height:64px;object-fit:contain}
+.mascot-opt img.round{object-fit:cover;border-radius:50%}
+.mascot-opt .plus{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:var(--chip);font-size:1.6rem}
+.mascot-opt[aria-pressed="true"]{border-color:var(--sun);box-shadow:0 0 0 2px var(--sun)}
+.theme-opt .sw{position:absolute;left:8px;bottom:8px;display:flex;gap:3px;font-style:normal}
+.theme-opt .sw em{width:12px;height:12px;border-radius:50%;border:1.5px solid rgba(255,255,255,.85)}
+.theme-opt .sw.plus{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);font-size:1.4rem;color:#555}
+.theme-opt span{position:relative}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:800;color:var(--good)}
+.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 var(--good);animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 60%,transparent)}70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
 .theme-opt{border:2px solid transparent;border-radius:16px;padding:0;overflow:hidden;background:var(--glass-2);text-align:left;font-weight:800;font-size:.84rem}
 .theme-opt span{display:block;aspect-ratio:16/10;background:center/cover no-repeat}

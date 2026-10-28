@@ -26,7 +26,7 @@ function view(){
   const prov = D.settings.__provider || "";
   const s = D.stats || {};
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Разработчик</span><h1>Настройки платформы</h1>
-      <p>Учителей: ${s.teachers ?? "–"} · учеников: ${s.students ?? "–"} · попыток тестов: ${s.results ?? "–"} · работ: ${s.writings ?? "–"} · разборов ИИ: ${s.ai ?? "–"}</p><img class="cat" src="assets/kotik.webp" alt=""></section>
+      <p>Учителей: ${s.teachers ?? "–"} · учеников: ${s.students ?? "–"} · попыток тестов: ${s.results ?? "–"} · работ: ${s.writings ?? "–"} · разборов ИИ: ${s.ai ?? "–"}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
 
   <div class="section-title"><h2>Нейросеть</h2></div>
   <form class="card stack" id="ai-form" style="gap:10px">

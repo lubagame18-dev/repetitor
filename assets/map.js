@@ -34,7 +34,7 @@ function mapHTML(course, results, hwres, writings){
     <div class="legend" style="margin-top:12px"><span><i class="dot" style="background:var(--good)"></i>80–100%</span><span><i class="dot" style="background:var(--mid)"></i>60–79%</span><span><i class="dot" style="background:var(--bad)"></i>ниже 60%</span><span><i class="dot" style="background:var(--chip);border:1px solid var(--line)"></i>нет теста</span></div></div>
   <div class="section-title"><h2>Что повторить</h2></div>
   <div class="card">${weakList.length ? `<ul style="margin:0;padding-left:20px">${weakList.map(([t,n]) => `<li><b>${esc(t)}</b> <span class="muted small">– ошибок: ${n}</span></li>`).join("")}</ul>`
-    : `<div class="row" style="flex-wrap:nowrap"><img class="catmini" src="assets/kotik.webp" alt=""><p class="muted">Здесь появятся правила, в которых были ошибки в последних тестах.</p></div>`}</div>`;
+    : `<div class="row" style="flex-wrap:nowrap"><img class="catmini" data-m src="${U.mascot()}" alt=""><p class="muted">Здесь появятся правила, в которых были ошибки в последних тестах.</p></div>`}</div>`;
 }
 window.mapHTML = mapHTML;
 })();

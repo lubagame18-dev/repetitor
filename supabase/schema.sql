@@ -42,6 +42,7 @@ alter table public.students add column if not exists unlocked      jsonb not nul
 alter table public.students add column if not exists subject       text not null default 'rus';
 alter table public.students add column if not exists pair_id       uuid references public.students(id) on delete set null;  -- напарник
 alter table public.students add column if not exists theme         text;
+alter table public.students add column if not exists mascot        text;   -- персонаж-помощник: kotik | duck | lamb | hedgehog | own
 
 -- Попытки тестов: kind = 'lesson' | 'hw' | 'entry' | 'mini'. duration_sec – сколько длилась попытка.
 create table if not exists public.results (
@@ -301,7 +302,7 @@ $$;
 create or replace function public.student_profile_json(sid uuid)
 returns json language sql security definer set search_path = public stable as $$
   select json_build_object('id', s.id, 'name', s.name, 'grade', s.grade, 'goal', s.goal, 'goals', s.goals, 'course', s.course, 'login', s.code,
-                           'start_date', s.start_date, 'dates', s.dates, 'unlocked', s.unlocked, 'theme', s.theme,
+                           'start_date', s.start_date, 'dates', s.dates, 'unlocked', s.unlocked, 'theme', s.theme, 'mascot', s.mascot, 'teacher', s.teacher_id,
                            'registered', s.registered_at is not null,
                            'pair', (select json_build_object('id', p.id, 'name', p.name) from students p where p.id = s.pair_id),
                            'board_owner', board_owner(s.id))
@@ -396,6 +397,11 @@ returns void language sql security definer set search_path = public as $$
   update students set theme = left(p_theme, 20) where id = student_id_by_code(p_code);
 $$;
 
+create or replace function public.student_set_mascot(p_code text, p_mascot text)
+returns void language sql security definer set search_path = public as $$
+  update students set mascot = left(p_mascot, 20) where id = student_id_by_code(p_code);
+$$;
+
 create or replace function public.student_submit_homework(p_code text, p_lesson text, p_note text)
 returns void language plpgsql security definer set search_path = public as $$
 declare sid uuid := student_id_by_code(p_code);
@@ -459,7 +465,7 @@ do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
     'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
-    'public.student_set_theme(text, text)', 'public.student_submit_homework(text, text, text)',
+    'public.student_set_theme(text, text)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
     execute 'revoke all on function ' || f || ' from public';

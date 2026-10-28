@@ -125,13 +125,13 @@ window.Board = (() => {
     });
     cv.addEventListener("pointermove", e => {
       const p = pos(e), now = performance.now();
-      if (now - lastCursor > 90){ lastCursor = now; send("cursor", {x:p[0], y:p[1]}); }
+      if (now - lastCursor > 45){ lastCursor = now; send("cursor", {x:p[0], y:p[1]}); }
       if (!drawing) return;
       if (drawing.erase){ const id = hitTest(p); if (id) removeIds([id]); return; }
       const last = drawing.p[drawing.p.length - 1];
       if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 2) return;
       drawing.p.push(p); draftBuf.push(p); redraw();
-      if (now - lastDraft > 120){ lastDraft = now; send("draft", {c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf}); draftBuf = [p]; }
+      if (now - lastDraft > 60){ lastDraft = now; send("draft", {c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf}); draftBuf = [p]; }
     });
     const end = () => {
       if (!drawing) return;

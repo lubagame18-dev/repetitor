@@ -86,7 +86,7 @@ window.U = (() => {
     </div>`).join("");
     const m = l.memo;
     return `<div class="theory">${blocks}
-      ${m ? `<div class="memo"><img src="assets/kotik.webp" alt=""><div><b>${esc(m.h)}</b><p style="margin-top:4px">${mark(m.t)}</p>${m.ex?.length ? `<div class="ex">${m.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div></div>` : ""}
+      ${m ? `<div class="memo"><img data-m src="${U.mascot ? U.mascot() : "assets/kotik.webp"}" alt=""><div><b>${esc(m.h)}</b><p style="margin-top:4px">${mark(m.t)}</p>${m.ex?.length ? `<div class="ex">${m.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div></div>` : ""}
       <div class="legend-signs muted"><span><span class="u-s">подлежащее</span></span><span><span class="u-p">сказуемое</span></span><span><span class="u-o">дополнение</span></span><span><span class="u-w">определение</span></span><span><span class="u-a">обстоятельство</span></span><span><span class="u-x">слово</span> – определяемое</span></div>
     </div>`;
   }
@@ -190,33 +190,6 @@ window.U = (() => {
       ${l.practice?.length ? `<h2>Практика</h2>${practiceHTML(l, withKeys)}` : ""}${l.hw ? `<h2>Домашнее задание</h2><p>${esc(l.hw)}</p>` : ""}`;
   }
 
-  /* фон настроения */
-  const THEMES = [["lavender","Лаванда"],["bordo","Бордо"],["lemon","Лимон"],["peach","Персик"],["hvoya","Хвоя"],["photo","Своё фото"]];
-  function applyTheme(t){
-    let photo = null; try{ photo = localStorage.getItem("oge-photo"); }catch(_){}
-    if (t === "photo" && !photo) t = "lavender";
-    const h = document.documentElement;
-    if (!t || t === "lavender") h.removeAttribute("data-theme"); else h.dataset.theme = t;
-    h.style.setProperty("--bg-img", t === "photo" ? `url("${photo}")` : "");
-    if (t !== "photo") h.style.removeProperty("--bg-img");
-  }
-  function themesHTML(cur){
-    return `<div class="themes" role="group" aria-label="Фон">${THEMES.map(([k, n]) => `<button type="button" class="theme-opt" data-theme-pick="${k}" aria-pressed="${(cur || "lavender") === k}">
-      <span style="background-image:${k === "lavender" ? "linear-gradient(135deg,#b79cff,#f7a8d0,#ffd1a8)" : k === "photo" ? "repeating-linear-gradient(45deg,#ddd 0 8px,#eee 8px 16px)" : `url(assets/bg/${k}.webp)`}"></span><b>${n}</b></button>`).join("")}</div>
-      <input type="file" accept="image/*" id="theme-photo" hidden>`;
-  }
-  /* фото уменьшаем на устройстве и храним только в этом браузере */
-  function pickPhoto(cb){
-    const inp = document.getElementById("theme-photo"); if (!inp) return;
-    inp.onchange = () => { const f = inp.files[0]; if (!f) return; const img = new Image();
-      img.onload = () => { const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement("canvas");
-        c.width = img.width * k; c.height = img.height * k; c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        try{ localStorage.setItem("oge-photo", c.toDataURL("image/jpeg", .8)); }catch(_){ toast("Фото слишком большое."); return; }
-        URL.revokeObjectURL(img.src); cb(); };
-      img.src = URL.createObjectURL(f); };
-    inp.click();
-  }
-
   const randHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("");
 
   function shuffle(a){ a = a.slice(); for (let i = a.length-1; i > 0; i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
@@ -231,8 +204,8 @@ window.U = (() => {
   const supa = () => {
     const c = window.APP_CONFIG || {};
     if (!c.SUPABASE_URL || !c.SUPABASE_ANON_KEY || c.SUPABASE_URL.includes("ВАШ") || !window.supabase) return null;
-    return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 25}}});
+    return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, THEMES, applyTheme, themesHTML, pickPhoto, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

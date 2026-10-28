@@ -6,7 +6,7 @@ const RESHU = "https://rus-oge.sdamgia.ru";
 const CFG = window.APP_CONFIG || {};
 const sb = U.supa();
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
-           rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null};
+           rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set()};
 const $ = s => document.querySelector(s);
 const LS = {get(k, def){ try{ return JSON.parse(localStorage.getItem("oge-" + k)) ?? def; }catch(e){ return def; } },
             set(k, v){ try{ localStorage.setItem("oge-" + k, JSON.stringify(v)); }catch(e){} }};
@@ -29,16 +29,15 @@ const I = {
 };
 
 /* ---------- курс и даты ---------- */
-const BLOCK_OWN = {name:"Свои уроки", color:"#8b5cf6"};
-const blockOf = l => S.course.blocks[l.block] || BLOCK_OWN;
+const blockOf = l => S.course.blocks[l.block] || {name:"Свои уроки", color:U.ownColor()};
 const tests = l => U.lessonTests(l);
-const isOpen = l => d(l.date) <= today() || (S.profile?.unlocked || []).includes(l.id);
+const isOpen = l => d(l.date) <= today() || (S.profile?.unlocked || []).includes(l.id) || S.forced.has(l.id);
 const grade = () => S.profile?.grade || 9;
 const entryTest = () => window.ENTRY_TESTS?.[String(grade())];
 const entryRes = () => U.aggregate(S.rows, "entry")["entry-" + grade()];
 
 /* ---------- данные ---------- */
-function recompute(){ S.results = U.aggregate(S.rows, "lesson"); S.hwres = U.aggregate(S.rows, "hw"); S.minis = U.aggregate(S.rows, "mini"); S.course = U.courseFor(S.profile, S.mats); U.applyTheme(LS.get("theme", null) || S.profile?.theme); }
+function recompute(){ S.results = U.aggregate(S.rows, "lesson"); S.hwres = U.aggregate(S.rows, "hw"); S.minis = U.aggregate(S.rows, "mini"); S.course = U.courseFor(S.profile, S.mats); U.applyTheme(LS.get("theme", null) || S.profile?.theme); U.setMascot(LS.get("mascot", null) || S.profile?.mascot); }
 function saveSession(){ LS.set("session", {token:S.token, profile:S.profile}); }
 async function load(){
   if (sb){
@@ -63,19 +62,20 @@ async function sendResult(lesson_id, kind, score, total, wrong, dur){
   if (sb){
     const {error} = await sb.rpc("student_submit_result", {p_code:S.token, p_lesson:lesson_id, p_score:score, p_total:total, p_wrong:wrong, p_kind:kind, p_duration:dur ?? null});
     if (error) toast("Результат не отправлен: нет связи. Пройди тест ещё раз, когда появится интернет.");
+    else liveAct(`${kind === "mini" ? "мини-практика" : kind === "hw" ? "ДЗ-тест" : kind === "entry" ? "входной тест" : "тест"}: ${score} из ${total}`);
   } else LS.set("rows", S.rows);
 }
 async function sendHw(lesson_id, note, silent){
   const prev = S.hw[lesson_id] || {};
   S.hw[lesson_id] = {...prev, lesson_id, note, status: prev.status === "accepted" ? "accepted" : "sent", sent_at: new Date().toISOString()};
-  if (sb){ const {error} = await sb.rpc("student_submit_homework", {p_code:S.token, p_lesson:lesson_id, p_note:note}); if (error){ toast("Не отправилось. Проверь интернет."); return; } }
+  if (sb){ const {error} = await sb.rpc("student_submit_homework", {p_code:S.token, p_lesson:lesson_id, p_note:note}); if (error){ toast("Не отправилось. Проверь интернет."); return; } liveAct("отметил ДЗ"); }
   else LS.set("hw", S.hw);
   if (!silent) toast("ДЗ отмечено. Учитель увидит отметку.");
 }
 async function sendWriting(l, kind, body){
   const words = U.wordCount(body), photos = S.photos[l.id] || S.writings[l.id]?.photos || [];
   S.writings[l.id] = {lesson_id:l.id, kind, text_id:l.writing.text, body, words, photos, status:"sent", scores:{}, errors:{}, submitted_at:new Date().toISOString()};
-  if (sb){ const {error} = await sb.rpc("student_submit_writing", {p_code:S.token, p_lesson:l.id, p_kind:kind, p_text:l.writing.text, p_body:body, p_words:words, p_photos:photos}); if (error){ toast("Не отправилось. Текст сохранён на устройстве – попробуй ещё раз."); return; } }
+  if (sb){ const {error} = await sb.rpc("student_submit_writing", {p_code:S.token, p_lesson:l.id, p_kind:kind, p_text:l.writing.text, p_body:body, p_words:words, p_photos:photos}); if (error){ toast("Не отправилось. Текст сохранён на устройстве – попробуй ещё раз."); return; } liveAct("прислал письменную работу"); }
   else LS.set("writings", S.writings);
   try{ localStorage.removeItem("oge-draft-" + l.id); }catch(_){}
   toast("Работа отправлена учителю на проверку.");
@@ -99,6 +99,36 @@ function uploadPhoto(lessonId){
     img.src = URL.createObjectURL(f); };
   inp.click();
 }
+/* ---------- живая связь с учителем: где ученик сейчас, мгновенные обновления ---------- */
+let live = null, liveT = 0;
+const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || (S.view === "folder" && S.sub === "board");
+function liveStart(){
+  if (!sb || !S.profile?.teacher || live) return;
+  live = sb.channel(`live-${S.profile.teacher}`, {config:{presence:{key:"s-" + S.profile.id}, broadcast:{self:false}}});
+  live.on("broadcast", {event:"cmd"}, async ({payload:m}) => {
+    if (!m?.cmd || (m.to !== S.profile.id && m.to !== "all")) return;
+    if (m.type === "refresh"){ await load(); if (!typing()) render(); toast(m.msg || "Учитель обновил твои материалы"); }
+    if (m.type === "goto" && S.course){
+      const l = S.course.lessons.find(x => x.id === m.lesson); if (!l) return;
+      S.forced.add(l.id); S.open = l.id; S.sub = m.sub || "theory"; if (m.page) S.boardPage = m.page; S.view = "folder"; S.drawer = false;
+      render(); scrollTo(0, 0); toast(`Учитель открыл урок «${l.title}»`);
+    }
+  });
+  live.subscribe(st => { if (st === "SUBSCRIBED") liveTrack(true); });
+}
+function liveTrack(now){
+  if (!live) return;
+  clearTimeout(liveT);
+  liveT = setTimeout(() => {
+    const l = S.view === "folder" && S.course?.lessons.find(x => x.id === S.open);
+    const TAB = {theory:"Теория", practice:"Практика", board:"Доска", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
+    const where = S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
+    live.track({role:"student", id:S.profile.id, name:S.profile.name, where, lesson: l?.id || null, at: Date.now()}).catch(() => {});
+  }, now ? 0 : 250);
+}
+/* сообщить учителю о сделанном – у него всё обновится сразу */
+function liveAct(text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text}}).catch(() => {}); }
+
 /* время в папке урока: раз в минуту, пока вкладка на экране */
 setInterval(() => {
   if (S.view !== "folder" || !S.open || document.hidden || !S.token) return;
@@ -110,7 +140,7 @@ setInterval(() => {
 function authHero(sub){
   return `<section class="hero glass"><span class="mono muted">${esc(CFG.SCHOOL_TAG || "Учу по ФРП · репетиторство")}</span>
     <h1>${esc(sub)}</h1><p>Уроки в папках, общая доска, сочинения и карта успеха.</p>
-    <img class="cat" src="assets/kotik.webp" alt="Котик-отличник в очках и академической шапочке"></section>`;
+    <img class="cat" data-m src="${U.mascot()}" alt="Котик-отличник в очках и академической шапочке"></section>`;
 }
 function viewRegister(){
   if (S.regDone) return authHero("Добро пожаловать!") + `<div class="card login stack">
@@ -130,6 +160,7 @@ function viewRegister(){
     <fieldset style="border:0;padding:0;margin:0"><legend style="font-weight:800;font-size:.88rem;margin-bottom:8px">Цели (можно несколько)</legend>
       <div class="goals">${U.GOALS.map(x => `<label><input type="checkbox" name="goal" value="${esc(x)}" ${x === "ОГЭ" && (inf.grade || 9) === 9 ? "checked" : ""}> ${esc(x === "ОГЭ" || x === "ЕГЭ" || x === "ВПР" ? "Подготовка к " + x : x)}</label>`).join("")}</div></fieldset>
     <div><b style="font-size:.88rem">Фон кабинета – по настроению</b><p class="small muted" style="margin:2px 0 8px">Потом можно поменять в разделе «Оформление».</p>${U.themesHTML(S.regTheme || inf.theme)}</div>
+    <div><b style="font-size:.88rem">Помощник на уроках</b><p class="small muted" style="margin:2px 0 8px">Можно загрузить свою картинку.</p>${U.mascotsHTML(S.regMascot || "kotik")}</div>
     <label for="r-contact">Телефон или Telegram (твой или родителя)</label><input type="text" id="r-contact" autocomplete="tel">
     <label for="r-pass">Придумай пароль (не меньше 6 символов)</label><input type="password" id="r-pass" minlength="6" required autocomplete="new-password">
     <label for="r-pass2">Повтори пароль</label><input type="password" id="r-pass2" minlength="6" required autocomplete="new-password">
@@ -226,7 +257,7 @@ function viewHome(){
   const nx = nextLesson();
   return `<section class="hero glass"><span class="mono muted">${esc(p.grade ? p.grade + " класс" : "")} · русский язык</span><span class="mono r muted">${new Date().toLocaleDateString("ru-RU")}</span>
     <h1>Привет, ${esc((p.name || "").split(" ")[0])}!</h1>${p.pair ? `<p class="small" style="margin-top:4px">👥 Напарник: ${esc(p.pair.name)}. Доска на уроке общая.</p>` : ""}<p>${S.course ? esc(S.course.course) : "План работы скоро появится."}</p>
-    <img class="cat" src="assets/kotik.webp" alt="Котик-отличник"></section>
+    <img class="cat" data-m src="${U.mascot()}" alt="Котик-отличник"></section>
   <div class="section-title"><h2>Сейчас</h2></div>
   <div class="grid2">${cards.join("") || (S.course ? `<div class="card"><h2>Курс завершён</h2><p class="muted">Удачи на экзамене!</p></div>` : noCourse())}
     ${S.course ? `<div class="card"><div class="kicker">Итоги</div><div class="row" style="margin-top:8px;gap:22px">
@@ -351,7 +382,8 @@ function viewFolder(){
 }
 
 const viewLook = () => `<div class="section-title" style="margin-top:6px"><h2>Оформление</h2></div>
-  <div class="card stack"><p>Выбери фон по настроению или поставь своё фото. Фото хранится только на этом устройстве.</p>${U.themesHTML(LS.get("theme", null) || S.profile.theme)}</div>`;
+  <div class="card stack"><h3>Тема</h3><p class="small muted">Фон, стекло, папки и кнопки меняются вместе – в одной цветовой гамме. Своё фото: цвета папок подберутся по нему. Фото хранится только на этом устройстве.</p>${U.themesHTML(LS.get("theme", null) || S.profile.theme)}</div>
+  <div class="card stack" style="margin-top:16px"><h3>Помощник</h3><p class="small muted">Встречает на главной, подсказывает в памятках и хвалит за тесты. Можно загрузить свою картинку (PNG с прозрачным фоном – будет как наклейка).</p>${U.mascotsHTML(LS.get("mascot", null) || S.profile.mascot)}</div>`;
 
 function startTest(id, kind){
   let qs, title;
@@ -367,7 +399,7 @@ function viewTest(){
     const p = Math.round(T.score / n * 100);
     return `<article class="card" style="text-align:center">
         <span class="tag">${label} завершён</span><h1 style="margin:12px 0 4px;font-size:1.8rem">${esc(T.title)}</h1>
-        <img src="assets/kotik.webp" alt="" style="width:150px;margin-top:8px">
+        <img data-m src="${U.mascot()}" alt="" style="width:150px;margin-top:8px">
         <div class="big tnum" style="font-size:2.6rem;color:${lvlColor(p)}">${T.score} из ${n}</div>
         <p style="margin:4px 0 14px;font-weight:800">${p===100?"Котик ставит сто баллов!":p>=80?"Отличный результат!":p>=60?"Неплохо, есть что повторить.":T.kind==="entry"?"Спасибо! Учитель увидит, с чего начать.":"Тему повторим на уроке."}</p>
         ${T.kind === "entry" ? "" : `<p class="expl small" style="text-align:left"><b>Рекомендация:</b> ${esc(U.recText({score:T.score,total:n,wrong:T.wrong}))}</p>`}
@@ -438,7 +470,7 @@ function render(){
       <header class="topnav"><div class="in glass">
         <button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button>
         <span class="ttl">${esc(TITLES[v] || "")}</span>
-        <img src="assets/kotik.webp" alt="" style="width:38px;height:38px;object-fit:contain">
+        <img data-m src="${U.mascot()}" alt="" style="width:38px;height:38px;object-fit:contain">
       </div></header>
       <main class="main">${body}</main>
     </div></div>`;
@@ -450,6 +482,7 @@ function render(){
       role: "student", name: S.profile.name, pages: Board.pages(S.course, l), onPage: p => S.boardPage = p
     });
   }
+  if (S.profile && sb){ liveStart(); liveTrack(); }
 }
 
 /* ---------- события ---------- */
@@ -483,9 +516,10 @@ document.addEventListener("submit", async e => {
       btn.disabled = false;
       if (error || !data) return show("Не получилось: ссылка уже использована или нет связи. Попроси у учителя новую ссылку.");
       S.token = data.token; S.profile = data.profile;
+      if (S.regMascot){ S.profile.mascot = S.regMascot; sb.rpc("student_set_mascot", {p_code:S.token, p_mascot:S.regMascot}).then(() => {}, () => {}); }
     } else {
       btn.disabled = false;
-      S.token = "local"; S.profile = {id:"local", name, grade:g, goals, goal:goals.join(", "), course: U.planFor(g, goals), start_date: U.iso(new Date()), dates:{}, unlocked:[], login:"DEMO", theme:S.regTheme};
+      S.token = "local"; S.profile = {id:"local", mascot:S.regMascot, name, grade:g, goals, goal:goals.join(", "), course: U.planFor(g, goals), start_date: U.iso(new Date()), dates:{}, unlocked:[], login:"DEMO", theme:S.regTheme};
     }
     saveSession(); await load();
     S.regDone = {login: S.profile.login}; history.replaceState(null, "", location.pathname); render();
@@ -499,7 +533,18 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick]"); if (!t) return;
+  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick]"); if (!t) return;
+  if (t.dataset.mascotPick){
+    const set = k => { U.setMascot(k);
+      if (S.invite){ S.regMascot = k; document.querySelectorAll("[data-mascot-pick]").forEach(b => b.setAttribute("aria-pressed", b.dataset.mascotPick === k)); return; }
+      LS.set("mascot", k); if (S.profile) S.profile.mascot = k; saveSession();
+      if (sb && S.token) sb.rpc("student_set_mascot", {p_code:S.token, p_mascot:k}).then(() => {}, () => {}); render(); };
+    let hasOwn = false; try{ hasOwn = !!localStorage.getItem("oge-mascot-img"); }catch(_){}
+    if (t.dataset.mascotPick === "own" && (!hasOwn || t.getAttribute("aria-pressed") === "true"))
+      U.pickMascot(() => { set("own"); const box = t.closest(".mascots")?.parentElement; if (S.invite && box) box.querySelector(".mascots").outerHTML = U.mascotsHTML("own").replace(/<input[^>]*>/, ""); });
+    else set(t.dataset.mascotPick);
+    return;
+  }
   if (t.dataset.themePick){
     const set = k => { if (S.invite){ S.regTheme = k; U.applyTheme(k); document.querySelectorAll("[data-theme-pick]").forEach(b => b.setAttribute("aria-pressed", b.dataset.themePick === k)); return; }
       LS.set("theme", k); U.applyTheme(k); if (S.profile) S.profile.theme = k; saveSession();
