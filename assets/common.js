@@ -186,10 +186,14 @@ window.U = (() => {
     if (!key) return null;
     const C = window.COURSES = window.COURSES || {};
     if (C[key]) return C[key];
+    const cat = window.CATALOG?.[key];
+    if (cat) return C[key] = {...cat, subject: subjectOf(key), kind: "builtin", virtual: true, locked: true,
+      blocks: {own: {name: "Уроки", tasks: "", color: "#8b5cf6"}}, lessons: [], events: [], texts: {}, izl: {}, criteria: window.RUS_CRITERIA || {errors: [], essay: [], izl: []},
+      methodology: [{h: "Встроенная база", t: `Готовый курс: ${cat.n} уроков с теорией, мини-практикой, заданиями и тестами. Открывается в тарифе с материалами.`}]};
     const m = String(key).match(/^(oge|ege)-(\w+)$|^(\w+)-(\d+)$/); if (!m) return null;
     const S = subj(m[2] || m[3]), exam = m[1], g = m[4];
     if (!SUBJECTS.some(x => x.k === (m[2] || m[3]))) return null;
-    const rusCrit = C["oge-rus"]?.criteria || {errors: [], essay: [], izl: []};
+    const rusCrit = window.RUS_CRITERIA || {errors: [], essay: [], izl: []};
     return C[key] = {course: exam ? `Подготовка к ${exam.toUpperCase()}. ${S.n}` : `${S.n}, ${gradeName(g)}`, tag: exam ? exam.toUpperCase() : gradeName(g),
       subject: S.k, grade: exam ? (exam === "oge" ? 9 : 11) : +g, goal: exam ? exam.toUpperCase() : "Школа", kind: "own", virtual: true,
       blocks: {own: {name: "Уроки", tasks: "", color: "#8b5cf6"}}, lessons: [], events: [], texts: {}, izl: {}, criteria: rusCrit,
@@ -202,7 +206,13 @@ window.U = (() => {
     if (S.exam) keys.push("ege-" + S.k);
     return [...new Set(keys)].filter(k => getCourse(k));
   }
-  const packOf = course => { const c = getCourse(course); if (!c || c.virtual) return null; return /^rus-\d+$/.test(course) ? "school-rus" : course; };
+  /* встроенная база приходит из Supabase (по подписке) */
+  function loadBase(rows){
+    window.COURSES = window.COURSES || {};
+    (rows || []).forEach(r => { window.COURSES[r.key] = r.data; if (r.keys){ window.COURSE_KEYS = window.COURSE_KEYS || {}; window.COURSE_KEYS[r.key] = r.keys; } });
+    if (U.applyTheme && U.theme) U.applyTheme(U.theme().k);   // перекрасить разделы новых курсов в цвета темы
+  }
+  const packOf = course => { const c = getCourse(course); if (!c || (c.virtual && !c.locked)) return null; return /^rus-\d+$/.test(course) ? "school-rus" : course; };
   const PACKS = {"oge-rus":"Подготовка к ОГЭ", "ege-rus":"Подготовка к ЕГЭ", "school-rus":"Школьная программа 5–11 (ФРП)"};
   const iso = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
 
@@ -256,5 +266,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

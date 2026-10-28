@@ -45,7 +45,30 @@ alter table public.students add column if not exists theme         text;
 alter table public.students add column if not exists mascot        text;
 alter table public.students add column if not exists person_id     uuid;   -- один ученик в нескольких предметах: у всех его строк общий person_id
 alter table public.students add column if not exists call_url      text;   -- ссылка на созвон (Телемост и т. п.) для этого ученика
-alter table public.teachers add column if not exists call_url      text;   -- ссылка на созвон по умолчанию   -- персонаж-помощник: kotik | duck | lamb | hedgehog | own
+alter table public.teachers add column if not exists call_url      text;   -- ссылка на созвон по умолчанию
+-- подписка: basic – 100 ₽ (свои материалы), materials – 300 ₽ (+ наша база, анализ и план), full – 500 ₽ (+ вся нейросеть)
+alter table public.teachers add column if not exists plan          text not null default 'basic';
+alter table public.teachers add column if not exists paid_until    timestamptz;
+alter table public.teachers add column if not exists trial         boolean not null default false;
+
+-- платежи (ЮKassa)
+create table if not exists public.payments (
+  id          text primary key,                 -- номер платежа в ЮKassa
+  teacher_id  uuid not null references auth.users(id) on delete cascade,
+  plan        text not null,
+  amount      numeric not null,
+  status      text not null default 'pending',
+  created_at  timestamptz not null default now(),
+  paid_at     timestamptz
+);
+
+-- встроенная база материалов: хранится в базе, а не на GitHub, и видна только по подписке
+create table if not exists public.course_data (
+  key        text primary key,                  -- oge-rus, ege-rus, rus-5 …
+  data       jsonb not null,                    -- курс без ключей
+  keys       jsonb,                             -- ответы к практике – только учителям
+  updated_at timestamptz not null default now()
+);   -- персонаж-помощник: kotik | duck | lamb | hedgehog | own
 
 -- Попытки тестов: kind = 'lesson' | 'hw' | 'entry' | 'mini'. duration_sec – сколько длилась попытка.
 create table if not exists public.results (
@@ -182,11 +205,31 @@ alter table public.board_items  enable row level security;
 alter table public.ai_reports   enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.app_secrets  enable row level security;
+alter table public.payments     enable row level security;
+alter table public.course_data  enable row level security;
 
 create or replace function public.is_dev()
 returns boolean language sql security definer set search_path = public stable as $$
   select exists (select 1 from teachers where id = auth.uid() and role = 'developer');
 $$;
+
+-- действующий тариф: разработчик – full; иначе тариф, если оплачен (или идёт пробный период); null – подписки нет
+create or replace function public.plan_active(uid uuid)
+returns text language sql security definer set search_path = public stable as $$
+  select case when t.role = 'developer' then 'full' when t.paid_until > now() then t.plan else null end from teachers t where t.id = uid;
+$$;
+-- доступ к встроенной базе: тариф 300/500, разработчик или выдано вручную
+create or replace function public.can_read_base(uid uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select coalesce(plan_active(uid) in ('materials','full'), false) or exists (select 1 from teachers where id = uid and cardinality(base_access) > 0);
+$$;
+
+drop policy if exists "payments_own" on public.payments;
+create policy "payments_own" on public.payments for select to authenticated using (teacher_id = auth.uid() or public.is_dev());
+drop policy if exists "base_read" on public.course_data;
+create policy "base_read" on public.course_data for select to authenticated using (public.can_read_base(auth.uid()));
+drop policy if exists "base_dev" on public.course_data;
+create policy "base_dev" on public.course_data for all to authenticated using (public.is_dev()) with check (public.is_dev());
 
 drop policy if exists "teacher_self" on public.teachers;
 create policy "teacher_self" on public.teachers for select to authenticated using (id = auth.uid() or public.is_dev());
@@ -196,6 +239,9 @@ create policy "dev_teachers" on public.teachers for update to authenticated usin
 drop policy if exists "teacher_students" on public.students;
 create policy "teacher_students" on public.students for all to authenticated
   using (teacher_id = auth.uid()) with check (teacher_id = auth.uid());
+-- новых учеников можно добавлять, только пока действует подписка (любой тариф)
+drop policy if exists "students_need_plan" on public.students;
+create policy "students_need_plan" on public.students as restrictive for insert to authenticated with check (public.plan_active(auth.uid()) is not null);
 
 do $$ declare t text; begin
   foreach t in array array['results','activity','homework','writings','board_items'] loop
@@ -234,17 +280,21 @@ create policy "settings_dev" on public.app_settings for all to authenticated usi
 -- профиль учителя (создаётся при первом входе)
 create or replace function public.me()
 returns json language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid(); r teachers;
+declare uid uuid := auth.uid(); r teachers; first boolean; days int;
 begin
   if uid is null then return null; end if;
-  insert into teachers(id, email, role, base_access)
-  values (uid, (select email from auth.users where id = uid),
-          -- первый зарегистрированный учитель – разработчик со всеми базами
-          case when not exists (select 1 from teachers) then 'developer' else 'teacher' end,
-          case when not exists (select 1 from teachers) then array['oge-rus','ege-rus','school-rus'] else array['oge-rus'] end)
+  first := not exists (select 1 from teachers);
+  days := coalesce((select (value)::text::int from app_settings where key = 'trial_days'), 7);
+  insert into teachers(id, email, name, role, plan, paid_until, trial)
+  values (uid, (select email from auth.users where id = uid), (select raw_user_meta_data->>'name' from auth.users where id = uid),
+          -- первый вошедший – разработчик
+          case when first then 'developer' else 'teacher' end,
+          'full', case when days > 0 then now() + make_interval(days => days) end, days > 0)
   on conflict (id) do nothing;
   select * into r from teachers where id = uid;
-  return json_build_object('id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url);
+  return json_build_object('id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url,
+    'plan', r.plan, 'paid_until', r.paid_until, 'trial', r.trial, 'active', plan_active(r.id), 'base', can_read_base(r.id),
+    'prices', (select value from app_settings where key = 'prices'));
 end $$;
 
 create or replace function public.teacher_set_theme(p_theme text)
@@ -313,7 +363,7 @@ create or replace function public.dev_list_secrets()
 returns json language plpgsql security definer set search_path = public as $$
 begin
   if not is_dev() then raise exception 'developer only'; end if;
-  return coalesce((select json_agg(json_build_object('key', key, 'tail', case when key like 'key\_%' then right(value, 4) else value end, 'updated_at', updated_at) order by key) from app_secrets), '[]'::json);
+  return coalesce((select json_agg(json_build_object('key', key, 'tail', case when key like 'key\_%' or key like '%secret%' then right(value, 4) else value end, 'updated_at', updated_at) order by key) from app_secrets), '[]'::json);
 end $$;
 
 create or replace function public.dev_stats()
@@ -420,6 +470,7 @@ returns json language sql security definer set search_path = public stable as $$
                           from writings w where w.student_id = s.id), '[]'::json),
     'sheets',   coalesce((select json_agg(json_build_object('lesson_id', x.lesson_id, 'name', x.name, 'url', x.url, 'note', x.note))
                           from sheets x where x.teacher_id = s.teacher_id and x.course = s.course), '[]'::json),
+    'course_data', (select c.data from course_data c where c.key = s.course and can_read_base(s.teacher_id)),
     'materials', coalesce((select json_agg(json_build_object('id', m.id, 'course', m.course, 'lesson_id', m.lesson_id, 'student_id', m.student_id, 'shared', m.shared, 'kind', m.kind, 'title', m.title, 'body', m.body, 'url', m.url, 'data', m.data) order by m.id)
                           from materials m where m.course = s.course and ((m.teacher_id = s.teacher_id and (m.student_id is null or m.student_id = s.id)) or (m.shared and m.student_id is null))), '[]'::json)
   ) from s;
@@ -526,10 +577,11 @@ do $$ declare f text; begin
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;
-  foreach f in array array['public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
+  foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
     'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
     execute 'revoke all on function ' || f || ' from public, anon';
     execute 'grant execute on function ' || f || ' to authenticated';
   end loop;
   execute 'revoke all on function public.board_owner(uuid) from public, anon, authenticated';
+  begin execute 'grant execute on function public.plan_active(uuid) to service_role'; exception when undefined_object then null; end;
 end $$;

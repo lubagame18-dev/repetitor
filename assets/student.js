@@ -51,7 +51,9 @@ async function load(){
     S.sheets = Object.fromEntries((data.sheets || []).map(h => [h.lesson_id, h]));
     S.writings = Object.fromEntries((data.writings || []).map(h => [h.lesson_id, h]));
     S.mats = data.materials || [];
-    LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats});
+    S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
+    U.loadBase(S.base);
+    LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
   } else {
     S.rows = LS.get("rows", []); S.hw = LS.get("hw", {}); S.writings = LS.get("writings", {}); S.sheets = {};
   }
@@ -182,11 +184,22 @@ function viewLogin(){
   const role = S.role || "student";
   return authHero(CFG.TITLE || "Учу по ФРП · уроки") + `<div class="card login stack">
     <div class="filters" role="group" aria-label="Кто входит"><button data-role="student" aria-pressed="${role==="student"}">Я ученик</button><button data-role="teacher" aria-pressed="${role==="teacher"}">Я учитель</button></div>
-    ${role === "teacher" ? `<form class="stack" id="teacher-form" style="gap:10px">
+    ${role === "teacher" && S.signup ? (S.signupDone ? `<div class="stack" style="gap:8px"><h3>Почти готово!</h3><p>Мы отправили письмо на <b>${esc(S.signupDone)}</b>. Откройте его и нажмите ссылку – кабинет откроется, и начнётся пробный период.</p><button class="btn ghost sm" data-act="to-signin">Уже подтвердила – войти</button></div>`
+    : `<form class="stack" id="signup-form" style="gap:10px">
+      <h3>Регистрация репетитора</h3>
+      <label for="su-name">Имя и отчество (так вас увидят ученики)</label><input type="text" id="su-name" required autocomplete="name">
+      <label for="su-email">Почта</label><input type="email" id="su-email" autocomplete="username" required>
+      <label for="su-pass">Пароль (не меньше 8 символов)</label><input type="password" id="su-pass" minlength="8" autocomplete="new-password" required>
+      <button class="btn" type="submit">Зарегистрироваться</button>
+      <p class="small" id="su-err" hidden style="color:var(--bad)"></p>
+      <p class="small muted">Сначала – бесплатный пробный период со всеми возможностями. Потом тариф от 100 ₽ в месяц.</p>
+      <button class="btn ghost sm" type="button" data-act="to-signin">У меня уже есть кабинет – войти</button></form>`)
+    : role === "teacher" ? `<form class="stack" id="teacher-form" style="gap:10px">
       <label for="tl-email">Почта</label><input type="email" id="tl-email" autocomplete="username" required>
       <label for="tl-pass">Пароль</label><input type="password" id="tl-pass" autocomplete="current-password" required>
       <button class="btn" type="submit">Войти в кабинет учителя</button>
-      <p class="small" id="tl-err" hidden style="color:var(--bad)">Почта или пароль не подходят.</p></form>`
+      <p class="small" id="tl-err" hidden style="color:var(--bad)">Почта или пароль не подходят.</p>
+      <button class="btn ghost sm" type="button" data-act="to-signup">Я репетитор, хочу кабинет – зарегистрироваться</button></form>`
     : `<form class="stack" id="login-form" style="gap:10px">
     ${sb ? `<label for="l-login">Логин</label><input type="text" id="l-login" autocapitalize="characters" autocomplete="username" placeholder="Например, K7M3QPA" required>
     <label for="l-pass">Пароль</label><input type="password" id="l-pass" autocomplete="current-password" required>`
@@ -530,6 +543,16 @@ function render(){
 /* ---------- события ---------- */
 document.addEventListener("submit", async e => {
   e.preventDefault();
+  if (e.target.id === "signup-form"){
+    const err = $("#su-err"), email = $("#su-email").value.trim();
+    if (!sb){ err.textContent = "Сервер ещё не подключён."; err.hidden = false; return; }
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true;
+    const {data, error} = await sb.auth.signUp({email, password: $("#su-pass").value, options: {data: {name: $("#su-name").value.trim()}, emailRedirectTo: location.origin + location.pathname.replace(/index\.html$/, "") + "teacher.html"}});
+    btn.disabled = false;
+    if (error){ err.textContent = /registered|exists/i.test(error.message) ? "Эта почта уже зарегистрирована – войдите." : "Не получилось: " + error.message; err.hidden = false; return; }
+    if (data.session){ location.href = "teacher.html"; return; }   // если подтверждение почты выключено
+    S.signupDone = email; render(); return;
+  }
   if (e.target.id === "teacher-form"){
     const err = $("#tl-err");
     if (!sb){ location.href = "teacher.html"; return; }
@@ -630,6 +653,8 @@ document.addEventListener("click", async e => {
   }
   const a = t.dataset.act;
   if (a === "install"){ install(); return; }
+  if (a === "to-signup"){ S.signup = true; S.signupDone = null; render(); return; }
+  if (a === "to-signin"){ S.signup = false; render(); return; }
   if (a === "open-drawer"){ S.drawer = true; render(); }
   if (a === "close-drawer"){ S.drawer = false; render(); }
   if (a === "start-entry" || a === "retry-entry") startTest(null, "entry");
@@ -695,7 +720,7 @@ document.addEventListener("click", async e => {
   } else if (sess?.token){
     S.token = sess.token; S.profile = sess.profile; recompute();
     const c = LS.get("cache", null);
-    if (c && sb){ S.rows = c.rows || []; S.hw = c.hw || {}; S.sheets = c.sheets || {}; S.writings = c.writings || {}; S.mats = c.mats || []; recompute(); }
+    if (c && sb){ S.rows = c.rows || []; S.hw = c.hw || {}; S.sheets = c.sheets || {}; S.writings = c.writings || {}; S.mats = c.mats || []; U.loadBase(c.base); recompute(); }
     render(); await load();
   }
   render();

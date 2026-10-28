@@ -22,7 +22,7 @@ const I = {
   code:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg>',
   lock:'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>'
 };
-const access = cid => !sb || !U.packOf(cid) || (T.me?.base_access || []).includes(U.packOf(cid));
+const access = cid => { const c = U.getCourse(cid); return !c || !c.locked; };
 const curCourse = () => T.courseId || CFG.DEFAULT_COURSE || "oge-rus";
 const FREE = {id:"free", title:"Личная доска", free:true, theory:[], practice:[], materials:[], learn:[]};
 const subjOfS = s => s.subject || U.subjectOf(s.course);
@@ -34,6 +34,7 @@ async function loadAll(){
   if (!sb || !T.session) return;
   T.loading = true; render();
   const me = await sb.rpc("me"); T.me = me.data || {base_access: []};
+  if (T.me.base){ const {data: base} = await sb.from("course_data").select("key,data,keys"); U.loadBase(base); }
   if (T.me.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
   const [st, rs, hw, wr, sh, mt, ac, ar] = await Promise.all([
     sb.from("students").select(ST_COLS).order("created_at"),
@@ -275,12 +276,13 @@ const subjectPick = () => `<div class="subjects" role="group" aria-label="Пре
 
 function viewCourse(){
   const cid = curCourse(), c = teacherCourse(cid), ok = access(cid);
-  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${c.virtual ? "Ваш курс" : ok ? "База открыта" : "Встроенная база"}</span><h1>${esc(c.course)}</h1>
-    <p>${c.virtual ? "Уроки, теорию, материалы, задания и тесты добавляете вы – или составляет нейросеть. Ученики курса видят их сразу." : ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
+  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${c.locked ? "Встроенная база · по подписке" : c.virtual ? "Ваш курс" : "База открыта"}</span><h1>${esc(c.course)}</h1>
+    <p>${c.locked ? `Готовый курс: ${c.n} уроков с теорией, мини-практикой, заданиями и тестами. Открывается в тарифе «С материалами» (300 ₽ в месяц). Свои уроки можно добавлять и сейчас.` : c.virtual ? "Уроки, теорию, материалы, задания и тесты добавляете вы – или составляет нейросеть. Ученики курса видят их сразу." : ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   ${subjectPick()}
   <div class="section-title"><h2>Курс</h2>${coursePick()}</div>
-  ${!c.lessons.length ? `<div class="card" style="margin-bottom:16px"><p>Уроков пока нет. Создайте первый урок ниже – он сразу появится у учеников этого курса. Материалы, задания и тесты добавляются внутри папки (можно составить нейросетью).</p></div>` : ""}
-  ${!ok ? `<div class="card" style="margin-bottom:16px"><p>Чтобы открыть базу «${esc(U.PACKS[U.packOf(cid)])}», напишите разработчику платформы. Свои уроки и материалы можно добавлять и без неё.</p></div>` : ""}
+  ${!c.lessons.length && !c.locked ? `<div class="card" style="margin-bottom:16px"><p>Уроков пока нет. Создайте первый урок ниже – он сразу появится у учеников этого курса. Материалы, задания и тесты добавляются внутри папки (можно составить нейросетью).</p></div>` : ""}
+  ${!ok ? `<div class="card row between" style="margin-bottom:16px"><p>${I.lock} Материалы курса откроются в тарифе «С материалами» или «Полный».</p><button class="btn sm" data-view="sub">Выбрать тариф</button></div>
+    <div class="folders" style="margin-bottom:24px">${(c.titles || []).map((t, i) => `<button class="folder locked" style="--c:${U.ownColor()}" data-view="sub"><span class="back"></span><span class="papers"><i></i><i></i></span><span class="front"><span class="lockico">${I.lock}</span><span class="num">№ ${String(i+1).padStart(2,"0")}</span><span class="ttl">${esc(t)}</span></span></button>`).join("")}</div>` : ""}
   <div class="folders">${c.lessons.map((l,i) => `<button class="folder ${ok || l.custom ? "" : "locked"}" style="--c:${blockOf(c, l).color}" data-lesson="${l.id}"><span class="back"></span><span class="papers"><i></i><i></i></span>
     <span class="front">${ok || l.custom ? "" : `<span class="lockico">${I.lock}</span>`}<span class="num">№ ${String(i+1).padStart(2,"0")}${l.custom ? " · СВОЙ" : ""}</span><span class="ttl">${esc(l.title)}</span>
     <span class="meta"><span class="pill">${esc(l.oge)}</span>${l.materials?.length ? `<span class="pill">+${l.materials.length}</span>` : ""}${sheetFor(cid, l.id).url ? '<span class="pill">лист ✓</span>' : ""}<span class="arrow">→</span></span></span></button>`).join("")}</div>
@@ -341,7 +343,7 @@ function viewLesson(){
   if (!tabs.some(t => t[0] === T.sub)) T.sub = "method";
   const testList = qs => `<ol style="padding-left:20px">${qs.map(q => `<li style="margin-bottom:12px"><b>${esc(q.q)}</b><ul>${q.o.map((o,k) => `<li ${k===q.a?'style="color:var(--good);font-weight:800"':""}>${esc(o)}${k===q.a?" ✓":""}</li>`).join("")}</ul><p class="small muted">${q.tag ? "Правило: " + esc(q.tag) + ". " : ""}${esc(q.e || "")}</p></li>`).join("")}</ol>`;
   let body = "";
-  if (!ok) body = `<p>${I.lock} Материалы этого урока – во встроенной базе «${esc(U.PACKS[U.packOf(cid)])}». Чтобы открыть её, напишите разработчику платформы.</p>`;
+  if (!ok) body = `<p>${I.lock} Материалы этого урока откроются в тарифе «С материалами». <a href="#" data-view="sub">Выбрать тариф</a></p>`;
   else {
   if (T.sub === "method") body = `${l.method ? `<p><b>Главное:</b> ${esc(l.method.focus)}</p>` : ""}
       <div class="tablewrap method"><table><thead><tr><th>Минуты</th><th>Этап</th><th>Что делаем</th></tr></thead><tbody>${methodPlan(l).map(r => `<tr>${r.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
@@ -387,6 +389,32 @@ function viewLesson(){
     <div class="pane">${body}</div></article>`;
 }
 
+const PLANS = [
+  {k:"basic", n:"Базовый", d:"Для своих материалов", list:["Ученики по всем предметам и классам","Свои уроки, тесты, ссылки и файлы","Общая доска, личная доска, созвон","Карта успеха и статистика учеников"]},
+  {k:"materials", n:"С материалами", d:"Готовая база + анализ", list:["Всё из «Базового»","Встроенная база: ОГЭ, ЕГЭ, школьная программа по ФРП","Мини-практика, тесты и ключи к урокам","Нейросеть: анализ ученика и гибкий план"]},
+  {k:"full", n:"Полный", d:"Всё + нейросеть", list:["Всё из «С материалами»","Проверка сочинений и изложений нейросетью","Составление заданий и тестов нейросетью","Все новые возможности первыми"]}
+];
+const PRICE = k => (T.me?.prices || {})[k] ?? {basic:100, materials:300, full:500}[k];
+const fmtD = x => x ? new Date(x).toLocaleDateString("ru-RU", {day:"numeric", month:"long", year:"numeric"}) : "";
+function subBanner(){
+  const m = T.me; if (!m || m.role === "developer") return "";
+  const left = m.paid_until ? Math.ceil((new Date(m.paid_until) - Date.now()) / 864e5) : -1;
+  if (!m.active) return `<div class="card row between" style="margin-bottom:16px;outline:2px solid var(--bad)"><p><b>Подписка закончилась.</b> Ученики и материалы сохранены; чтобы добавлять новых учеников и пользоваться базой, продлите подписку.</p><button class="btn sm" data-view="sub">Продлить</button></div>`;
+  if (m.trial || left <= 5) return `<div class="card row between" style="margin-bottom:16px"><p>${m.trial ? "Пробный период" : "Подписка"}: осталось ${left} дн. (до ${fmtD(m.paid_until)}).</p><button class="btn sm ghost" data-view="sub">${m.trial ? "Выбрать тариф" : "Продлить"}</button></div>`;
+  return "";
+}
+function viewSub(){
+  const m = T.me || {};
+  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Подписка</span><h1>Тарифы</h1>
+      <p>${m.role === "developer" ? "У разработчика открыто всё." : m.active ? `Сейчас: «${esc((PLANS.find(p => p.k === m.active) || {}).n || "")}»${m.trial ? " (пробный период)" : ""} до ${fmtD(m.paid_until)}.` : "Подписки сейчас нет."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
+    <div class="grid2" style="margin-top:18px">${PLANS.map(p => `<div class="card stack ${m.active === p.k && !m.trial ? "accent" : ""}" style="gap:10px">
+      <div class="kicker">${esc(p.d)}</div><h2 style="font-family:var(--f-display);font-size:1.5rem">${esc(p.n)}</h2>
+      <div><span class="big tnum">${PRICE(p.k)} ₽</span> <span class="muted">в месяц</span></div>
+      <ul class="small" style="margin:0;padding-left:18px">${p.list.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+      <div style="margin-top:auto"><button class="btn" data-pay="${p.k}">${m.active === p.k && !m.trial ? "Продлить на 30 дней" : "Оплатить 30 дней"}</button></div></div>`).join("")}</div>
+    <p class="small muted" style="margin-top:12px">Оплата картой или через СБП на странице ЮKassa. Доступ открывается сразу после оплаты. Если сменить тариф, новый действует 30 дней с дня оплаты.</p>`;
+}
+
 function viewLook(){
   return `<div class="section-title" style="margin-top:6px"><h2>Оформление</h2></div>
   <div class="card stack"><h3>Тема</h3><p class="small muted">Фон, стекло, папки и кнопки – в одной гамме. Своё фото: цвета подберутся по нему (хранится только на этом устройстве).</p>${U.themesHTML(localStorage.getItem("oge-theme-t") || T.me?.theme)}</div>
@@ -399,12 +427,13 @@ function render(){
   let html;
   if (T.view === "methodology") html = viewMethodology();
   else if (T.view === "look") html = viewLook();
+  else if (T.view === "sub" && sb && T.session) html = viewSub();
   else if (["course","lesson"].includes(T.view)) html = T.view === "course" ? viewCourse() : viewLesson();
   else if (!sb) html = viewNoServer();
   else if (!T.session) html = viewLogin();
   else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : viewStudents();
   const cur = ["students","student","board"].includes(T.view) ? "students" : ["course","lesson"].includes(T.view) ? "course" : T.view;
-  const nav = [["students","Ученики",I.users],["course","Материалы и база",I.book],["methodology","Методика курса",I.method],["look","Оформление",I.pen]];
+  const nav = [["students","Ученики",I.users],["course","Материалы и база",I.book],["methodology","Методика курса",I.method],["sub","Подписка",I.code.replace(/<path[^>]*\/>/, '<path d="M3 7h18v10H3zM3 11h18"/>')],["look","Оформление",I.pen]];
   $("#app").innerHTML = `<div class="shell">
     <div class="drawer-back" ${T.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${T.drawer ? "open" : ""}" aria-label="Меню">
@@ -418,7 +447,7 @@ function render(){
     </nav>
     <div style="min-width:0">
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
-      <main class="main">${html}</main></div></div>`;
+      <main class="main">${["students","course","student"].includes(T.view) && T.session ? subBanner() : ""}${html}</main></div></div>`;
   if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
   if (T.view === "board" && sb && T.session){
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = T.boardLesson === "free" ? FREE : c.lessons.find(x => x.id === T.boardLesson), owner = ownerOf(s);
@@ -483,7 +512,7 @@ document.addEventListener("submit", async e => {
     const g = +$("#ns-grade").value, nick = $("#ns-name").value.trim();
     const row = {name: nick ? "(" + nick + ")" : "(ожидает регистрации)", grade: g, subject: $("#ns-subj").value, course: "", code: U.genCode(), invite_token: U.randHex(18)};
     const {data, error} = await sb.from("students").insert(row).select(ST_COLS).single();
-    if (error){ toast("Не удалось создать: " + error.message); return; }
+    if (error){ toast(/row-level security/.test(error.message) ? "Подписка закончилась – продлите её в разделе «Подписка»." : "Не удалось создать: " + error.message); return; }
     T.students.push(data); T.justInvited = data; render(); toast("Ссылка создана – скопируйте и отправьте ученику");
   }
   if (id === "plan-form"){
@@ -536,7 +565,14 @@ document.addEventListener("change", async e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && T.drawer){ T.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto],[data-subjf],[data-matsubj]"); if (!t) return;
+  const t = e.target.closest("[data-view],[data-student],[data-lesson],[data-sub],[data-review],[data-wreview],[data-boardfor],[data-unlock],[data-grade],[data-act],[data-delmat],[data-theme-pick],[data-mascot-pick],[data-goto],[data-subjf],[data-matsubj],[data-pay]"); if (!t) return;
+  if (t.dataset.pay){
+    t.disabled = true; t.textContent = "Открываю оплату…";
+    const {data, error} = await sb.functions.invoke("pay", {body: {action: "create", plan: t.dataset.pay, return_url: location.origin + location.pathname + "#paid"}});
+    let msg = data?.error; if (error){ msg = error.message; try{ msg = (await error.context.json()).error || msg; }catch(_){} }
+    if (msg || !data?.url){ toast(msg || "Оплата недоступна"); t.disabled = false; t.textContent = "Оплатить 30 дней"; return; }
+    location.href = data.url; return;
+  }
   if (t.dataset.matsubj){ T.matSubject = t.dataset.matsubj; T.courseId = U.coursesOf(T.matSubject)[0]; T.view = "course"; render(); return; }
   if (t.tagName === "A") e.preventDefault();
   if (t.dataset.mascotPick){
@@ -733,6 +769,11 @@ document.addEventListener("click", async e => {
   const {data} = await sb.auth.getSession();
   T.session = data.session;
   sb.auth.onAuthStateChange((_e, s) => { T.session = s; });
+  if (location.hash === "#paid" && sb){
+    history.replaceState(null, "", location.pathname);
+    const {data: ss} = await sb.auth.getSession();
+    if (ss?.session){ T.session = ss.session; toast("Проверяю оплату…"); await sb.functions.invoke("pay", {body: {action: "check"}}).catch(() => {}); T.view = "sub"; }
+  }
   const hm = location.hash.match(/^#mat-(\w+)/);
   if (hm){ T.matSubject = hm[1]; T.courseId = U.coursesOf(hm[1])[0]; T.view = "course"; }
   if (T.session) await loadAll(); else render();

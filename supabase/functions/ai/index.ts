@@ -8,7 +8,7 @@
 //   generate_tasks   – учитель: мини-практика и тест по теме урока
 //   upload_work      – ученик: фото рукописной работы (по личному ключу ученика)
 //   test_key         – разработчик: проверить, что ключ работает
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -87,6 +87,11 @@ Deno.serve(async (req) => {
     const uid = u.user.id;
     const { data: me } = await admin.from("teachers").select("role").eq("id", uid).single();
     if (!me) return json({ error: "Нет профиля учителя" }, 403);
+    // тарифы: анализ и план – от 300 ₽ (materials), проверка сочинений и задания – 500 ₽ (full)
+    const { data: plan } = await admin.rpc("plan_active", { uid });
+    const need: Record<string, string[]> = { analyze_student: ["materials", "full"], check_essay: ["full"], generate_tasks: ["full"], test_key: ["full"] };
+    if (need[action] && !need[action].includes(plan as string))
+      return json({ error: plan ? "Эта функция нейросети входит в тариф " + (need[action][0] === "full" ? "«Полный» (500 ₽ в месяц)" : "от 300 ₽ в месяц") + "." : "Подписка закончилась – продлите её в разделе «Подписка»." }, 402);
     const own = async (sid: string) => {
       const { data } = await admin.from("students").select("*").eq("id", sid).eq("teacher_id", uid).single();
       if (!data) throw new Error("Это не ваш ученик");

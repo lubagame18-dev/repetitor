@@ -10,6 +10,7 @@ const PROV = [["deepseek","DeepSeek","platform.deepseek.com → API keys"],["ait
 async function load(){
   const me = await sb.rpc("me"); D.me = me.data;
   if (D.me?.role !== "developer") return render();
+  const bc = await sb.from("course_data").select("key", {count: "exact", head: true}); D.baseCount = bc.count || 0;
   const [sec, st, te, stats] = await Promise.all([sb.rpc("dev_list_secrets"), sb.from("app_settings").select("key,value"), sb.from("teachers").select("*").order("created_at"), sb.rpc("dev_stats")]);
   D.secrets = sec.data || []; D.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); D.teachers = te.data || []; D.stats = stats.data;
   render();
@@ -46,6 +47,24 @@ function view(){
     ${D.test ? `<p class="small ${D.test.ok ? "" : ""}" style="color:${D.test.error ? "var(--bad)" : "var(--good)"}">${esc(D.test.error || "Нейросеть отвечает: " + (D.test.hello || "ok"))}</p>` : ""}
   </form>
 
+  <div class="section-title"><h2>Тарифы и оплата</h2></div>
+  <form class="card stack" id="pay-form" style="gap:10px">
+    <div class="grid2 stats">${[["basic","Базовый"],["materials","С материалами"],["full","Полный"]].map(([k,n]) => `<div><label for="pr-${k}">${n}, ₽ в месяц</label><input type="text" inputmode="numeric" id="pr-${k}" value="${esc((D.settings.prices || {})[k] ?? {basic:100, materials:300, full:500}[k])}"></div>`).join("")}
+      <div><label for="trial-days">Пробный период, дней (0 – без него)</label><input type="text" inputmode="numeric" id="trial-days" value="${esc(D.settings.trial_days ?? 7)}"></div></div>
+    <p class="small muted">ЮKassa → Настройки → Магазин: «shopId» и «Секретный ключ». В ЮKassa → Интеграция → HTTP-уведомления вставьте адрес ниже и отметьте событие <b>payment.succeeded</b>.</p>
+    <div class="linkbox"><input type="text" readonly value="${esc((window.APP_CONFIG || {}).SUPABASE_URL || "https://ВАШ-ПРОЕКТ.supabase.co")}/functions/v1/pay"></div>
+    <label for="yk-shop">shopId ЮKassa ${tail("yk_shop") ? `<span class="chip good">сохранён: ${esc(tail("yk_shop"))}</span>` : ""}</label><input type="text" id="yk-shop" autocomplete="off">
+    <label for="yk-secret">Секретный ключ ЮKassa ${tail("yk_secret") ? `<span class="chip good">сохранён …${esc(tail("yk_secret"))}</span>` : ""}</label><input type="password" id="yk-secret" autocomplete="off" placeholder="${tail("yk_secret") ? "оставьте пустым, чтобы не менять" : "live_… или test_…"}">
+    <div><button class="btn" type="submit">Сохранить тарифы и оплату</button></div>
+  </form>
+
+  <div class="section-title"><h2>Встроенная база в Supabase</h2></div>
+  <div class="card stack" style="gap:10px">
+    <p>Сейчас в базе курсов: <b>${D.baseCount}</b>. Материалы хранятся в Supabase, а не на GitHub, поэтому их видят только репетиторы с тарифом «С материалами» или «Полный» и их ученики.</p>
+    <p class="small muted">Загрузите файл <b>base.json</b> (его прислала нейросеть в чате). Повторная загрузка обновляет курсы, ничего не удаляя.</p>
+    <div class="row"><input type="file" id="base-file" accept=".json,application/json" hidden><button class="btn" data-act="base-upload">Загрузить base.json</button></div>
+  </div>
+
   <div class="section-title"><h2>Методические материалы – общая база</h2></div>
   <div class="card stack" style="gap:10px">
     <p class="small muted">Уроки, материалы и задания, которые вы создаёте в режиме разработчика с галочкой «В общую базу», видят все учителя платформы и их ученики этого курса. Строение урока как в «Учу по ФРП»: теория маленькими блоками → примеры → мини-практика → задания → тест.</p>
@@ -62,11 +81,13 @@ function view(){
   </form>
 
   <div class="section-title"><h2>Учителя и встроенные базы</h2></div>
-  <div class="card"><p class="small muted" style="margin-bottom:10px">Учитель появляется здесь после первого входа в кабинет. Отметьте, какие встроенные базы ему открыты (купленные).</p>
-    <div class="tablewrap"><table><thead><tr><th>Почта</th><th>Имя</th><th>Роль</th>${Object.values(U.PACKS).map(n => `<th>${esc(n)}</th>`).join("")}<th></th></tr></thead><tbody>
+  <div class="card"><p class="small muted" style="margin-bottom:10px">Репетиторы регистрируются сами и появляются здесь после первого входа. Тариф и срок меняются автоматически после оплаты; здесь можно выдать их вручную (например, подарить месяц). «Базы вручную» открывают встроенные материалы независимо от тарифа.</p>
+    <div class="tablewrap"><table><thead><tr><th>Почта</th><th>Имя</th><th>Роль</th><th>Тариф</th><th>Оплачено до</th><th>Базы вручную</th><th></th></tr></thead><tbody>
     ${D.teachers.map(t => `<tr data-tid="${t.id}"><td>${esc(t.email || "")}</td><td><input type="text" data-f="name" value="${esc(t.name || "")}" style="min-width:140px"></td>
       <td><select data-f="role" style="min-width:150px" ${t.id === D.me.id ? "disabled" : ""}><option value="teacher" ${t.role==="teacher"?"selected":""}>учитель</option><option value="developer" ${t.role==="developer"?"selected":""}>разработчик</option></select></td>
-      ${Object.keys(U.PACKS).map(p => `<td><input type="checkbox" data-pack="${p}" ${(t.base_access || []).includes(p) ? "checked" : ""} aria-label="${esc(U.PACKS[p])}"></td>`).join("")}
+      <td><select data-f="plan" style="min-width:150px">${[["basic","Базовый · 100 ₽"],["materials","С материалами · 300 ₽"],["full","Полный · 500 ₽"]].map(([k,n]) => `<option value="${k}" ${t.plan===k?"selected":""}>${n}</option>`).join("")}</select>${t.trial ? '<div class="small muted">пробный</div>' : ""}</td>
+      <td><input type="date" data-f="paid" value="${t.paid_until ? t.paid_until.slice(0, 10) : ""}" style="width:150px"></td>
+      <td class="small">${Object.keys(U.PACKS).map(p => `<label style="display:flex;gap:6px;font-weight:600"><input type="checkbox" data-pack="${p}" ${(t.base_access || []).includes(p) ? "checked" : ""}> ${esc(U.PACKS[p])}</label>`).join("")}</td>
       <td><button class="btn sm" data-act="save-teacher">Сохранить</button></td></tr>`).join("")}
     </tbody></table></div></div>`;
 }
@@ -89,6 +110,14 @@ document.addEventListener("submit", async e => {
     jobs.push(["ai_model", $("#ai-model").value.trim()], ["ai_url", $("#ai-url").value.trim()]);
     for (const [k, v] of jobs){ const {error} = await sb.rpc("dev_set_secret", {p_key: k, p_value: v}); if (error){ toast("Не сохранилось: " + error.message); return; } }
     toast("Настройки нейросети сохранены"); load();
+  }
+  if (e.target.id === "pay-form"){
+    const prices = {}; ["basic","materials","full"].forEach(k => prices[k] = Math.max(1, Math.round(+$("#pr-" + k).value.replace(/\D/g, "")) || 0));
+    const days = Math.max(0, parseInt($("#trial-days").value, 10) || 0);
+    let {error} = await sb.from("app_settings").upsert([{key: "prices", value: prices}, {key: "trial_days", value: days}]);
+    if (!error && $("#yk-shop").value.trim()) error = (await sb.rpc("dev_set_secret", {p_key: "yk_shop", p_value: $("#yk-shop").value.trim()})).error;
+    if (!error && $("#yk-secret").value.trim()) error = (await sb.rpc("dev_set_secret", {p_key: "yk_secret", p_value: $("#yk-secret").value.trim()})).error;
+    toast(error ? "Не сохранилось: " + error.message : "Тарифы и оплата сохранены"); load(); return;
   }
   if (e.target.id === "look-form"){
     const pick = document.querySelector('[data-theme-pick][aria-pressed="true"]')?.dataset.themePick || "lavender";
@@ -114,9 +143,21 @@ document.addEventListener("click", async e => {
     for (const s of D.secrets){ await sb.rpc("dev_set_secret", {p_key: s.key, p_value: ""}); }
     toast("Ключи удалены"); load();
   }
+  if (a === "base-upload"){
+    const inp = $("#base-file"); inp.onchange = async () => {
+      const f = inp.files[0]; if (!f) return; let rows;
+      try{ rows = JSON.parse(await f.text()); }catch(_){ toast("Это не тот файл: нужен base.json"); return; }
+      if (!Array.isArray(rows) || !rows[0]?.key){ toast("Это не тот файл: нужен base.json"); return; }
+      t.disabled = true; let done = 0;
+      for (const r of rows){ const {error} = await sb.from("course_data").upsert({key: r.key, data: r.data, keys: r.keys || null, updated_at: new Date().toISOString()}); if (error){ toast("Ошибка на курсе " + r.key + ": " + error.message); t.disabled = false; return; } done++; t.textContent = `Загружаю… ${done}/${rows.length}`; }
+      toast(`Загружено курсов: ${done}`); load();
+    }; inp.click(); return;
+  }
   if (a === "save-teacher"){
     const tr = t.closest("tr"), id = tr.dataset.tid;
-    const row = {name: tr.querySelector('[data-f="name"]').value.trim() || null, base_access: [...tr.querySelectorAll("[data-pack]:checked")].map(x => x.dataset.pack)};
+    const paid = tr.querySelector('[data-f="paid"]').value;
+    const row = {name: tr.querySelector('[data-f="name"]').value.trim() || null, base_access: [...tr.querySelectorAll("[data-pack]:checked")].map(x => x.dataset.pack),
+                 plan: tr.querySelector('[data-f="plan"]').value, paid_until: paid ? new Date(paid + "T23:59:00").toISOString() : null, trial: false};
     const role = tr.querySelector('[data-f="role"]'); if (!role.disabled) row.role = role.value;
     const {error} = await sb.from("teachers").update(row).eq("id", id);
     toast(error ? "Не сохранилось: " + error.message : "Сохранено");
