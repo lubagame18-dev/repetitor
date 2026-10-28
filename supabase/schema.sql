@@ -299,6 +299,8 @@ returns json language plpgsql security definer set search_path = public, extensi
 declare uid uuid := auth.uid(); r teachers; first boolean; days int;
 begin
   if uid is null then return null; end if;
+  -- вход без почты (по коду разработчика): кабинет создаёт только dev_join, пробный период таким входам не выдаётся
+  if coalesce((auth.jwt()->>'is_anonymous')::boolean, false) and not exists (select 1 from teachers where id = uid) then return null; end if;
   first := not exists (select 1 from teachers);
   days := coalesce((select (value)::text::int from app_settings where key = 'trial_days'), 7);
   insert into teachers(id, email, name, role, plan, paid_until, trial)
@@ -399,8 +401,11 @@ begin
   if auth.uid() is null then return false; end if;
   select value into h from app_secrets where key = 'dev_code_hash';
   if h is null or crypt(coalesce(p_code, ''), h) <> h then perform pg_sleep(1); return false; end if;
+  insert into teachers(id, email, name, role, plan)
+  values (auth.uid(), (select email from auth.users where id = auth.uid()),
+          coalesce((select raw_user_meta_data->>'name' from auth.users where id = auth.uid()), 'Разработчик'), 'developer', 'full')
+  on conflict (id) do update set role = 'developer';
   perform me();
-  update teachers set role = 'developer' where id = auth.uid();
   return true;
 end $$;
 

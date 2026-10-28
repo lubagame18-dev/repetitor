@@ -56,8 +56,13 @@ function view(){
   if (!sb) return `<div class="card"><h2>Сервер не подключён</h2><p>Заполните config.js – см. README.</p></div>`;
   const msg = D.msg ? `<p class="formmsg ${D.msg.ok ? "good" : "bad"}" role="status">${esc(D.msg.t)}</p>` : "";
   // шаг 1: вход в свой кабинет (почта и пароль) – как в «Учу по ФРП»
-  if (!D.session) return `<form class="card login stack" id="d-login"><h2>Режим разработчика</h2>
-    <p class="small muted">Шаг 1 из 2: войдите в свой кабинет почтой и паролем. Потом – код разработчика.</p>
+  if (!D.session) return `<form class="card login stack" id="d-quick" autocomplete="off"><h2>Режим разработчика</h2>
+    <p class="small muted">Вход по коду – без регистрации.</p>
+    <label for="d-qname">Как вас зовут</label><input type="text" id="d-qname" autocomplete="name" placeholder="Например: Анна Сергеевна">
+    <label for="d-qcode">Код разработчика</label>${U.pass("d-qcode", 'required autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"')}
+    <button class="btn" type="submit">Войти по коду</button>${D.quickMsg ? `<p class="formmsg bad" role="status">${esc(D.quickMsg)}</p>` : ""}</form>
+  <form class="card login stack" id="d-login" style="margin-top:16px"><h3>Или войдите в свой кабинет</h3>
+    <p class="small muted">Почта и пароль, потом код разработчика.</p>
     <label for="d-email">Почта</label><input type="email" id="d-email" required autocomplete="username" value="${esc(CFG.DEV_EMAIL || D.lastEmail || "")}">
     <label for="d-pass">Пароль от кабинета</label>${U.pass("d-pass", 'required autocomplete="current-password"')}
     <button class="btn" type="submit">Войти</button>${msg}
@@ -74,7 +79,12 @@ function view(){
     <div class="row between"><a class="linkbtn" href="teacher.html">Кабинет учителя</a><button class="linkbtn" type="button" data-act="logout">Выйти из кабинета</button></div></form>`;
   const prov = D.settings.__provider || "";
   const s = D.stats || {};
-  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Разработчик</span><h1>Настройки платформы</h1>
+  const anon = D.session?.user?.is_anonymous;
+  return (anon ? `<form class="card stack" id="d-keep" style="gap:8px;margin-bottom:16px"><div class="kicker">Сохраните вход</div>
+    <p class="small">Вы вошли по коду без почты: вход действует только в этом браузере. Добавьте почту и пароль, чтобы заходить с любого устройства.</p>
+    <label for="dk-email">Почта</label><input type="email" id="dk-email" required autocomplete="username">
+    <label for="dk-pass">Пароль (не меньше 8 знаков)</label>${U.pass("dk-pass", 'required minlength="8" autocomplete="new-password"')}
+    <div><button class="btn sm" type="submit">Сохранить</button></div></form>` : "") + `<section class="hero glass" style="min-height:150px"><span class="mono muted">Разработчик</span><h1>Настройки платформы</h1>
       <p>Учителей: ${s.teachers ?? "–"} · учеников: ${s.students ?? "–"} · попыток тестов: ${s.results ?? "–"} · работ: ${s.writings ?? "–"} · разборов ИИ: ${s.ai ?? "–"}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
 
   <div class="section-title"><h2>Нейросеть</h2></div>
@@ -186,6 +196,24 @@ document.addEventListener("submit", async e => {
     const {error} = await sb.from("materials").insert({course: key, lesson_id: lid, kind: "lesson", title: t, shared: true, data: {title: t, date, oge: "Урок базы", learn: [t], theory: [], hw: ""}});
     if (error){ toast("Не сохранилось: " + error.message); return; }
     toast("Урок добавлен – теперь в него можно добавлять материалы"); D.bLoaded = null; render(); return;
+  }
+  if (e.target.id === "d-quick"){
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Проверяю…"; D.quickMsg = null;
+    const code = $("#d-qcode").value, name = $("#d-qname").value.trim() || "Разработчик";
+    try{
+      const {data: a, error: ae} = await sb.auth.signInAnonymously({options: {data: {name}}});
+      if (ae) throw /anonymous/i.test(ae.message) ? new Error("Вход по коду выключен в Supabase: Authentication → Sign In / Providers → включите «Allow anonymous sign-ins».") : ae;
+      const {data, error} = await sb.rpc("dev_join", {p_code: code});
+      if (error) throw /dev_join|does not exist/i.test(error.message) ? new Error("Обновите базу: в Supabase → SQL Editor заново выполните supabase/schema.sql.") : error;
+      if (!data){ await sb.auth.signOut(); throw new Error("Код не подошёл."); }
+      D.session = a.session; D.msg = null; toast("Вы в режиме разработчика"); render(); load();
+    }catch(er){ D.quickMsg = er.message && /[а-яё]/i.test(er.message) ? er.message : U.authErr(er); D.session = null; render(); }
+    return;
+  }
+  if (e.target.id === "d-keep"){
+    const {error} = await sb.auth.updateUser({email: $("#dk-email").value.trim(), password: $("#dk-pass").value}, {emailRedirectTo: U.siteURL("dev.html")});
+    if (error){ toast(U.authErr(error)); return; }
+    toast("Проверьте почту и подтвердите адрес – после этого входите почтой и паролем"); return;
   }
   if (e.target.id === "d-login"){
     const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Вхожу…"; D.lastEmail = $("#d-email").value.trim();

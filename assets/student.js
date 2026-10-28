@@ -239,6 +239,7 @@ function viewLogin(){
     <button class="btn" type="submit">Войти в кабинет учителя</button>${msg}
     <button class="linkbtn" type="button" data-authmode="forgot">Забыли пароль?</button>
     <div class="regline"><span>Нет кабинета?</span><button class="linkbtn" type="button" data-authmode="signup">Зарегистрироваться</button></div>
+    <div class="regline"><span>Есть код разработчика?</span><a class="linkbtn" href="dev.html">Режим разработчика</a></div>
     ${S.authMsg?.resend ? `<button class="btn ghost sm" type="button" data-act="resend">Отправить письмо ещё раз</button>` : ""}</form>`;
   else body = S.signupDone ? `<div class="stack" style="gap:8px"><h3>Почти готово!</h3><p>Мы отправили письмо на <b>${esc(S.signupDone)}</b>. Откройте его и нажмите ссылку – кабинет откроется, и начнётся пробный период.</p>
       <p class="small muted">Письма нет? Проверьте «Спам» или отправьте ещё раз.</p>${msg}
