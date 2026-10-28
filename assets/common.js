@@ -20,7 +20,7 @@ window.U = (() => {
     const out = {};
     rows.filter(r => (r.kind || "lesson") === kind).sort((a,b) => new Date(a.created_at) - new Date(b.created_at)).forEach(r => {
       const o = out[r.lesson_id] || (out[r.lesson_id] = {attempts:0, last:null, best:null, history:[]});
-      const x = {score:r.score, total:r.total, wrong:r.wrong || [], at:r.created_at};
+      const x = {score:r.score, total:r.total, wrong:r.wrong || [], at:r.created_at, duration_sec:r.duration_sec};
       o.attempts++; o.last = x; o.history.push(x);
       if (!o.best || pct(x) >= pct(o.best)) o.best = x;
     });
@@ -63,14 +63,26 @@ window.U = (() => {
     return v.length ? Math.round(v.reduce((a,b) => a+b, 0) / v.length) : null;
   }
 
-  function theoryHTML(l){
-    const blocks = l.theory.map(t => `<div class="tblock">
+  /* мини-практика: answer – варианты через «|»; заглавная гласная внутри слова – ударение, тогда регистр важен */
+  const normAns = (s, keepCase) => { s = String(s || "").replace(/ё/g, "е").replace(/Ё/g, "Е").replace(/[\s.,;:!?«»"'()\[\]–—-]+/g, ""); return keepCase ? s : s.toLowerCase(); };
+  function miniCheck(ans, right){
+    return String(right).split("|").some(r => { const kc = /[а-яё][АЕЁИОУЫЭЮЯ]/.test(r); return normAns(ans, kc) === normAns(r, kc); });
+  }
+  function miniHTML(l, bi, mini, withKeys){
+    if (!mini?.length) return "";
+    return `<div class="mini" data-mini="${esc(l.id)}:${bi}"><div class="kicker"><span class="step-badge">${bi+1}</span> Мини-практика – сразу закрепляем</div>
+      ${mini.map((m, k) => `<div class="mini-q"><p>${esc(m.q)}</p>${withKeys ? `<b>${esc(m.a.split("|")[0])}</b>` : `<input type="text" data-mq="${k}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Ответ">`}<span class="ans" hidden></span></div>`).join("")}
+      ${withKeys ? "" : `<div class="row" style="margin-top:10px"><button class="btn sm" data-act="mini-check" data-mini-id="${esc(l.id)}:${bi}">Проверить</button><span class="small muted mini-res"></span></div>`}</div>`;
+  }
+  function theoryHTML(l, withKeys){
+    const blocks = l.theory.map((t, bi) => `<div class="tblock">
       <h3>${esc(t.h)}</h3>
       ${t.t ? `<p>${mark(t.t)}</p>` : ""}
       ${t.list ? `<ul>${t.list.map(x => `<li>${mark(x)}</li>`).join("")}</ul>` : ""}
       ${t.table ? `<div class="tablewrap"><table><thead><tr>${t.table[0].map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${t.table.slice(1).map(r => `<tr>${r.map(c => `<td>${mark(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : ""}
       ${t.ex?.length ? `<div class="ex">${t.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}
       ${t.scheme ? `<div class="scheme">${esc(t.scheme)}</div>` : ""}
+      ${miniHTML(l, bi, t.mini, withKeys)}
     </div>`).join("");
     const m = l.memo;
     return `<div class="theory">${blocks}
@@ -133,6 +145,80 @@ window.U = (() => {
       <div class="row between small muted"><span>${fmtShort(arr[0].l.date)}</span><span>${fmtShort(arr.at(-1).l.date)}</span></div>`;
   }
 
+  /* план по классу и целям */
+  const GOALS = ["ОГЭ","ЕГЭ","ВПР","Контрольные и домашние","Олимпиада"];
+  function planFor(grade, goals){
+    goals = goals || [];
+    if (+grade === 9 && goals.includes("ОГЭ")) return "oge-rus";
+    if (+grade >= 10 && goals.includes("ЕГЭ")) return "ege-rus";
+    return "rus-" + grade;
+  }
+  const packOf = course => /^rus-\d+$/.test(course) ? "school-rus" : course;
+  const PACKS = {"oge-rus":"Подготовка к ОГЭ", "ege-rus":"Подготовка к ЕГЭ", "school-rus":"Школьная программа 5–11 (ФРП)"};
+  const iso = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
+
+  /* курс ученика: даты (первый урок + еженедельно, плюс правки отдельных дат), свои уроки и материалы учителя */
+  function courseFor(p, mats){
+    const base = window.COURSES?.[p?.course]; if (!base) return null;
+    const start = p.start_date ? new Date(p.start_date + "T00:00:00") : null, ov = p.dates || {};
+    mats = (mats || []).filter(m => m.course === p.course && (!m.student_id || m.student_id === p.id));
+    const own = mats.filter(m => m.kind === "lesson").map(m => ({...emptyLesson(), ...m.data, id: m.lesson_id, custom: true, mid: m.id}));
+    let lessons = base.lessons.map((l, i) => ({...l, date: start ? iso(new Date(start.getTime() + i * 7 * 864e5)) : l.date}));
+    lessons = [...lessons, ...own].map(l => ({...l, date: ov[l.id] || l.date, materials: mats.filter(m => m.kind !== "lesson" && m.lesson_id === l.id)}))
+      .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    return {...base, events: start ? (base.events || []).filter(e => e.kind === "exam") : base.events, lessons};
+  }
+  function emptyLesson(){ return {block: "own", oge: "Свой урок", title: "Новый урок", learn: [], theory: [], practice: [], test: [], hwtest: [], hw: "", writing: null, stub: true}; }
+
+  /* задания из материала «tasks» (свои или от нейросети): {mini:[{q,a}], test:[{q,o,a,e}]} */
+  function lessonTests(l){
+    const extra = (l.materials || []).filter(m => m.kind === "tasks");
+    return {test: [...(l.test || []), ...extra.flatMap(m => m.data?.test || [])], mini: extra.flatMap(m => m.data?.mini || [])};
+  }
+
+  /* скачать урок как документ Word: «Тема – рабочий лист» и отдельно «Тема – ключи» */
+  function downloadDoc(name, html){
+    const doc = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${esc(name)}</title>
+      <style>body{font-family:"Times New Roman";font-size:14pt;line-height:1.4}h1{font-size:18pt}h2,h3{font-size:15pt}.ttext,.ex,.scheme{background:#f3eefc;padding:6pt}.blank{border-bottom:1px solid #999;height:20pt}table{border-collapse:collapse}td,th{border:1px solid #999;padding:3pt}.key{color:#1c6b3f}</style></head><body>${html}</body></html>`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["\ufeff", doc], {type: "application/msword"}));
+    a.download = name.replace(/[\\/:*?"<>|]/g, "") + ".doc"; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  function lessonDocHTML(l, withKeys){
+    const strip = h => h.replace(/<button[\s\S]*?<\/button>/g, "").replace(/<input[^>]*>/g, '<span class="blank"></span>');
+    return `<h1>${esc(l.title)}</h1><p>${esc(l.oge || "")} · ${fmt(l.date)}</p>${strip(theoryHTML(l, withKeys))}
+      ${l.practice?.length ? `<h2>Практика</h2>${practiceHTML(l, withKeys)}` : ""}${l.hw ? `<h2>Домашнее задание</h2><p>${esc(l.hw)}</p>` : ""}`;
+  }
+
+  /* фон настроения */
+  const THEMES = [["lavender","Лаванда"],["bordo","Бордо"],["lemon","Лимон"],["peach","Персик"],["hvoya","Хвоя"],["photo","Своё фото"]];
+  function applyTheme(t){
+    let photo = null; try{ photo = localStorage.getItem("oge-photo"); }catch(_){}
+    if (t === "photo" && !photo) t = "lavender";
+    const h = document.documentElement;
+    if (!t || t === "lavender") h.removeAttribute("data-theme"); else h.dataset.theme = t;
+    h.style.setProperty("--bg-img", t === "photo" ? `url("${photo}")` : "");
+    if (t !== "photo") h.style.removeProperty("--bg-img");
+  }
+  function themesHTML(cur){
+    return `<div class="themes" role="group" aria-label="Фон">${THEMES.map(([k, n]) => `<button type="button" class="theme-opt" data-theme-pick="${k}" aria-pressed="${(cur || "lavender") === k}">
+      <span style="background-image:${k === "lavender" ? "linear-gradient(135deg,#b79cff,#f7a8d0,#ffd1a8)" : k === "photo" ? "repeating-linear-gradient(45deg,#ddd 0 8px,#eee 8px 16px)" : `url(assets/bg/${k}.webp)`}"></span><b>${n}</b></button>`).join("")}</div>
+      <input type="file" accept="image/*" id="theme-photo" hidden>`;
+  }
+  /* фото уменьшаем на устройстве и храним только в этом браузере */
+  function pickPhoto(cb){
+    const inp = document.getElementById("theme-photo"); if (!inp) return;
+    inp.onchange = () => { const f = inp.files[0]; if (!f) return; const img = new Image();
+      img.onload = () => { const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement("canvas");
+        c.width = img.width * k; c.height = img.height * k; c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        try{ localStorage.setItem("oge-photo", c.toDataURL("image/jpeg", .8)); }catch(_){ toast("Фото слишком большое."); return; }
+        URL.revokeObjectURL(img.src); cb(); };
+      img.src = URL.createObjectURL(f); };
+    inp.click();
+  }
+
+  const randHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("");
+
   function shuffle(a){ a = a.slice(); for (let i = a.length-1; i > 0; i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
 
   function toast(t){ const el = document.getElementById("toast"); if (!el) return; el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2600); }
@@ -148,5 +234,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 25}}});
   };
 
-  return {KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, THEMES, applyTheme, themesHTML, pickPhoto, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

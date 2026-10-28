@@ -1,8 +1,22 @@
--- Платформа «Учу по ФРП · репетиторство»: ученики, тесты, домашки, сочинения, общая доска.
+-- Платформа «Учу по ФРП · репетиторство»: учителя, ученики, тесты, домашки, сочинения, общая доска,
+-- своя база материалов, работа в паре, кабинет разработчика и ключи нейросети.
 -- Выполнить: Supabase → SQL Editor → New query → вставить весь файл → Run.
 -- Файл можно запускать повторно (например, после обновления) – данные не удаляются.
 
 create extension if not exists pgcrypto;
+
+-- ---------- Учителя и разработчики ----------
+-- Строка создаётся сама при первом входе учителя (функция me()).
+-- role: 'teacher' | 'developer'. base_access – какие встроенные базы открыты: 'oge-rus', 'ege-rus', 'school-rus'.
+create table if not exists public.teachers (
+  id          uuid primary key references auth.users(id) on delete cascade,
+  email       text,
+  name        text,
+  role        text not null default 'teacher' check (role in ('teacher','developer')),
+  base_access text[] not null default '{}',
+  theme       text,
+  created_at  timestamptz not null default now()
+);
 
 -- Ученики. Каждый учитель видит только своих.
 create table if not exists public.students (
@@ -14,8 +28,22 @@ create table if not exists public.students (
   note        text,
   created_at  timestamptz not null default now()
 );
+alter table public.students add column if not exists grade         int;
+alter table public.students add column if not exists goal          text;
+alter table public.students add column if not exists goals         text[] not null default '{}';
+alter table public.students add column if not exists contact       text;
+alter table public.students add column if not exists password_hash text;
+alter table public.students add column if not exists access_token  text unique;
+alter table public.students add column if not exists invite_token  text unique;
+alter table public.students add column if not exists registered_at timestamptz;
+alter table public.students add column if not exists start_date    date;
+alter table public.students add column if not exists dates         jsonb not null default '{}'::jsonb;  -- {"l05":"2026-12-10"} – перенос отдельных уроков
+alter table public.students add column if not exists unlocked      jsonb not null default '[]'::jsonb;
+alter table public.students add column if not exists subject       text not null default 'rus';
+alter table public.students add column if not exists pair_id       uuid references public.students(id) on delete set null;  -- напарник
+alter table public.students add column if not exists theme         text;
 
--- Попытки тестов: kind = 'lesson' (тест на занятии) или 'hw' (тест по домашнему заданию).
+-- Попытки тестов: kind = 'lesson' | 'hw' | 'entry' | 'mini'. duration_sec – сколько длилась попытка.
 create table if not exists public.results (
   id          bigint generated always as identity primary key,
   student_id  uuid not null references public.students(id) on delete cascade,
@@ -27,7 +55,17 @@ create table if not exists public.results (
   created_at  timestamptz not null default now()
 );
 alter table public.results add column if not exists kind text not null default 'lesson';
+alter table public.results add column if not exists duration_sec int;
 create index if not exists results_student_idx on public.results(student_id);
+
+-- Время в папке урока (по дням): так учитель видит, сколько ученик реально занимался.
+create table if not exists public.activity (
+  student_id  uuid not null references public.students(id) on delete cascade,
+  lesson_id   text not null,
+  day         date not null default current_date,
+  seconds     int  not null default 0,
+  primary key (student_id, lesson_id, day)
+);
 
 -- Домашние задания: отметка ученика + проверка учителя.
 create table if not exists public.homework (
@@ -42,24 +80,26 @@ create table if not exists public.homework (
   primary key (student_id, lesson_id)
 );
 
--- Сочинения и изложения: текст ученика + оценка учителя по критериям.
+-- Сочинения и изложения: текст или фото работы + оценка учителя по критериям (+ черновик оценки от нейросети).
 create table if not exists public.writings (
   student_id   uuid not null references public.students(id) on delete cascade,
   lesson_id    text not null,
-  kind         text not null,              -- '13.1' | '13.2' | '13.3' | 'izl' | 'thesis' | 'example'
+  kind         text not null,
   text_id      text,
   body         text,
   words        int,
   submitted_at timestamptz,
   status       text not null default 'sent' check (status in ('sent','reviewed','redo')),
-  scores       jsonb not null default '{}'::jsonb,   -- {"СК1":1,"СК2":3,...}
-  errors       jsonb not null default '{}'::jsonb,   -- {"orf":2,"punct":1,...}
+  scores       jsonb not null default '{}'::jsonb,
+  errors       jsonb not null default '{}'::jsonb,
   total        int,
   max          int,
   comment      text,
   reviewed_at  timestamptz,
   primary key (student_id, lesson_id)
 );
+alter table public.writings add column if not exists photos jsonb not null default '[]'::jsonb;   -- ссылки на фото рукописной работы
+alter table public.writings add column if not exists ai     jsonb;                               -- проверка нейросетью (черновик для учителя)
 
 -- Ссылки на рабочие листы к занятиям (у каждого учителя свои).
 create table if not exists public.sheets (
@@ -72,7 +112,25 @@ create table if not exists public.sheets (
   primary key (teacher_id, course, lesson_id)
 );
 
--- Общая доска: штрихи и надписи. lesson_id = 'l01:practice' и т. п.
+-- Своя база учителя: материалы в любую папку и свои уроки.
+-- kind: 'link' | 'file' (url из хранилища) | 'text' | 'tasks' (data: {mini:[{q,a}], test:[{q,o,a,e}]}) | 'lesson' (data: урок целиком)
+-- student_id пусто – материал для всех учеников этого курса; заполнено – только для одного ученика.
+create table if not exists public.materials (
+  id          bigint generated always as identity primary key,
+  teacher_id  uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  course      text not null,
+  lesson_id   text not null,
+  student_id  uuid references public.students(id) on delete cascade,
+  kind        text not null check (kind in ('link','file','text','tasks','lesson')),
+  title       text,
+  body        text,
+  url         text,
+  data        jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists materials_idx on public.materials(teacher_id, course);
+
+-- Общая доска: штрихи и надписи. lesson_id = 'l01:practice' и т. п. У пары – общая доска (student_id младшего по id).
 create table if not exists public.board_items (
   id          bigint generated always as identity primary key,
   student_id  uuid not null references public.students(id) on delete cascade,
@@ -83,80 +141,260 @@ create table if not exists public.board_items (
 );
 create index if not exists board_items_idx on public.board_items(student_id, lesson_id);
 
--- ---------- Права учителя ----------
-alter table public.students    enable row level security;
-alter table public.results     enable row level security;
-alter table public.homework    enable row level security;
-alter table public.writings    enable row level security;
-alter table public.sheets      enable row level security;
-alter table public.board_items enable row level security;
+-- Разборы нейросети: анализ ученика, рекомендации к плану.
+create table if not exists public.ai_reports (
+  id          bigint generated always as identity primary key,
+  teacher_id  uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  student_id  uuid references public.students(id) on delete cascade,
+  kind        text not null,
+  body        jsonb not null,
+  created_at  timestamptz not null default now()
+);
+
+-- Настройки сайта (видны всем): оформление по умолчанию, название. Меняет только разработчик.
+create table if not exists public.app_settings (
+  key   text primary key,
+  value jsonb not null
+);
+
+-- Секреты (ключи нейросети). Ни одна роль сайта их не читает – только серверная функция ai.
+create table if not exists public.app_secrets (
+  key        text primary key,
+  value      text not null,
+  updated_at timestamptz not null default now()
+);
+
+-- ---------- Права ----------
+alter table public.teachers     enable row level security;
+alter table public.students     enable row level security;
+alter table public.results      enable row level security;
+alter table public.activity     enable row level security;
+alter table public.homework     enable row level security;
+alter table public.writings     enable row level security;
+alter table public.sheets       enable row level security;
+alter table public.materials    enable row level security;
+alter table public.board_items  enable row level security;
+alter table public.ai_reports   enable row level security;
+alter table public.app_settings enable row level security;
+alter table public.app_secrets  enable row level security;
+
+create or replace function public.is_dev()
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from teachers where id = auth.uid() and role = 'developer');
+$$;
+
+drop policy if exists "teacher_self" on public.teachers;
+create policy "teacher_self" on public.teachers for select to authenticated using (id = auth.uid() or public.is_dev());
+drop policy if exists "dev_teachers" on public.teachers;
+create policy "dev_teachers" on public.teachers for update to authenticated using (public.is_dev()) with check (public.is_dev());
 
 drop policy if exists "teacher_students" on public.students;
 create policy "teacher_students" on public.students for all to authenticated
   using (teacher_id = auth.uid()) with check (teacher_id = auth.uid());
 
-drop policy if exists "teacher_results" on public.results;
-create policy "teacher_results" on public.results for all to authenticated
-  using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
-  with check (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()));
-
-drop policy if exists "teacher_homework" on public.homework;
-create policy "teacher_homework" on public.homework for all to authenticated
-  using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
-  with check (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()));
-
-drop policy if exists "teacher_writings" on public.writings;
-create policy "teacher_writings" on public.writings for all to authenticated
-  using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
-  with check (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()));
-
+do $$ declare t text; begin
+  foreach t in array array['results','activity','homework','writings','board_items'] loop
+    execute format('drop policy if exists "teacher_%1$s" on public.%1$s', t);
+    execute format('create policy "teacher_%1$s" on public.%1$s for all to authenticated
+      using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
+      with check (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))', t);
+  end loop;
+  foreach t in array array['sheets','materials','ai_reports'] loop
+    execute format('drop policy if exists "teacher_%1$s" on public.%1$s', t);
+    execute format('create policy "teacher_%1$s" on public.%1$s for all to authenticated
+      using (teacher_id = auth.uid()) with check (teacher_id = auth.uid())', t);
+  end loop;
+end $$;
+-- старые имена политик из прошлой версии
 drop policy if exists "teacher_board" on public.board_items;
-create policy "teacher_board" on public.board_items for all to authenticated
-  using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
-  with check (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()));
 
-drop policy if exists "teacher_sheets" on public.sheets;
-create policy "teacher_sheets" on public.sheets for all to authenticated
-  using (teacher_id = auth.uid()) with check (teacher_id = auth.uid());
+drop policy if exists "settings_read" on public.app_settings;
+create policy "settings_read" on public.app_settings for select to anon, authenticated using (true);
+drop policy if exists "settings_dev" on public.app_settings;
+create policy "settings_dev" on public.app_settings for all to authenticated using (public.is_dev()) with check (public.is_dev());
+-- app_secrets: политик нет вообще = закрыто для сайта.
 
--- ---------- Ученик входит по коду: только эти функции, без доступа к таблицам ----------
+-- ---------- Учитель ----------
+-- профиль учителя (создаётся при первом входе)
+create or replace function public.me()
+returns json language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); r teachers;
+begin
+  if uid is null then return null; end if;
+  insert into teachers(id, email, role, base_access)
+  values (uid, (select email from auth.users where id = uid),
+          -- первый зарегистрированный учитель – разработчик со всеми базами
+          case when not exists (select 1 from teachers) then 'developer' else 'teacher' end,
+          case when not exists (select 1 from teachers) then array['oge-rus','ege-rus','school-rus'] else array['oge-rus'] end)
+  on conflict (id) do nothing;
+  select * into r from teachers where id = uid;
+  return json_build_object('id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme);
+end $$;
+
+create or replace function public.teacher_set_theme(p_theme text)
+returns void language sql security definer set search_path = public as $$
+  update teachers set theme = left(p_theme, 20) where id = auth.uid();
+$$;
+
+-- выдать новую ссылку-приглашение (повторная регистрация или сброс пароля)
+create or replace function public.teacher_new_invite(p_student uuid)
+returns text language plpgsql security invoker set search_path = public, extensions as $$
+declare t text := encode(gen_random_bytes(18), 'hex');
+begin
+  update students set invite_token = t, access_token = null where id = p_student and teacher_id = auth.uid();
+  if not found then raise exception 'not your student'; end if;
+  return t;
+end $$;
+
+-- объединить двух учеников в пару (или разъединить: p_b = null)
+create or replace function public.teacher_set_pair(p_a uuid, p_b uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from students where id = p_a and teacher_id = auth.uid()) then raise exception 'not your student'; end if;
+  if p_b is not null and not exists (select 1 from students where id = p_b and teacher_id = auth.uid()) then raise exception 'not your student'; end if;
+  update students set pair_id = null where teacher_id = auth.uid() and (pair_id = p_a or id = p_a or (p_b is not null and (pair_id = p_b or id = p_b)));
+  if p_b is not null and p_b <> p_a then
+    update students set pair_id = p_b where id = p_a;
+    update students set pair_id = p_a where id = p_b;
+  end if;
+end $$;
+
+-- ---------- Разработчик ----------
+create or replace function public.dev_set_secret(p_key text, p_value text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_dev() then raise exception 'developer only'; end if;
+  if coalesce(p_value, '') = '' then delete from app_secrets where key = p_key;
+  else insert into app_secrets(key, value) values (left(p_key, 60), p_value)
+       on conflict (key) do update set value = excluded.value, updated_at = now(); end if;
+end $$;
+
+-- список ключей: у самих ключей видно только последние 4 символа, настройки (провайдер, модель) – целиком
+create or replace function public.dev_list_secrets()
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  if not is_dev() then raise exception 'developer only'; end if;
+  return coalesce((select json_agg(json_build_object('key', key, 'tail', case when key like 'key\_%' then right(value, 4) else value end, 'updated_at', updated_at) order by key) from app_secrets), '[]'::json);
+end $$;
+
+create or replace function public.dev_stats()
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  if not is_dev() then raise exception 'developer only'; end if;
+  return json_build_object('teachers', (select count(*) from teachers), 'students', (select count(*) from students where registered_at is not null),
+    'results', (select count(*) from results), 'writings', (select count(*) from writings), 'ai', (select count(*) from ai_reports));
+end $$;
+
+-- ---------- Ученик: приглашение → анкета и пароль → вход. Доступ к данным – только через эти функции ----------
 create or replace function public.student_id_by_code(p_code text)
 returns uuid language sql security definer set search_path = public stable as $$
-  select id from students where code = upper(trim(p_code));
+  select id from students where access_token = p_code and length(p_code) >= 32;
 $$;
 revoke all on function public.student_id_by_code(text) from public, anon, authenticated;
 
-create or replace function public.student_login(p_code text)
-returns json language sql security definer set search_path = public stable as $$
-  select json_build_object('id', id, 'name', name, 'course', course)
-  from students where code = upper(trim(p_code));
+-- чья доска: у пары одна общая доска
+create or replace function public.board_owner(sid uuid)
+returns uuid language sql security definer set search_path = public stable as $$
+  select case when pair_id is not null and pair_id::text < id::text then pair_id else id end from students where id = sid;
 $$;
+
+create or replace function public.student_profile_json(sid uuid)
+returns json language sql security definer set search_path = public stable as $$
+  select json_build_object('id', s.id, 'name', s.name, 'grade', s.grade, 'goal', s.goal, 'goals', s.goals, 'course', s.course, 'login', s.code,
+                           'start_date', s.start_date, 'dates', s.dates, 'unlocked', s.unlocked, 'theme', s.theme,
+                           'registered', s.registered_at is not null,
+                           'pair', (select json_build_object('id', p.id, 'name', p.name) from students p where p.id = s.pair_id),
+                           'board_owner', board_owner(s.id))
+  from students s where s.id = sid;
+$$;
+revoke all on function public.student_profile_json(uuid) from public, anon, authenticated;
+
+create or replace function public.invite_info(p_invite text)
+returns json language sql security definer set search_path = public stable as $$
+  select json_build_object('name', case when registered_at is null and name like '(%' then '' else name end, 'grade', grade,
+                           'theme', (select value from app_settings where key = 'default_theme'))
+  from students where invite_token = p_invite and length(p_invite) >= 24;
+$$;
+
+-- регистрация по одноразовой ссылке. Курс (план) выбирается по классу и целям,
+-- если у учителя открыта нужная база; иначе план составит учитель.
+drop function if exists public.student_register(text, text, int, text, text, text);
+create or replace function public.student_register(p_invite text, p_name text, p_grade int, p_goals text[], p_contact text, p_password text, p_course text default null, p_theme text default null)
+returns json language plpgsql security definer set search_path = public, extensions as $$
+declare sid uuid; tok text; acc text[]; pack text; cur text;
+begin
+  select id, course into sid, cur from students where invite_token = p_invite and length(p_invite) >= 24;
+  if sid is null then raise exception 'invite used or wrong'; end if;
+  if length(coalesce(p_password, '')) < 6 then raise exception 'short password'; end if;
+  if p_grade < 5 or p_grade > 11 then raise exception 'bad grade'; end if;
+  select t.base_access into acc from teachers t join students s on s.teacher_id = t.id where s.id = sid;
+  pack := case when p_course ~ '^rus-\d+$' then 'school-rus' else p_course end;
+  tok := encode(gen_random_bytes(24), 'hex');
+  update students set name = left(trim(p_name), 120), grade = p_grade, goals = coalesce(p_goals, '{}'), goal = array_to_string(p_goals, ', '),
+         contact = left(p_contact, 200), theme = left(p_theme, 20),
+         password_hash = crypt(p_password, gen_salt('bf')), access_token = tok, invite_token = null,
+         registered_at = coalesce(registered_at, now()),
+         course = case when p_course is not null and (pack = any(coalesce(acc, '{}'))) then p_course else '' end,
+         start_date = coalesce(start_date, current_date)
+   where id = sid;
+  return json_build_object('token', tok, 'profile', student_profile_json(sid));
+end $$;
+
+create or replace function public.student_login(p_login text, p_password text)
+returns json language plpgsql security definer set search_path = public, extensions as $$
+declare r students; tok text;
+begin
+  select * into r from students where code = upper(trim(p_login));
+  if r.id is null or r.password_hash is null or r.password_hash <> crypt(p_password, r.password_hash) then return null; end if;
+  tok := coalesce(r.access_token, encode(gen_random_bytes(24), 'hex'));
+  update students set access_token = tok where id = r.id;
+  return json_build_object('token', tok, 'profile', student_profile_json(r.id));
+end $$;
 
 create or replace function public.student_state(p_code text)
 returns json language sql security definer set search_path = public stable as $$
-  with s as (select * from students where code = upper(trim(p_code)))
+  with s as (select * from students where id = student_id_by_code(p_code))
   select json_build_object(
-    'results',  coalesce((select json_agg(json_build_object('lesson_id', r.lesson_id, 'kind', r.kind, 'score', r.score, 'total', r.total, 'wrong', r.wrong, 'created_at', r.created_at) order by r.created_at)
-                          from results r join s on r.student_id = s.id), '[]'::json),
+    'profile',  student_profile_json(s.id),
+    'results',  coalesce((select json_agg(json_build_object('lesson_id', r.lesson_id, 'kind', r.kind, 'score', r.score, 'total', r.total, 'wrong', r.wrong, 'created_at', r.created_at, 'duration_sec', r.duration_sec) order by r.created_at)
+                          from results r where r.student_id = s.id), '[]'::json),
     'homework', coalesce((select json_agg(json_build_object('lesson_id', h.lesson_id, 'note', h.note, 'status', h.status, 'grade', h.grade, 'comment', h.comment, 'sent_at', h.sent_at))
-                          from homework h join s on h.student_id = s.id), '[]'::json),
-    'writings', coalesce((select json_agg(json_build_object('lesson_id', w.lesson_id, 'kind', w.kind, 'text_id', w.text_id, 'body', w.body, 'words', w.words, 'status', w.status, 'scores', w.scores, 'errors', w.errors, 'total', w.total, 'max', w.max, 'comment', w.comment, 'submitted_at', w.submitted_at))
-                          from writings w join s on w.student_id = s.id), '[]'::json),
+                          from homework h where h.student_id = s.id), '[]'::json),
+    'writings', coalesce((select json_agg(json_build_object('lesson_id', w.lesson_id, 'kind', w.kind, 'text_id', w.text_id, 'body', w.body, 'words', w.words, 'photos', w.photos, 'status', w.status, 'scores', w.scores, 'errors', w.errors, 'total', w.total, 'max', w.max, 'comment', w.comment, 'submitted_at', w.submitted_at))
+                          from writings w where w.student_id = s.id), '[]'::json),
     'sheets',   coalesce((select json_agg(json_build_object('lesson_id', x.lesson_id, 'name', x.name, 'url', x.url, 'note', x.note))
-                          from sheets x join s on x.teacher_id = s.teacher_id and x.course = s.course), '[]'::json)
+                          from sheets x where x.teacher_id = s.teacher_id and x.course = s.course), '[]'::json),
+    'materials', coalesce((select json_agg(json_build_object('id', m.id, 'course', m.course, 'lesson_id', m.lesson_id, 'student_id', m.student_id, 'kind', m.kind, 'title', m.title, 'body', m.body, 'url', m.url, 'data', m.data) order by m.id)
+                          from materials m where m.teacher_id = s.teacher_id and m.course = s.course and (m.student_id is null or m.student_id = s.id)), '[]'::json)
   ) from s;
 $$;
 
-drop function if exists public.student_submit_result(text, text, int, int, jsonb);
-create or replace function public.student_submit_result(p_code text, p_lesson text, p_score int, p_total int, p_wrong jsonb, p_kind text default 'lesson')
+drop function if exists public.student_submit_result(text, text, int, int, jsonb, text);
+create or replace function public.student_submit_result(p_code text, p_lesson text, p_score int, p_total int, p_wrong jsonb, p_kind text default 'lesson', p_duration int default null)
 returns void language plpgsql security definer set search_path = public as $$
 declare sid uuid := student_id_by_code(p_code);
 begin
   if sid is null then raise exception 'unknown code'; end if;
   if p_score < 0 or p_total <= 0 or p_score > p_total or p_total > 100 then raise exception 'bad score'; end if;
-  insert into results(student_id, lesson_id, kind, score, total, wrong)
-  values (sid, left(p_lesson, 40), case when p_kind = 'hw' then 'hw' else 'lesson' end, p_score, p_total, coalesce(p_wrong, '[]'::jsonb));
+  insert into results(student_id, lesson_id, kind, score, total, wrong, duration_sec)
+  values (sid, left(p_lesson, 40), case when p_kind in ('hw','entry','mini') then p_kind else 'lesson' end, p_score, p_total, coalesce(p_wrong, '[]'::jsonb),
+          case when p_duration between 0 and 86400 then p_duration end);
 end $$;
+
+-- «я на уроке»: раз в минуту, пока папка открыта
+create or replace function public.student_ping(p_code text, p_lesson text, p_seconds int)
+returns void language plpgsql security definer set search_path = public as $$
+declare sid uuid := student_id_by_code(p_code);
+begin
+  if sid is null then raise exception 'unknown code'; end if;
+  insert into activity(student_id, lesson_id, seconds) values (sid, left(p_lesson, 40), least(greatest(p_seconds, 0), 120))
+  on conflict (student_id, lesson_id, day) do update set seconds = activity.seconds + excluded.seconds;
+end $$;
+
+create or replace function public.student_set_theme(p_code text, p_theme text)
+returns void language sql security definer set search_path = public as $$
+  update students set theme = left(p_theme, 20) where id = student_id_by_code(p_code);
+$$;
 
 create or replace function public.student_submit_homework(p_code text, p_lesson text, p_note text)
 returns void language plpgsql security definer set search_path = public as $$
@@ -170,22 +408,23 @@ begin
         status = case when homework.status = 'accepted' then 'accepted' else 'sent' end;
 end $$;
 
-create or replace function public.student_submit_writing(p_code text, p_lesson text, p_kind text, p_text text, p_body text, p_words int)
+drop function if exists public.student_submit_writing(text, text, text, text, text, int);
+create or replace function public.student_submit_writing(p_code text, p_lesson text, p_kind text, p_text text, p_body text, p_words int, p_photos jsonb default '[]'::jsonb)
 returns void language plpgsql security definer set search_path = public as $$
 declare sid uuid := student_id_by_code(p_code);
 begin
   if sid is null then raise exception 'unknown code'; end if;
-  insert into writings(student_id, lesson_id, kind, text_id, body, words, submitted_at, status)
-  values (sid, left(p_lesson, 40), left(p_kind, 10), left(p_text, 10), left(p_body, 20000), p_words, now(), 'sent')
+  insert into writings(student_id, lesson_id, kind, text_id, body, words, photos, submitted_at, status)
+  values (sid, left(p_lesson, 40), left(p_kind, 10), left(p_text, 10), left(p_body, 20000), p_words, coalesce(p_photos, '[]'::jsonb), now(), 'sent')
   on conflict (student_id, lesson_id) do update
-    set kind = excluded.kind, text_id = excluded.text_id, body = excluded.body, words = excluded.words,
-        submitted_at = now(), status = 'sent';
+    set kind = excluded.kind, text_id = excluded.text_id, body = excluded.body, words = excluded.words, photos = excluded.photos,
+        submitted_at = now(), status = 'sent', ai = null;
 end $$;
 
 create or replace function public.board_load(p_code text, p_lesson text)
 returns json language sql security definer set search_path = public stable as $$
   select coalesce(json_agg(json_build_object('id', b.id, 'item', b.item) order by b.id), '[]'::json)
-  from board_items b where b.student_id = student_id_by_code(p_code) and b.lesson_id = p_lesson;
+  from board_items b where b.student_id = board_owner(student_id_by_code(p_code)) and b.lesson_id = p_lesson;
 $$;
 
 create or replace function public.board_add(p_code text, p_lesson text, p_item jsonb)
@@ -194,28 +433,42 @@ declare sid uuid := student_id_by_code(p_code); nid bigint;
 begin
   if sid is null then raise exception 'unknown code'; end if;
   if length(p_item::text) > 60000 then raise exception 'too big'; end if;
-  insert into board_items(student_id, lesson_id, item, author) values (sid, left(p_lesson, 60), p_item, 'student') returning id into nid;
+  insert into board_items(student_id, lesson_id, item, author) values (board_owner(sid), left(p_lesson, 60), p_item, 'student') returning id into nid;
   return nid;
 end $$;
 
 create or replace function public.board_remove(p_code text, p_lesson text, p_ids bigint[])
 returns void language sql security definer set search_path = public as $$
-  delete from board_items where student_id = student_id_by_code(p_code) and lesson_id = p_lesson and id = any(p_ids);
+  delete from board_items where student_id = board_owner(student_id_by_code(p_code)) and lesson_id = p_lesson and id = any(p_ids);
 $$;
 
-revoke all on function public.student_login(text) from public;
-revoke all on function public.student_state(text) from public;
-revoke all on function public.student_submit_result(text, text, int, int, jsonb, text) from public;
-revoke all on function public.student_submit_homework(text, text, text) from public;
-revoke all on function public.student_submit_writing(text, text, text, text, text, int) from public;
-revoke all on function public.board_load(text, text) from public;
-revoke all on function public.board_add(text, text, jsonb) from public;
-revoke all on function public.board_remove(text, text, bigint[]) from public;
-grant execute on function public.student_login(text) to anon, authenticated;
-grant execute on function public.student_state(text) to anon, authenticated;
-grant execute on function public.student_submit_result(text, text, int, int, jsonb, text) to anon, authenticated;
-grant execute on function public.student_submit_homework(text, text, text) to anon, authenticated;
-grant execute on function public.student_submit_writing(text, text, text, text, text, int) to anon, authenticated;
-grant execute on function public.board_load(text, text) to anon, authenticated;
-grant execute on function public.board_add(text, text, jsonb) to anon, authenticated;
-grant execute on function public.board_remove(text, text, bigint[]) to anon, authenticated;
+-- ---------- Хранилище файлов ----------
+-- materials – файлы учителя (рабочие листы, картинки); works – фото рукописных работ учеников (загружает функция ai).
+insert into storage.buckets (id, name, public) values ('materials', 'materials', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public) values ('works', 'works', true) on conflict (id) do nothing;
+drop policy if exists "teacher_upload_materials" on storage.objects;
+create policy "teacher_upload_materials" on storage.objects for insert to authenticated
+  with check (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "teacher_delete_materials" on storage.objects;
+create policy "teacher_delete_materials" on storage.objects for delete to authenticated
+  using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ---------- Доступ к функциям ----------
+drop function if exists public.student_login(text);
+do $$ declare f text; begin
+  foreach f in array array[
+    'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
+    'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
+    'public.student_set_theme(text, text)', 'public.student_submit_homework(text, text, text)',
+    'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
+    'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
+    execute 'revoke all on function ' || f || ' from public';
+    execute 'grant execute on function ' || f || ' to anon, authenticated';
+  end loop;
+  foreach f in array array['public.teacher_new_invite(uuid)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
+    'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
+    execute 'revoke all on function ' || f || ' from public, anon';
+    execute 'grant execute on function ' || f || ' to authenticated';
+  end loop;
+  execute 'revoke all on function public.board_owner(uuid) from public, anon, authenticated';
+end $$;

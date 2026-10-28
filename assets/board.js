@@ -76,6 +76,7 @@ window.Board = (() => {
 
     /* ---------- лист ---------- */
     async function openPage(key){
+      if (!o.pages.some(p => p.key === key)) key = o.pages[0].key;
       page = key;
       root.querySelectorAll("[data-bpage]").forEach(b => b.setAttribute("aria-pressed", b.dataset.bpage === key));
       bg.innerHTML = o.pages.find(p => p.key === key).html;
@@ -247,16 +248,18 @@ window.Board = (() => {
 
   /* листы доски для занятия */
   function pages(course, l){
-    const w = l.writing, txt = w.type === "izl" ? course.izl[w.text] : course.texts[w.text];
-    const textHTML = w.type === "izl"
-      ? `<h2>${esc(txt.title)}</h2>${txt.paras.map(p => `<p>${esc(p)}</p>`).join("")}`
-      : `<h2>${esc(txt.title)}</h2><p>${esc(txt.text)}</p>`;
-    return [
-      {key:"practice", label:"Практика", html:`<div class="bd-sheet"><h2>${esc(l.title)}: практика</h2>${U.practiceHTML(l, false)}</div>`},
-      {key:"theory", label:"Теория", html:`<div class="bd-sheet">${U.theoryHTML(l)}</div>`},
-      {key:"text", label:"Текст для письма", html:`<div class="bd-sheet">${textHTML}</div>`},
-      {key:"blank", label:"Чистый лист", html:`<div class="bd-sheet bd-lined"></div>`}
-    ];
+    const out = [], noInputs = h => h.replace(/<button[\s\S]*?<\/button>/g, "").replace(/<input[^>]*>/g, '<span class="blank" style="min-width:160px"></span>');
+    if (l.practice?.length) out.push({key:"practice", label:"Практика", html:`<div class="bd-sheet"><h2>${esc(l.title)}: практика</h2>${U.practiceHTML(l, false)}</div>`});
+    out.push({key:"theory", label:"Теория", html:`<div class="bd-sheet">${noInputs(U.theoryHTML(l))}</div>`});
+    const w = l.writing, txt = w ? (w.type === "izl" ? course.izl?.[w.text] : course.texts?.[w.text]) : null;
+    if (txt) out.push({key:"text", label:"Текст для письма", html:`<div class="bd-sheet"><h2>${esc(txt.title)}</h2>${w.type === "izl" ? txt.paras.map(p => `<p>${esc(p)}</p>`).join("") : `<p>${esc(txt.text)}</p>`}</div>`});
+    (l.materials || []).forEach((m, i) => {
+      if (m.kind === "text") out.push({key:"m" + m.id, label: m.title || "Материал " + (i + 1), html:`<div class="bd-sheet"><h2>${esc(m.title || "")}</h2><div style="white-space:pre-line">${esc(m.body || "")}</div></div>`});
+      if (m.kind === "file" && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(m.url || "")) out.push({key:"m" + m.id, label: m.title || "Картинка", html:`<div class="bd-sheet"><h2>${esc(m.title || "")}</h2><img src="${esc(m.url)}" alt="" style="width:100%"></div>`});
+      if (m.kind === "tasks" && (m.data?.mini?.length || m.data?.test?.length)) out.push({key:"m" + m.id, label: m.title || "Задания", html:`<div class="bd-sheet"><h2>${esc(m.title || "Задания")}</h2><ol>${[...(m.data.mini || []).map(x => x.q), ...(m.data.test || []).map(x => x.q + " " + x.o.map((o, k) => `${k + 1}) ${o}`).join("; "))].map(q => `<li style="margin-bottom:14px">${esc(q)}<span class="blank"></span></li>`).join("")}</ol></div>`});
+    });
+    out.push({key:"blank", label:"Чистый лист", html:`<div class="bd-sheet bd-lined"></div>`});
+    return out;
   }
 
   return {mount, api, pages};

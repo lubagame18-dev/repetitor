@@ -1,6 +1,6 @@
 /* Офлайн-кэш приложения ученика. При обновлении файлов увеличьте номер версии. */
-const CACHE = "oge-rus-v2";
-const FILES = ["./", "index.html", "config.js", "assets/app.css", "assets/common.js", "assets/student.js", "assets/map.js", "assets/board.js", "assets/kotik.webp", "courses/oge-rus.js", "icons/icon-192.png", "manifest.webmanifest"];
+const CACHE = "oge-rus-v3";
+const FILES = ["./", "index.html", "config.js", "assets/app.css", "assets/common.js", "assets/student.js", "assets/map.js", "assets/board.js", "assets/kotik.webp", "courses/oge-rus.js", "courses/ege-rus.js", "courses/school-rus.js", "courses/entry.js", "assets/bg/bordo.webp", "assets/bg/lemon.webp", "assets/bg/peach.webp", "assets/bg/hvoya.webp", "icons/icon-192.png", "manifest.webmanifest"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

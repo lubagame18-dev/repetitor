@@ -16,15 +16,15 @@ function mapHTML(course, results, hwres, writings){
     <div class="card"><div class="kicker">Сочинения</div><div class="big tnum" style="margin-top:6px">${ws.essays.length ? Math.round(ws.essays.reduce((a,x) => a + x.w.total/x.w.max*100, 0)/ws.essays.length) + "%" : "–"}</div><div class="small muted">проверено: ${ws.essays.length}</div></div>
     <div class="card"><div class="kicker">Изложения</div><div class="big tnum" style="margin-top:6px">${ws.avgIzl ?? "–"}${ws.avgIzl!=null?"%":""}</div><div class="small muted">проверено: ${ws.izl.length}</div></div>
   </div>
-  <div class="section-title"><h2>Письменная линия</h2></div>
+  ${course.lessons.some(l => l.writing) ? `<div class="section-title"><h2>Письменная линия</h2></div>
   <div class="card stack">
     <div><div class="kicker">Сочинения по неделям</div>${U.sparkHTML(ws.essays)}</div>
     <div class="bars">${bar("Сочинение 13.1", "#e5484d", "средства языка", ws.t131)}${bar("Сочинение 13.2", "#e5484d", "смысл фрагмента", ws.t132)}${bar("Сочинение 13.3", "#e5484d", "нравственный вопрос", ws.t133)}${bar("Изложение", "#ff8a3d", "сжатие", ws.avgIzl)}</div>
     ${Object.keys(ws.errs).length ? `<div><div class="kicker">Ошибки в письменных работах (всего)</div><div class="row" style="margin-top:6px">${Object.entries(ws.errs).map(([k,v]) => `<span class="chip">${esc(errNames[k] || k)}: ${v}</span>`).join("")}</div></div>` : ""}
-  </div>
-  <div class="section-title"><h2>По блокам ОГЭ</h2></div>
+  </div>` : ""}
+  <div class="section-title"><h2>По разделам</h2></div>
   <div class="card"><div class="legend" style="margin-bottom:10px"><span>верхняя полоса – тесты на занятиях, нижняя – ДЗ-тесты</span></div>
-    <div class="bars">${blocks.map((x,i) => `${bar(x.b.name, x.b.color, x.b.tasks + " · занятия", x.avg)}${bar("", "transparent", "домашка", hwBlocks[i].avg)}`).join("")}</div></div>
+    <div class="bars">${blocks.map((x,i) => !x.n ? "" : `${bar(x.b.name, x.b.color, x.b.tasks + " · занятия", x.avg)}${bar("", "transparent", "домашка", hwBlocks[i].avg)}`).join("")}</div></div>
   <div class="section-title"><h2>Все занятия</h2></div>
   <div class="card">
     <div class="small muted" style="margin-bottom:6px">Занятие</div>
@@ -38,3 +38,20 @@ function mapHTML(course, results, hwres, writings){
 }
 window.mapHTML = mapHTML;
 })();
+/* Результаты входного теста по темам */
+window.entryHTML = function(et, er, onlyWeak){
+  const {esc, pct, lvlColor} = U;
+  const wrong = new Set(er.last.wrong || []);
+  const topics = [...new Set(et.q.map(q => q.tag))];
+  const weak = topics.filter(t => wrong.has(t)), ok = topics.filter(t => !wrong.has(t));
+  const ico = good => good ? '<span style="color:var(--good);font-weight:900">✓</span>' : '<span style="color:var(--bad);font-weight:900">✕</span>';
+  if (onlyWeak) return `<div class="card">${weak.length ? `<div class="topics">${weak.map(t => `<div class="topic">${ico(false)}${esc(t)}</div>`).join("")}</div>` : '<p>Все темы входного теста усвоены.</p>'}</div>`;
+  const p = pct(er.last);
+  return `<div class="grid2 stats">
+      <div class="card"><div class="kicker">Результат</div><div class="big tnum" style="color:${lvlColor(p)}">${er.last.score} из ${er.last.total}</div><div class="small muted">${p}% · ${new Date(er.last.at).toLocaleDateString("ru-RU")}</div></div>
+      <div class="card"><div class="kicker">Темы</div><div class="big tnum">${ok.length}/${topics.length}</div><div class="small muted">усвоено</div></div></div>
+    <div class="card" style="margin-top:16px">
+      ${weak.length ? `<div class="kicker" style="margin-bottom:8px">Повторить в первую очередь</div><div class="topics">${weak.map(t => `<div class="topic">${ico(false)}${esc(t)}</div>`).join("")}</div>` : ""}
+      ${ok.length ? `<div class="kicker" style="margin:${weak.length ? "16px" : "0"} 0 8px">Усвоено</div><div class="topics">${ok.map(t => `<div class="topic">${ico(true)}${esc(t)}</div>`).join("")}</div>` : ""}
+    </div>`;
+};
