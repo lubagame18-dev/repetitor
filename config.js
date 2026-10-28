@@ -6,5 +6,6 @@ window.APP_CONFIG = {
   DEFAULT_COURSE: "oge-rus",
   TITLE: "Подготовка к ОГЭ. Русский язык",
   SCHOOL_TAG: "Учу по ФРП · репетиторство",
+  TEACHER_NAME: "Любовь Игоревна",  // так подписан курсор учителя на доске
   BOT_USERNAME: ""            // например "@uroki_russkogo_oge_bot" – появится кнопка на главной
 };
