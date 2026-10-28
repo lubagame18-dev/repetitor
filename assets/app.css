@@ -347,3 +347,13 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
 .subj[aria-pressed="true"]{background:var(--glass-2);outline:2px solid var(--violet);outline-offset:-2px}
 .subj .emo{font-size:1.4rem}
 .subj small{display:block;font-weight:600;color:var(--muted)}
+.passbox{position:relative}
+.passbox input{padding-right:48px}
+.passbox .eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;width:38px;height:38px;border-radius:10px;font-size:1.1rem;opacity:.55}
+.passbox .eye.on{opacity:1;background:var(--chip)}
+.authtabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.authtabs button{border:1px solid var(--line);background:var(--glass);padding:9px 6px;border-radius:12px;font-weight:800;font-size:.86rem}
+.authtabs button[aria-pressed="true"]{background:var(--ink);color:var(--base)}
+.linkbtn{border:0;background:none;padding:0;color:var(--violet);font-weight:700;text-decoration:underline;font-size:.88rem;text-align:left}
+.formmsg{font-size:.88rem}
+.formmsg.bad{color:var(--bad)} .formmsg.good{color:var(--good)}

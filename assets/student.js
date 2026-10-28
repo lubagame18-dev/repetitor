@@ -174,41 +174,47 @@ function viewRegister(){
     <div><b style="font-size:.88rem">Фон кабинета – по настроению</b><p class="small muted" style="margin:2px 0 8px">Потом можно поменять в разделе «Оформление».</p>${U.themesHTML(S.regTheme || inf.theme)}</div>
     <div><b style="font-size:.88rem">Помощник на уроках</b><p class="small muted" style="margin:2px 0 8px">Можно загрузить свою картинку.</p>${U.mascotsHTML(S.regMascot || "kotik")}</div>
     <label for="r-contact">Телефон или Telegram (твой или родителя)</label><input type="text" id="r-contact" autocomplete="tel">
-    <label for="r-pass">Придумай пароль (не меньше 6 символов)</label><input type="password" id="r-pass" minlength="6" required autocomplete="new-password">
-    <label for="r-pass2">Повтори пароль</label><input type="password" id="r-pass2" minlength="6" required autocomplete="new-password">
+    <label for="r-pass">Придумай пароль (не меньше 6 символов)</label>${U.pass("r-pass", 'minlength="6" required autocomplete="new-password"')}
+    <label for="r-pass2">Повтори пароль</label>${U.pass("r-pass2", 'minlength="6" required autocomplete="new-password"')}
     <p class="small" id="r-err" hidden style="color:var(--bad)"></p>
     <button class="btn" type="submit">Зарегистрироваться</button>
   </form>`;
 }
 function viewLogin(){
-  const role = S.role || "student";
-  return authHero(CFG.TITLE || "Учу по ФРП · уроки") + `<div class="card login stack">
-    <div class="filters" role="group" aria-label="Кто входит"><button data-role="student" aria-pressed="${role==="student"}">Я ученик</button><button data-role="teacher" aria-pressed="${role==="teacher"}">Я учитель</button></div>
-    ${role === "teacher" && S.signup ? (S.signupDone ? `<div class="stack" style="gap:8px"><h3>Почти готово!</h3><p>Мы отправили письмо на <b>${esc(S.signupDone)}</b>. Откройте его и нажмите ссылку – кабинет откроется, и начнётся пробный период.</p><button class="btn ghost sm" data-act="to-signin">Уже подтвердила – войти</button></div>`
-    : `<form class="stack" id="signup-form" style="gap:10px">
-      <h3>Регистрация репетитора</h3>
-      <label for="su-name">Имя и отчество (так вас увидят ученики)</label><input type="text" id="su-name" required autocomplete="name">
-      <label for="su-email">Почта</label><input type="email" id="su-email" autocomplete="username" required>
-      <label for="su-pass">Пароль (не меньше 8 символов)</label><input type="password" id="su-pass" minlength="8" autocomplete="new-password" required>
-      <button class="btn" type="submit">Зарегистрироваться</button>
-      <p class="small" id="su-err" hidden style="color:var(--bad)"></p>
-      <p class="small muted">Сначала – бесплатный пробный период со всеми возможностями. Потом тариф от 100 ₽ в месяц.</p>
-      <button class="btn ghost sm" type="button" data-act="to-signin">У меня уже есть кабинет – войти</button></form>`)
-    : role === "teacher" ? `<form class="stack" id="teacher-form" style="gap:10px">
-      <label for="tl-email">Почта</label><input type="email" id="tl-email" autocomplete="username" required>
-      <label for="tl-pass">Пароль</label><input type="password" id="tl-pass" autocomplete="current-password" required>
-      <button class="btn" type="submit">Войти в кабинет учителя</button>
-      <p class="small" id="tl-err" hidden style="color:var(--bad)">Почта или пароль не подходят.</p>
-      <button class="btn ghost sm" type="button" data-act="to-signup">Я репетитор, хочу кабинет – зарегистрироваться</button></form>`
-    : `<form class="stack" id="login-form" style="gap:10px">
-    ${sb ? `<label for="l-login">Логин</label><input type="text" id="l-login" autocapitalize="characters" autocomplete="username" placeholder="Например, K7M3QPA" required>
-    <label for="l-pass">Пароль</label><input type="password" id="l-pass" autocomplete="current-password" required>`
+  const role = S.role || "student", msg = `<p class="formmsg ${S.authMsg?.ok ? "good" : "bad"}" id="authmsg" role="status">${S.authMsg ? esc(S.authMsg.t) : ""}</p>`;
+  let body = "";
+  if (role === "student") body = `<form class="stack" id="login-form" style="gap:10px">
+    ${sb ? `<label for="l-login">Логин (его выдали при регистрации)</label><input type="text" id="l-login" autocapitalize="characters" autocomplete="username" placeholder="Например, K7M3QPA" required>
+    <label for="l-pass">Пароль</label>${U.pass("l-pass", 'autocomplete="current-password" required')}`
     : `<p class="small muted">Демо-режим: сервер ещё не подключён, всё сохраняется только на этом устройстве.</p>
        <label for="l-login">Имя</label><input type="text" id="l-login" required>
        <label for="l-grade">Класс</label><select id="l-grade">${[5,6,7,8,9,10,11].map(g => `<option value="${g}" ${g===9?"selected":""}>${g} класс</option>`).join("")}</select>`}
-    <button class="btn" type="submit">Войти</button>
-    <p class="small" id="login-err" hidden style="color:var(--bad)">Логин или пароль не подходят.</p>
-    <p class="small muted">Впервые здесь? Открой ссылку-приглашение от учителя.</p></form>`}
+    <button class="btn" type="submit">Войти</button>${msg}
+    <p class="small muted">Впервые здесь? Открой ссылку-приглашение от учителя. Забыл пароль – попроси учителя прислать новую ссылку.</p></form>`;
+  else if (role === "teacher" && S.mode === "forgot") body = `<form class="stack" id="forgot-form" style="gap:10px">
+    <h3>Восстановить пароль</h3><p class="small muted">Пришлём письмо со ссылкой: по ней вы зададите новый пароль.</p>
+    <label for="fg-email">Почта</label><input type="email" id="fg-email" autocomplete="username" required value="${esc(S.lastEmail || "")}">
+    <button class="btn" type="submit">Прислать ссылку</button>${msg}
+    <button class="linkbtn" type="button" data-authmode="in">← Назад ко входу</button></form>`;
+  else if (role === "teacher") body = `<form class="stack" id="teacher-form" style="gap:10px">
+    <label for="tl-email">Почта</label><input type="email" id="tl-email" autocomplete="username" required value="${esc(S.lastEmail || "")}">
+    <label for="tl-pass">Пароль</label>${U.pass("tl-pass", 'autocomplete="current-password" required')}
+    <button class="btn" type="submit">Войти в кабинет учителя</button>${msg}
+    <div class="row between"><button class="linkbtn" type="button" data-authmode="forgot">Забыли пароль?</button><button class="linkbtn" type="button" data-role="signup">Нет кабинета – зарегистрироваться</button></div>
+    ${S.authMsg?.resend ? `<button class="btn ghost sm" type="button" data-act="resend">Отправить письмо ещё раз</button>` : ""}</form>`;
+  else body = S.signupDone ? `<div class="stack" style="gap:8px"><h3>Почти готово!</h3><p>Мы отправили письмо на <b>${esc(S.signupDone)}</b>. Откройте его и нажмите ссылку – кабинет откроется, и начнётся пробный период.</p>
+      <p class="small muted">Письма нет? Проверьте «Спам» или отправьте ещё раз.</p>${msg}
+      <div class="row"><button class="btn ghost sm" data-act="resend">Отправить письмо ещё раз</button><button class="btn ghost sm" data-role="teacher">Уже подтвердила – войти</button></div></div>`
+    : `<form class="stack" id="signup-form" style="gap:10px">
+      <p class="small muted">Регистрация для репетиторов. Ученики регистрируются по ссылке-приглашению от учителя.</p>
+      <label for="su-name">Имя и отчество (так вас увидят ученики)</label><input type="text" id="su-name" required autocomplete="name">
+      <label for="su-email">Почта</label><input type="email" id="su-email" autocomplete="username" required>
+      <label for="su-pass">Придумайте пароль (не меньше 8 знаков)</label>${U.pass("su-pass", 'minlength="8" autocomplete="new-password" required')}
+      <button class="btn" type="submit">Зарегистрироваться</button>${msg}
+      <p class="small muted">Сначала – бесплатный пробный период со всеми возможностями, потом тариф от 100 ₽ в месяц.</p></form>`;
+  return authHero(CFG.TITLE || "Учу по ФРП · уроки") + `<div class="card login stack">
+    <div class="authtabs" role="group" aria-label="Вход"><button data-role="student" aria-pressed="${role==="student"}">Я ученик</button><button data-role="teacher" aria-pressed="${role==="teacher"}">Я учитель</button><button data-role="signup" aria-pressed="${role==="signup"}">Регистрация</button></div>
+    ${body}
     <button class="btn ghost" data-act="install">📲 Скачать на телефон</button>
   </div>`;
 }
@@ -543,29 +549,45 @@ function render(){
 /* ---------- события ---------- */
 document.addEventListener("submit", async e => {
   e.preventDefault();
+  /* сообщение – без перерисовки, чтобы не стирать то, что уже введено */
+  const say = (t, ok, extra) => { S.authMsg = {t, ok, ...(extra || {})}; const el = $("#authmsg");
+    if (el && !extra?.resend){ el.textContent = t; el.className = "formmsg " + (ok ? "good" : "bad"); e.target.querySelectorAll("button[type=submit]").forEach(b => { b.disabled = false; }); } else render(); };
   if (e.target.id === "signup-form"){
-    const err = $("#su-err"), email = $("#su-email").value.trim();
-    if (!sb){ err.textContent = "Сервер ещё не подключён."; err.hidden = false; return; }
-    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true;
-    const {data, error} = await sb.auth.signUp({email, password: $("#su-pass").value, options: {data: {name: $("#su-name").value.trim()}, emailRedirectTo: location.origin + location.pathname.replace(/index\.html$/, "") + "teacher.html"}});
-    btn.disabled = false;
-    if (error){ err.textContent = /registered|exists/i.test(error.message) ? "Эта почта уже зарегистрирована – войдите." : "Не получилось: " + error.message; err.hidden = false; return; }
-    if (data.session){ location.href = "teacher.html"; return; }   // если подтверждение почты выключено
-    S.signupDone = email; render(); return;
+    const email = $("#su-email").value.trim(), pw = $("#su-pass").value;
+    if (!sb) return say("Сервер ещё не подключён.");
+    if (U.tempMail(email)) return say("Одноразовые почтовые ящики не подходят – укажите свою постоянную почту.");
+    if (pw.length < 8) return say("Пароль – не меньше 8 знаков.");
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Регистрирую…";
+    try{
+      const {data, error} = await sb.auth.signUp({email, password: pw, options: {data: {name: $("#su-name").value.trim()}, emailRedirectTo: U.siteURL("teacher.html")}});
+      if (error) throw error;
+      if (data.session){ location.href = "teacher.html"; return; }   // подтверждение почты выключено
+      if (data.user && !data.user.identities?.length){ S.role = "teacher"; S.lastEmail = email; return say("Эта почта уже зарегистрирована – войдите."); }
+      S.signupDone = email; S.lastEmail = email; S.authMsg = null; render();
+    }catch(er){ btn.textContent = "Зарегистрироваться"; say(U.authErr(er)); }
+    return;
+  }
+  if (e.target.id === "forgot-form"){
+    const email = $("#fg-email").value.trim(); S.lastEmail = email;
+    if (!sb) return say("Сервер ещё не подключён.");
+    try{ const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: U.siteURL("teacher.html")}); if (error) throw error; say("Письмо отправлено. Откройте его и нажмите ссылку – там зададите новый пароль.", true); }
+    catch(er){ say(U.authErr(er)); }
+    return;
   }
   if (e.target.id === "teacher-form"){
-    const err = $("#tl-err");
+    const email = $("#tl-email").value.trim(); S.lastEmail = email;
     if (!sb){ location.href = "teacher.html"; return; }
-    const {error} = await sb.auth.signInWithPassword({email: $("#tl-email").value.trim(), password: $("#tl-pass").value});
-    if (error){ err.hidden = false; return; }
-    location.href = "teacher.html"; return;
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Вхожу…";
+    try{ const {error} = await sb.auth.signInWithPassword({email, password: $("#tl-pass").value}); if (error) throw error; location.href = "teacher.html"; }
+    catch(er){ btn.textContent = "Войти в кабинет учителя"; say(U.authErr(er), false, /not confirmed/i.test(er.message || "") ? {resend: true} : null); }
+    return;
   }
   if (e.target.id === "login-form"){
     const btn = e.target.querySelector("button"); btn.disabled = true;
     if (sb){
       const {data} = await sb.rpc("student_login", {p_login: $("#l-login").value, p_password: $("#l-pass").value});
       btn.disabled = false;
-      if (!data){ $("#login-err").hidden = false; return; }
+      if (!data){ say("Логин или пароль не подходят."); return; }
       S.token = data.token; S.profile = data.profile;
     } else {
       btn.disabled = false;
@@ -606,8 +628,9 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch]"); if (!t) return;
-  if (t.dataset.role){ S.role = t.dataset.role; render(); return; }
+  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  if (t.dataset.role){ S.role = t.dataset.role; S.mode = "in"; S.authMsg = null; if (t.dataset.role !== "signup") S.signupDone = null; render(); return; }
+  if (t.dataset.authmode){ S.mode = t.dataset.authmode; S.authMsg = null; render(); return; }
   if (t.dataset.switch){
     if (!sb) return;
     const {data} = await sb.rpc("student_switch", {p_code:S.token, p_target:t.dataset.switch});
@@ -653,8 +676,11 @@ document.addEventListener("click", async e => {
   }
   const a = t.dataset.act;
   if (a === "install"){ install(); return; }
-  if (a === "to-signup"){ S.signup = true; S.signupDone = null; render(); return; }
-  if (a === "to-signin"){ S.signup = false; render(); return; }
+  if (a === "resend"){
+    const email = S.signupDone || S.lastEmail || $("#tl-email")?.value.trim(); if (!email || !sb) return;
+    const {error} = await sb.auth.resend({type: "signup", email, options: {emailRedirectTo: U.siteURL("teacher.html")}});
+    S.authMsg = error ? {t: U.authErr(error)} : {t: "Письмо отправлено ещё раз.", ok: true}; render(); return;
+  }
   if (a === "open-drawer"){ S.drawer = true; render(); }
   if (a === "close-drawer"){ S.drawer = false; render(); }
   if (a === "start-entry" || a === "retry-entry") startTest(null, "entry");
@@ -704,6 +730,8 @@ document.addEventListener("click", async e => {
 (async () => {
   const qp = new URLSearchParams(location.search);
   const invite = qp.get("invite");
+  if (qp.get("role")) S.role = qp.get("role");
+  if (qp.get("msg")) S.authMsg = {t: qp.get("msg")};
   const sess = LS.get("session", null);
   /* оформление сайта из кабинета разработчика */
   if (sb){ try{ const {data} = await sb.from("app_settings").select("key,value");

@@ -3,6 +3,7 @@
 (() => {
 const {esc, d, today, fmt, fmtShort, pct, lvl, lvlColor, toast} = U;
 const CFG = window.APP_CONFIG || {};
+const RECOVERY = /type=recovery/.test(location.hash), LINK_ERR = /error_description=/.test(location.hash) ? decodeURIComponent((location.hash.match(/error_description=([^&]+)/) || [])[1] || "").replace(/\+/g, " ") : "";
 const sb = U.supa();
 const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
@@ -34,6 +35,7 @@ async function loadAll(){
   if (!sb || !T.session) return;
   T.loading = true; render();
   const me = await sb.rpc("me"); T.me = me.data || {base_access: []};
+  if (me.error) toast(/does not exist|function/i.test(me.error.message) ? "База ещё не настроена: выполните supabase/schema.sql в Supabase." : U.authErr(me.error));
   if (T.me.base){ const {data: base} = await sb.from("course_data").select("key,data,keys"); U.loadBase(base); }
   if (T.me.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
   const [st, rs, hw, wr, sh, mt, ac, ar] = await Promise.all([
@@ -88,6 +90,12 @@ function viewNoServer(){
     <p>Кабинет работает через Supabase: там хранятся ученики, тесты, сочинения, домашки и доска. Вставьте адрес проекта и ключ <b>anon</b> в файл <b>config.js</b> – пошагово в README.</p>
     <p class="muted small">Материалы курса и методика доступны и без сервера.</p>
     <div class="row"><button class="btn" data-view="course">Материалы курса</button><button class="btn ghost" data-view="methodology">Методика курса</button></div></div>`;
+}
+function viewNewPass(){
+  return `<form class="card login stack" id="newpass-form"><h2>Новый пароль</h2>
+    <p class="small muted">Придумайте новый пароль для кабинета${T.session?.user?.email ? " " + esc(T.session.user.email) : ""}.</p>
+    <label for="np-pass">Новый пароль (не меньше 8 знаков)</label>${U.pass("np-pass", 'minlength="8" autocomplete="new-password" required')}
+    <button class="btn" type="submit">Сохранить пароль</button><p class="formmsg bad" id="np-err" hidden></p></form>`;
 }
 function viewLogin(){
   return `<form class="card login stack" id="t-login"><h2>Вход для учителя</h2>
@@ -430,6 +438,7 @@ function render(){
   else if (T.view === "sub" && sb && T.session) html = viewSub();
   else if (["course","lesson"].includes(T.view)) html = T.view === "course" ? viewCourse() : viewLesson();
   else if (!sb) html = viewNoServer();
+  else if (T.view === "newpass") html = viewNewPass();
   else if (!T.session) html = viewLogin();
   else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : viewStudents();
   const cur = ["students","student","board"].includes(T.view) ? "students" : ["course","lesson"].includes(T.view) ? "course" : T.view;
@@ -503,6 +512,13 @@ const upd = async (id, row) => { const {error} = await sb.from("students").updat
 document.addEventListener("submit", async e => {
   e.preventDefault();
   const id = e.target.id;
+  if (id === "newpass-form"){
+    const pw = $("#np-pass").value, err = $("#np-err");
+    if (pw.length < 8){ err.textContent = "Пароль – не меньше 8 знаков."; err.hidden = false; return; }
+    const {error} = await sb.auth.updateUser({password: pw});
+    if (error){ err.textContent = U.authErr(error); err.hidden = false; return; }
+    history.replaceState(null, "", location.pathname); T.view = "students"; toast("Пароль изменён. Вы в кабинете."); await loadAll(); return;
+  }
   if (id === "t-login"){
     const {data, error} = await sb.auth.signInWithPassword({email: $("#t-email").value.trim(), password: $("#t-pass").value});
     if (error){ const el = $("#t-err"); el.textContent = "Не получилось войти: проверьте почту и пароль."; el.hidden = false; return; }
@@ -768,7 +784,10 @@ document.addEventListener("click", async e => {
   if (!sb) return;
   const {data} = await sb.auth.getSession();
   T.session = data.session;
-  sb.auth.onAuthStateChange((_e, s) => { T.session = s; });
+  sb.auth.onAuthStateChange((ev, s) => { T.session = s; if (ev === "PASSWORD_RECOVERY"){ T.view = "newpass"; render(); } });
+  if (RECOVERY && T.session){ T.view = "newpass"; render(); return; }
+  if (LINK_ERR && !T.session){ location.replace("./?role=teacher&msg=" + encodeURIComponent("Ссылка из письма устарела или уже использована. Просто войдите почтой и паролем.")); return; }
+  if (!T.session){ location.replace("./?role=teacher"); return; }   // вход – на главной, по одной ссылке
   if (location.hash === "#paid" && sb){
     history.replaceState(null, "", location.pathname);
     const {data: ss} = await sb.auth.getSession();

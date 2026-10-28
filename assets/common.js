@@ -249,6 +249,32 @@ window.U = (() => {
       ${l.practice?.length ? `<h2>Практика</h2>${practiceHTML(l, withKeys)}` : ""}${l.hw ? `<h2>Домашнее задание</h2><p>${esc(l.hw)}</p>` : ""}`;
   }
 
+  /* ---------- входы и пароли ---------- */
+  /* поле пароля с «глазком» */
+  const pass = (id, attrs = "") => `<div class="passbox"><input type="password" id="${id}" ${attrs}><button type="button" class="eye" data-eye="${id}" aria-label="Показать пароль" title="Показать пароль">👁</button></div>`;
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-eye]"); if (!b) return;
+    const i = document.getElementById(b.dataset.eye); if (!i) return;
+    const show = i.type === "password"; i.type = show ? "text" : "password";
+    b.classList.toggle("on", show); b.setAttribute("aria-label", show ? "Скрыть пароль" : "Показать пароль"); i.focus();
+  });
+  /* понятные ошибки входа */
+  function authErr(e){
+    const m = String(e?.message || e || "");
+    if (e?.name === "TypeError" || /fetch|network|load failed/i.test(m)) return "Нет связи с сервером. Проверьте интернет; если не помогает – попробуйте с VPN или другим интернетом (у некоторых операторов сервер недоступен).";
+    if (/invalid login|invalid_grant|credentials/i.test(m)) return "Неверная почта или пароль.";
+    if (/not confirmed/i.test(m)) return "Почта ещё не подтверждена: откройте письмо и нажмите ссылку. Письма нет – нажмите «Отправить письмо ещё раз».";
+    if (/already registered|exists/i.test(m)) return "Эта почта уже зарегистрирована – войдите.";
+    if (/rate limit|too many/i.test(m)) return "Слишком много попыток за короткое время. Подождите немного и попробуйте снова.";
+    if (/password.*(6|8|short|least)/i.test(m)) return "Пароль слишком короткий.";
+    if (/email.*(invalid|valid)/i.test(m)) return "Проверьте адрес почты.";
+    if (/same|different/i.test(m)) return "Новый пароль должен отличаться от старого.";
+    return m || "Что-то пошло не так. Попробуйте ещё раз.";
+  }
+  /* одноразовые почтовые ящики не принимаем */
+  const tempMail = email => /@(mailinator|guerrillamail|sharklasers|10minutemail|tempmail|temp-mail|tmpmail|yopmail|throwawaymail|trashmail|getnada|dispostable|fakeinbox|maildrop|mohmal|emailondeck|moakt|mail\.tm|burnermail|dropmail|1secmail|minuteinbox|tempail|emailfake|fakemail|discard|33mail)\./i.test(email);
+  const siteURL = page => location.origin + location.pathname.replace(/[^/]*$/, "") + (page || "");
+
   const randHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("");
 
   function shuffle(a){ a = a.slice(); for (let i = a.length-1; i > 0; i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
@@ -266,5 +292,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

@@ -287,8 +287,7 @@ begin
   days := coalesce((select (value)::text::int from app_settings where key = 'trial_days'), 7);
   insert into teachers(id, email, name, role, plan, paid_until, trial)
   values (uid, (select email from auth.users where id = uid), (select raw_user_meta_data->>'name' from auth.users where id = uid),
-          -- первый вошедший – разработчик
-          case when first then 'developer' else 'teacher' end,
+          'teacher',
           'full', case when days > 0 then now() + make_interval(days => days) end, days > 0)
   on conflict (id) do nothing;
   select * into r from teachers where id = uid;
@@ -349,6 +348,31 @@ begin
 end $$;
 
 -- ---------- Разработчик ----------
+-- Разработчиком становятся так: вход в кабинет своей почтой + код разработчика (как в «Учу по ФРП»).
+-- Код хранится только в виде хэша. Задать или сменить код: в SQL Editor выполните
+--   select public.dev_set_code('ваш-код');
+create or replace function public.dev_set_code(p_code text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if length(coalesce(p_code, '')) < 6 then raise exception 'code too short'; end if;
+  insert into app_secrets(key, value) values ('dev_code_hash', crypt(p_code, gen_salt('bf', 10)))
+  on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+revoke all on function public.dev_set_code(text) from public, anon, authenticated;
+
+-- вход в режим разработчика: проверка кода на сервере; при успехе учётная запись получает роль разработчика
+create or replace function public.dev_join(p_code text)
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
+declare h text;
+begin
+  if auth.uid() is null then return false; end if;
+  select value into h from app_secrets where key = 'dev_code_hash';
+  if h is null or crypt(coalesce(p_code, ''), h) <> h then perform pg_sleep(1); return false; end if;
+  perform me();
+  update teachers set role = 'developer' where id = auth.uid();
+  return true;
+end $$;
+
 create or replace function public.dev_set_secret(p_key text, p_value text)
 returns void language plpgsql security definer set search_path = public as $$
 begin
@@ -578,7 +602,7 @@ do $$ declare f text; begin
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;
   foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
-    'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
+    'public.dev_join(text)', 'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
     execute 'revoke all on function ' || f || ' from public, anon';
     execute 'grant execute on function ' || f || ' to authenticated';
   end loop;

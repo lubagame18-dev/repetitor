@@ -8,7 +8,9 @@ const $ = s => document.querySelector(s);
 const PROV = [["deepseek","DeepSeek","platform.deepseek.com → API keys"],["aitunnel","AITUNNEL (оплата из России)","aitunnel.ru → ключ API"],["openrouter","OpenRouter","openrouter.ai → Keys"],["openai","OpenAI","platform.openai.com → API keys"]];
 
 async function load(){
-  const me = await sb.rpc("me"); D.me = me.data;
+  const me = await sb.rpc("me");
+  if (me.error){ D.err = /function|does not exist|schema/i.test(me.error.message) ? "База ещё не настроена: в Supabase → SQL Editor выполните файл supabase/schema.sql." : U.authErr(me.error); D.me = null; return render(); }
+  D.me = me.data; D.err = null;
   if (D.me?.role !== "developer") return render();
   const bc = await sb.from("course_data").select("key", {count: "exact", head: true}); D.baseCount = bc.count || 0;
   const [sec, st, te, stats] = await Promise.all([sb.rpc("dev_list_secrets"), sb.from("app_settings").select("key,value"), sb.from("teachers").select("*").order("created_at"), sb.rpc("dev_stats")]);
@@ -19,13 +21,24 @@ const tail = k => D.secrets.find(s => s.key === k)?.tail;
 
 function view(){
   if (!sb) return `<div class="card"><h2>Сервер не подключён</h2><p>Заполните config.js – см. README.</p></div>`;
+  const msg = D.msg ? `<p class="formmsg ${D.msg.ok ? "good" : "bad"}" role="status">${esc(D.msg.t)}</p>` : "";
+  // шаг 1: вход в свой кабинет (почта и пароль) – как в «Учу по ФРП»
   if (!D.session) return `<form class="card login stack" id="d-login"><h2>Режим разработчика</h2>
-    <p class="small muted">Доступ ко всем предметам и кабинетам, ключам нейросети, оформлению и общей методической базе.</p>
-    ${CFG.DEV_EMAIL ? `<input type="hidden" id="d-email" value="${esc(CFG.DEV_EMAIL)}">` : `<label for="d-email">Почта</label><input type="email" id="d-email" required autocomplete="username">`}
-    <label for="d-pass">Пароль</label><input type="password" id="d-pass" required autocomplete="current-password">
-    <button class="btn" type="submit">Войти</button><p class="small" id="d-err" hidden style="color:var(--bad)"></p></form>`;
+    <p class="small muted">Шаг 1 из 2: войдите в свой кабинет почтой и паролем. Потом – код разработчика.</p>
+    <label for="d-email">Почта</label><input type="email" id="d-email" required autocomplete="username" value="${esc(CFG.DEV_EMAIL || D.lastEmail || "")}">
+    <label for="d-pass">Пароль от кабинета</label>${U.pass("d-pass", 'required autocomplete="current-password"')}
+    <button class="btn" type="submit">Войти</button>${msg}
+    <div class="row between"><a class="linkbtn" href="./?role=teacher">Забыли пароль?</a><a class="linkbtn" href="./?role=signup">Нет кабинета – зарегистрироваться</a></div></form>`;
+  if (D.err) return `<div class="card login stack"><h2>Не получилось</h2><p class="formmsg bad">${esc(D.err)}</p><div class="row"><button class="btn" data-act="retry">Попробовать снова</button><button class="btn ghost" data-act="logout">Выйти</button></div></div>`;
   if (!D.me) return `<p class="muted">Загружаю…</p>`;
-  if (D.me.role !== "developer") return `<div class="card"><h2>Нет доступа</h2><p>Этот раздел – только для разработчика. <a href="teacher.html">Кабинет учителя</a></p></div>`;
+  // шаг 2: код разработчика (проверяет сервер, в коде сайта его нет)
+  if (D.me.role !== "developer") return `<form class="card login stack" id="d-code" autocomplete="off"><h2>Режим разработчика</h2>
+    <p class="small">Кабинет: <b>${esc(D.me.email || "")}</b></p>
+    <label for="d-codein">Код разработчика <span class="small muted">(не пароль от кабинета)</span></label>
+    ${U.pass("d-codein", 'required autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"')}
+    <p class="small muted">Код вводится один раз: после этого кабинет навсегда получает права разработчика.</p>
+    <button class="btn" type="submit">Войти в режим разработчика</button>${msg}
+    <div class="row between"><a class="linkbtn" href="teacher.html">Кабинет учителя</a><button class="linkbtn" type="button" data-act="logout">Выйти из кабинета</button></div></form>`;
   const prov = D.settings.__provider || "";
   const s = D.stats || {};
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Разработчик</span><h1>Настройки платформы</h1>
@@ -100,9 +113,16 @@ function render(){
 document.addEventListener("submit", async e => {
   e.preventDefault();
   if (e.target.id === "d-login"){
-    const {data, error} = await sb.auth.signInWithPassword({email: $("#d-email").value.trim(), password: $("#d-pass").value});
-    if (error){ const el = $("#d-err"); el.textContent = "Не получилось войти."; el.hidden = false; return; }
-    D.session = data.session; render(); load();
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Вхожу…"; D.lastEmail = $("#d-email").value.trim();
+    try{ const {data, error} = await sb.auth.signInWithPassword({email: D.lastEmail, password: $("#d-pass").value}); if (error) throw error; D.session = data.session; D.msg = null; render(); load(); }
+    catch(er){ D.msg = {t: U.authErr(er)}; render(); }
+  }
+  if (e.target.id === "d-code"){
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Проверяю…";
+    const {data, error} = await sb.rpc("dev_join", {p_code: $("#d-codein").value});
+    if (error){ D.msg = {t: /dev_join|does not exist/i.test(error.message) ? "Обновите базу: в Supabase → SQL Editor заново выполните supabase/schema.sql." : U.authErr(error)}; render(); return; }
+    if (!data){ D.msg = {t: "Код не подошёл."}; render(); return; }
+    D.msg = null; toast("Вы в режиме разработчика"); load();
   }
   if (e.target.id === "ai-form"){
     const jobs = [["ai_provider", $("#ai-provider").value]];
@@ -131,7 +151,8 @@ document.addEventListener("click", async e => {
   const t = e.target.closest("[data-act],[data-theme-pick]"); if (!t) return;
   if (t.dataset.themePick){ document.querySelectorAll("[data-theme-pick]").forEach(b => b.setAttribute("aria-pressed", b === t)); U.applyTheme(t.dataset.themePick); return; }
   const a = t.dataset.act;
-  if (a === "logout"){ await sb.auth.signOut(); D.session = null; D.me = null; render(); }
+  if (a === "logout"){ await sb.auth.signOut(); D.session = null; D.me = null; D.err = null; D.msg = null; render(); }
+  if (a === "retry"){ D.err = null; render(); load(); }
   if (a === "test"){
     t.disabled = true; t.textContent = "Проверяю…";
     const {data, error} = await sb.functions.invoke("ai", {body: {action: "test_key"}});
