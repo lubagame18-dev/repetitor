@@ -36,7 +36,7 @@ async function loadAll(){
   T.loading = true; render();
   const me = await sb.rpc("me"); T.me = me.data || {base_access: []};
   if (me.error) toast(/does not exist|function/i.test(me.error.message) ? "База ещё не настроена: выполните supabase/schema.sql в Supabase." : U.authErr(me.error));
-  if (T.me.base){ const {data: base} = await sb.from("course_data").select("key,data,keys"); U.loadBase(base); }
+  T.loaded = new Set();
   if (T.me.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
   const [st, rs, hw, wr, sh, mt, ac, ar] = await Promise.all([
     sb.from("students").select(ST_COLS).order("created_at"),
@@ -49,6 +49,7 @@ async function loadAll(){
   if (err) toast("Ошибка загрузки: " + err.message + ". Выполните заново supabase/schema.sql.");
   T.students = st.data || []; T.rows = rs.data || []; T.hw = hw.data || []; T.writings = wr.data || []; T.sheets = sh.data || [];
   T.mats = mt.data || []; T.act = ac.data || []; T.reports = ar.data || [];
+  await ensureCourses([...new Set([...T.students.map(x => x.course), curCourse()])]);
   T.loading = false; render();
 }
 function sData(s){
@@ -290,6 +291,7 @@ function viewMethodology(){
   const c = U.getCourse(curCourse());
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${esc(c.course)}</span><h1>Методика курса</h1><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   <div class="section-title"><h2>Курс</h2>${coursePick()}</div>
+  ${cmats.length ? `<div class="card" style="margin-bottom:16px"><div class="kicker">Материалы курса</div>${cmats.map(m => `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝"}[m.kind] || "•"}</span><div style="flex:1;min-width:0"><b>${esc(m.title || "Материал")}</b>${m.url ? ` · <a href="${esc(m.url)}" target="_blank" rel="noopener">открыть</a>` : ""}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body.slice(0, 300))}</div>` : ""}</div>${m.shared ? '<span class="chip">встроенная база</span>' : ""}</div>`).join("")}</div>` : ""}
   <div class="stack" style="margin-top:10px;gap:26px">${(c.methodology || []).map(m => `<div class="sheet"><span class="tag label">${esc(m.h)}</span>${m.t ? `<p>${U.mark(m.t)}</p>` : ""}${m.list ? `<ul>${m.list.map(x => `<li>${U.mark(x)}</li>`).join("")}</ul>` : ""}${m.table ? `<div class="tablewrap"><table><thead><tr>${m.table[0].map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${m.table.slice(1).map(r => `<tr>${r.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : ""}</div>`).join("")}</div>`;
 }
 const matSubject = () => T.matSubject || U.subjectOf(curCourse());
@@ -298,6 +300,8 @@ const subjectPick = () => `<div class="subjects" role="group" aria-label="Пре
 
 function viewCourse(){
   const cid = curCourse(), c = teacherCourse(cid), ok = access(cid);
+  if (c.locked && T.me?.base) return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Встроенная база</span><h1>${esc(c.course)}</h1><p>Загружаю курс…</p></section>${subjectPick()}`;
+  const cmats = T.mats.filter(m => m.course === cid && m.lesson_id === "_course");
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">${c.locked ? "Встроенная база · по подписке" : c.virtual ? "Ваш курс" : "База открыта"}</span><h1>${esc(c.course)}</h1>
     <p>${c.locked ? `Готовый курс: ${c.n} уроков с теорией, мини-практикой, заданиями и тестами. Открывается в тарифе «С материалами» (300 ₽ в месяц). Свои уроки можно добавлять и сейчас.` : c.virtual ? "Уроки, теорию, материалы, задания и тесты добавляете вы – или составляет нейросеть. Ученики курса видят их сразу." : ok ? "Методика урока, теория с мини-практикой, задания с ключами, тесты, письмо. Добавляйте свои материалы в любую папку." : "Эта база пока не открыта. Названия уроков видны, материалы – после покупки."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   ${subjectPick()}
@@ -445,6 +449,8 @@ function viewLook(){
 
 function render(){
   if (T.board){ T.board.destroy(); T.board = null; }
+  const need = ["course","lesson","methodology"].includes(T.view) ? [curCourse()] : T.view === "student" ? [T.students.find(x => x.id === T.sel)?.course] : [];
+  if (T.me?.base && need.some(k => k && window.CATALOG?.[k] && !T.loaded?.has(k))){ ensureCourses(need).then(ok => ok && render()); }
   const logged = !!(sb && T.session);
   let html;
   if (T.view === "methodology") html = viewMethodology();
@@ -479,6 +485,15 @@ function render(){
   }
 }
 
+/* встроенная база грузится по курсам, когда нужна (вся база – десятки мегабайт) */
+async function ensureCourses(keys){
+  if (!sb || !T.me?.base) return false;
+  keys = keys.filter(k => k && window.CATALOG?.[k] && !T.loaded?.has(k)); if (!keys.length) return false;
+  keys.forEach(k => T.loaded.add(k));
+  const {data, error} = await sb.from("course_data").select("key,data,keys").in("key", keys);
+  if (error){ keys.forEach(k => T.loaded.delete(k)); return false; }
+  U.loadBase(data); return true;
+}
 /* установка на телефон */
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });

@@ -261,7 +261,8 @@ end $$;
 drop policy if exists "teacher_board" on public.board_items;
 
 drop policy if exists "shared_materials_read" on public.materials;
-create policy "shared_materials_read" on public.materials for select to authenticated using (shared);
+-- общая (встроенная) база материалов – только по тарифу с материалами
+create policy "shared_materials_read" on public.materials for select to authenticated using (shared and public.can_read_base(auth.uid()));
 -- в общую базу пишет только разработчик
 create or replace function public.materials_guard() returns trigger language plpgsql security definer set search_path = public as $$
 begin
@@ -530,7 +531,7 @@ returns json language sql security definer set search_path = public stable as $$
                           from sheets x where x.teacher_id = s.teacher_id and x.course = s.course), '[]'::json),
     'course_data', (select c.data from course_data c where c.key = s.course and can_read_base(s.teacher_id)),
     'materials', coalesce((select json_agg(json_build_object('id', m.id, 'course', m.course, 'lesson_id', m.lesson_id, 'student_id', m.student_id, 'shared', m.shared, 'kind', m.kind, 'title', m.title, 'body', m.body, 'url', m.url, 'data', m.data) order by m.id)
-                          from materials m where m.course = s.course and ((m.teacher_id = s.teacher_id and (m.student_id is null or m.student_id = s.id)) or (m.shared and m.student_id is null))), '[]'::json)
+                          from materials m where m.course = s.course and ((m.teacher_id = s.teacher_id and (m.student_id is null or m.student_id = s.id)) or (m.shared and m.student_id is null and can_read_base(s.teacher_id)))), '[]'::json)
   ) from s;
 $$;
 

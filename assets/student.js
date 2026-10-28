@@ -344,6 +344,7 @@ function viewLessons(){
     <div class="card"><p>Учитель ещё не добавил уроки. Как только добавит – здесь появятся папки.</p></div>`;
   return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2><span class="chip">${esc(S.course.tag || "")}</span><span class="chip">${S.course.lessons.length} уроков</span></div>
     <p class="small muted">Папка открывается в день урока. Пройденные уроки остаются открытыми.</p>
+    ${(() => { const cm = S.mats.filter(m => m.course === S.profile.course && m.lesson_id === "_course"); return cm.length ? `<div class="card" style="margin:12px 0"><div class="kicker">Материалы курса</div>${cm.map(m => `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝"}[m.kind] || "•"}</span><div style="flex:1;min-width:0">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || "Материал")}</a>` : `<b>${esc(m.title || "Материал")}</b>`}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body)}</div>` : ""}</div></div>`).join("")}</div>` : ""; })()}
     <div class="legend" style="margin:10px 0 4px">${Object.values(S.course.blocks).filter(b => S.course.lessons.some(l => blockOf(l) === b)).map(b => `<span><i class="dot" style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div>
     <div class="folders">${out}</div>`;
 }

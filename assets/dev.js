@@ -3,7 +3,7 @@
 const {esc, toast} = U;
 const CFG = window.APP_CONFIG || {};
 const sb = U.supa();
-const D = {session:null, me:null, secrets:[], settings:{}, teachers:[], stats:null, test:null};
+const D = {bSubj:"rus", bCourse:null, bMats:null, bLessons:null, session:null, me:null, secrets:[], settings:{}, teachers:[], stats:null, test:null};
 const $ = s => document.querySelector(s);
 const PROV = [["deepseek","DeepSeek","platform.deepseek.com → API keys"],["aitunnel","AITUNNEL (оплата из России)","aitunnel.ru → ключ API"],["openrouter","OpenRouter","openrouter.ai → Keys"],["openai","OpenAI","platform.openai.com → API keys"]];
 
@@ -18,6 +18,39 @@ async function load(){
   render();
 }
 const tail = k => D.secrets.find(s => s.key === k)?.tail;
+
+/* ---------- встроенная база: файлы, ссылки, тексты и уроки в любой предмет и класс ---------- */
+const bCourse = () => D.bCourse && U.coursesOf(D.bSubj).includes(D.bCourse) ? D.bCourse : U.coursesOf(D.bSubj)[0];
+async function loadBaseCourse(){
+  const key = bCourse(); D.bLoading = key;
+  const [m, c] = await Promise.all([sb.from("materials").select("*").eq("course", key).eq("shared", true).order("id"), sb.from("course_data").select("data").eq("key", key).maybeSingle()]);
+  if (D.bLoading !== key) return;
+  D.bMats = m.data || []; D.bLessons = c.data?.data?.lessons || []; D.bLoaded = key; D.bLoading = null; render();
+}
+function baseEditor(){
+  const key = bCourse(), C = U.getCourse(key);
+  if (D.bLoaded !== key){ if (D.bLoading !== key) loadBaseCourse(); }
+  const own = (D.bMats || []).filter(m => m.kind === "lesson"), mats = (D.bMats || []).filter(m => m.kind !== "lesson");
+  const lessons = [...(D.bLessons || []).map(l => [l.id, l.title]), ...own.map(m => [m.lesson_id, m.title + " (добавлен)"])];
+  const lname = id => id === "_course" ? "ко всему курсу" : (lessons.find(x => x[0] === id) || [id, id])[1];
+  return `<div class="card stack" style="gap:12px">
+    <p class="small muted">Выберите предмет и класс – и добавляйте файлы (листы, презентации, PDF, картинки), ссылки, тексты и уроки. Они попадут во встроенную базу: их видят репетиторы с тарифом «С материалами» или «Полный» и их ученики этого класса.</p>
+    <div class="subjects">${U.SUBJECTS.map(x => `<button class="subj" data-bsubj="${x.k}" aria-pressed="${D.bSubj === x.k}"><span class="emo">${x.e}</span><span>${esc(x.n)}<small>${x.g[0] === 0 ? "дошкольники" : x.g[0] + "–" + x.g.at(-1) + " кл."}</small></span></button>`).join("")}</div>
+    <div class="filters" role="group" aria-label="Класс или курс">${U.coursesOf(D.bSubj).map(k => { const c = U.getCourse(k); return `<button data-bcourse="${k}" aria-pressed="${k === key}">${esc(c.tag && /класс|ОГЭ|ЕГЭ/.test(c.tag) ? c.tag.replace(" · ФРП", "") : c.course)}</button>`; }).join("")}</div>
+    <h3>${esc(C?.course || key)}</h3>
+    <p class="small muted">${D.bLoaded === key ? `Уроков в базе: ${(D.bLessons || []).length}${own.length ? ` + добавлено вами: ${own.length}` : ""} · материалов: ${mats.length}` : "Загружаю…"}</p>
+    ${mats.length ? `<div>${mats.map(m => `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝",tasks:"✏️"}[m.kind] || "•"}</span><div style="flex:1;min-width:0"><b>${esc(m.title || m.url || "Материал")}</b>${m.url ? ` · <a href="${esc(m.url)}" target="_blank" rel="noopener">открыть</a>` : ""}<div class="small muted">${esc(lname(m.lesson_id))}</div></div><button class="btn ghost sm" data-bdel="${m.id}">Удалить</button></div>`).join("")}</div>` : ""}
+    <form class="stack" id="base-add" style="gap:8px">
+      <label for="ba-lesson">Куда</label><select id="ba-lesson"><option value="_course">Ко всему курсу (раздел «Материалы курса»)</option>${lessons.map(([id, t]) => `<option value="${esc(id)}">${esc(t)}</option>`).join("")}</select>
+      <label for="ba-files">Файлы (можно сразу несколько)</label><input type="file" id="ba-files" multiple>
+      <label for="ba-url">или ссылка</label><input type="url" id="ba-url" placeholder="https://…">
+      <label for="ba-title">Название (для ссылки или текста; у файлов – имя файла)</label><input type="text" id="ba-title">
+      <label for="ba-body">или текст / задание</label><textarea id="ba-body"></textarea>
+      <div class="row"><button class="btn" type="submit">Добавить во встроенную базу</button><span class="small muted" id="ba-msg"></span></div>
+    </form>
+    <form class="row" id="base-lesson" style="gap:8px;align-items:flex-end"><div style="flex:1;min-width:200px"><label for="bl-title">Новый урок в этот класс</label><input type="text" id="bl-title" placeholder="Тема урока" required></div><button class="btn ghost" type="submit">Добавить урок</button></form>
+  </div>`;
+}
 
 function view(){
   if (!sb) return `<div class="card"><h2>Сервер не подключён</h2><p>Заполните config.js – см. README.</p></div>`;
@@ -78,6 +111,9 @@ function view(){
     <div class="row"><input type="file" id="base-file" accept=".json,application/json" hidden><button class="btn" data-act="base-upload">Загрузить base.json</button></div>
   </div>
 
+  <div class="section-title"><h2>Встроенная база по предметам и классам</h2></div>
+  ${baseEditor()}
+
   <div class="section-title"><h2>Методические материалы – общая база</h2></div>
   <div class="card stack" style="gap:10px">
     <p class="small muted">Уроки, материалы и задания, которые вы создаёте в режиме разработчика с галочкой «В общую базу», видят все учителя платформы и их ученики этого курса. Строение урока как в «Учу по ФРП»: теория маленькими блоками → примеры → мини-практика → задания → тест.</p>
@@ -112,6 +148,33 @@ function render(){
 
 document.addEventListener("submit", async e => {
   e.preventDefault();
+  if (e.target.id === "base-add"){
+    const key = bCourse(), lid = $("#ba-lesson").value, files = [...$("#ba-files").files], url = $("#ba-url").value.trim(), title = $("#ba-title").value.trim(), body = $("#ba-body").value.trim();
+    const msg = $("#ba-msg"), rows = [];
+    if (!files.length && !url && !body){ msg.textContent = "Выберите файлы, вставьте ссылку или напишите текст."; return; }
+    for (const [i, f] of files.entries()){
+      msg.textContent = `Загружаю файл ${i + 1} из ${files.length}…`;
+      if (f.size > 50e6){ toast(`${f.name}: больше 50 МБ – пропускаю`); continue; }
+      const path = `${D.me.id}/base/${key}/${Date.now()}-${f.name.replace(/[^\wа-яё.\-]+/gi, "_")}`;
+      const up = await sb.storage.from("materials").upload(path, f, {contentType: f.type || undefined});
+      if (up.error){ toast(`${f.name}: ${up.error.message}`); continue; }
+      rows.push({course: key, lesson_id: lid, kind: "file", title: f.name.replace(/\.[^.]+$/, ""), url: sb.storage.from("materials").getPublicUrl(path).data.publicUrl, shared: true});
+    }
+    if (url) rows.push({course: key, lesson_id: lid, kind: "link", title: title || url, url, shared: true});
+    if (body) rows.push({course: key, lesson_id: lid, kind: "text", title: title || "Материал", body, shared: true});
+    if (!rows.length){ msg.textContent = ""; return; }
+    const {error} = await sb.from("materials").insert(rows);
+    if (error){ msg.textContent = "Не сохранилось: " + error.message; return; }
+    toast(`Добавлено во встроенную базу: ${rows.length}`); D.bLoaded = null; render(); return;
+  }
+  if (e.target.id === "base-lesson"){
+    const key = bCourse(), t = $("#bl-title").value.trim(); if (!t) return;
+    const lid = "b" + U.randHex(4), last = (D.bLessons || []).at(-1)?.date;
+    const date = last ? U.iso(new Date(new Date(last + "T00:00:00").getTime() + 7 * 864e5)) : U.iso(new Date());
+    const {error} = await sb.from("materials").insert({course: key, lesson_id: lid, kind: "lesson", title: t, shared: true, data: {title: t, date, oge: "Урок базы", learn: [t], theory: [], hw: ""}});
+    if (error){ toast("Не сохранилось: " + error.message); return; }
+    toast("Урок добавлен – теперь в него можно добавлять материалы"); D.bLoaded = null; render(); return;
+  }
   if (e.target.id === "d-login"){
     const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Вхожу…"; D.lastEmail = $("#d-email").value.trim();
     try{ const {data, error} = await sb.auth.signInWithPassword({email: D.lastEmail, password: $("#d-pass").value}); if (error) throw error; D.session = data.session; D.msg = null; render(); load(); }
@@ -148,7 +211,15 @@ document.addEventListener("submit", async e => {
   }
 });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-act],[data-theme-pick]"); if (!t) return;
+  const t = e.target.closest("[data-act],[data-theme-pick],[data-bsubj],[data-bcourse],[data-bdel]"); if (!t) return;
+  if (t.dataset.bsubj){ D.bSubj = t.dataset.bsubj; D.bCourse = null; D.bLoaded = null; render(); return; }
+  if (t.dataset.bcourse){ D.bCourse = t.dataset.bcourse; D.bLoaded = null; render(); return; }
+  if (t.dataset.bdel){
+    if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно удалить?"; return; }
+    const {error} = await sb.from("materials").delete().eq("id", +t.dataset.bdel);
+    if (error){ toast("Не удалось: " + error.message); return; }
+    D.bLoaded = null; render(); return;
+  }
   if (t.dataset.themePick){ document.querySelectorAll("[data-theme-pick]").forEach(b => b.setAttribute("aria-pressed", b === t)); U.applyTheme(t.dataset.themePick); return; }
   const a = t.dataset.act;
   if (a === "logout"){ await sb.auth.signOut(); D.session = null; D.me = null; D.err = null; D.msg = null; render(); }

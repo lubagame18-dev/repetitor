@@ -87,7 +87,7 @@ window.U = (() => {
     const m = l.memo;
     return `<div class="theory">${blocks}
       ${m ? `<div class="memo"><img data-m src="${U.mascot ? U.mascot() : "assets/kotik.webp"}" alt=""><div><b>${esc(m.h)}</b><p style="margin-top:4px">${mark(m.t)}</p>${m.ex?.length ? `<div class="ex">${m.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div></div>` : ""}
-      <div class="legend-signs muted"><span><span class="u-s">подлежащее</span></span><span><span class="u-p">сказуемое</span></span><span><span class="u-o">дополнение</span></span><span><span class="u-w">определение</span></span><span><span class="u-a">обстоятельство</span></span><span><span class="u-x">слово</span> – определяемое</span></div>
+      ${/\[\[[xwspoa]:/.test(JSON.stringify(l.theory)) ? "" : "<!--"}<div class="legend-signs muted"><span><span class="u-s">подлежащее</span></span><span><span class="u-p">сказуемое</span></span><span><span class="u-o">дополнение</span></span><span><span class="u-w">определение</span></span><span><span class="u-a">обстоятельство</span></span><span><span class="u-x">слово</span> – определяемое</span></div>${/\[\[[xwspoa]:/.test(JSON.stringify(l.theory)) ? "" : "-->"}
     </div>`;
   }
 
