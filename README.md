@@ -21,7 +21,7 @@
    Файл можно запускать повторно после каждого обновления – данные не удаляются.
 3. **Authentication** → **Users** → **Add user** → ваша почта и пароль, галочка **Auto Confirm User**.
 4. **Authentication** → **Sign In / Providers** → выключите **Allow new users to sign up**. Новых учителей добавляете вы сами (пункт 3).
-5. **Project Settings** → **API** → скопируйте **Project URL** и ключ **anon public** в `config.js`. Ключ `service_role` никуда не вставлять.
+5. **Project Settings** → **API** → скопируйте **Project URL** и ключ **Publishable** (или **anon** во вкладке Legacy) в `config.js`. Ключ `service_role` никуда не вставлять.
 
 **Кто разработчик.** Первый, кто войдёт в кабинет учителя после запуска `schema.sql`, становится разработчиком, и ему открыты все встроенные базы. Поэтому сначала войдите сами. Если роль досталась не тому, выполните в SQL Editor:
 ```sql
@@ -31,7 +31,7 @@ update public.teachers set role = 'developer', base_access = '{oge-rus,ege-rus,s
 ## Шаг 2. Нейросеть (проверка сочинений, задания, анализ)
 
 1. Supabase → **Edge Functions** → **Deploy a new function** → **Via Editor**. Имя функции строго: `ai`.
-2. Вставьте весь текст `supabase/functions/ai/index.ts` → **Deploy**.
+2. Вставьте весь текст `supabase/functions/ai/index.ts` → **Deploy**. Затем в настройках функции выключите **Verify JWT** (Enforce JWT verification): функция сама проверяет, кто её вызывает, а с новыми ключами Supabase без этого ученик не сможет прислать фото работы.
 3. Откройте `…/dev.html` → войдите → в разделе **Нейросеть** выберите сервис и вставьте ключ:
    - **DeepSeek** – platform.deepseek.com → API keys (дёшево, хорошо пишет по-русски);
    - **AITUNNEL** – aitunnel.ru, если нужна оплата российской картой;
