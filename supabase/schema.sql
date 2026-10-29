@@ -45,6 +45,7 @@ alter table public.students add column if not exists theme         text;
 alter table public.students add column if not exists mascot        text;
 alter table public.students add column if not exists person_id     uuid;   -- один ученик в нескольких предметах: у всех его строк общий person_id
 alter table public.students add column if not exists call_url      text;   -- ссылка на созвон (Телемост и т. п.) для этого ученика
+alter table public.students add column if not exists covered       jsonb not null default '{}'::jsonb;  -- пройдено на уроке онлайн: {урок: дата}
 alter table public.teachers add column if not exists call_url      text;   -- ссылка на созвон по умолчанию
 -- подписка: basic – 100 ₽ (свои материалы), materials – 300 ₽ (+ наша база, анализ и план), full – 500 ₽ (+ вся нейросеть)
 alter table public.teachers add column if not exists plan          text not null default 'basic';
@@ -464,6 +465,7 @@ revoke all on function public.student_profile_json(uuid) from public, anon, auth
 create or replace function public.invite_info(p_invite text)
 returns json language sql security definer set search_path = public stable as $$
   select json_build_object('name', case when registered_at is null and name like '(%' then '' else name end, 'grade', grade, 'subject', subject,
+                           'goals', coalesce(goals, '{}'), 'course', nullif(course, ''),
                            'theme', (select value from app_settings where key = 'default_theme'))
   from students where invite_token = p_invite and length(p_invite) >= 24;
 $$;
@@ -482,11 +484,15 @@ begin
   select t.base_access into acc from teachers t join students s on s.teacher_id = t.id where s.id = sid;
   pack := case when p_course ~ '^rus-(5|6|7|8|9|10|11)$' then 'school-rus' when p_course in ('oge-rus','ege-rus') then p_course else null end;
   tok := encode(gen_random_bytes(24), 'hex');
-  update students set name = left(trim(p_name), 120), grade = p_grade, goals = coalesce(p_goals, '{}'), goal = array_to_string(p_goals, ', '),
+  -- если учитель в приглашении уже выбрал класс и подготовку – они не меняются
+  update students set name = left(trim(p_name), 120),
+         grade = case when cardinality(coalesce(goals, '{}')) > 0 and grade is not null then grade else p_grade end,
+         goal  = case when cardinality(coalesce(goals, '{}')) > 0 then goal else array_to_string(p_goals, ', ') end,
+         goals = case when cardinality(coalesce(goals, '{}')) > 0 then goals else coalesce(p_goals, '{}') end,
          contact = left(p_contact, 200), theme = left(p_theme, 20),
          password_hash = crypt(p_password, gen_salt('bf')), access_token = tok, invite_token = null,
          registered_at = coalesce(registered_at, now()),
-         course = case when p_course is null then '' when pack is null or pack = any(coalesce(acc, '{}')) then left(p_course, 40) else '' end,
+         course = case when coalesce(cur, '') <> '' then cur when p_course is null then '' else left(p_course, 40) end,
          start_date = coalesce(start_date, current_date)
    where id = sid;
   return json_build_object('token', tok, 'profile', student_profile_json(sid));

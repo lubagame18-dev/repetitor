@@ -174,6 +174,16 @@ window.U = (() => {
 
   /* план по предмету, классу и целям */
   const GOALS = ["ОГЭ","ЕГЭ","ВПР","Контрольные и домашние","Олимпиада"];
+  /* цели, которые подходят классу: ОГЭ – 8–9 класс, ЕГЭ – 10–11, ВПР – 4–8 и 10–11, олимпиада – с 4 класса */
+  function goalsFor(subject, grade){
+    const S = subj(subject), g = +grade;
+    return GOALS.filter(x => x === "ОГЭ" ? S.exam && g >= 8 && g <= 9 : x === "ЕГЭ" ? S.exam && g >= 10 : x === "ВПР" ? (g >= 4 && g <= 8) || g >= 10 : x === "Олимпиада" ? g >= 4 : true);
+  }
+  const goalLabel = x => ["ОГЭ","ЕГЭ","ВПР"].includes(x) ? "Подготовка к " + x : x;
+  function goalsHTML(subject, grade, name, checked){
+    const list = goalsFor(subject, grade), def = checked?.length ? checked : [list.includes("ОГЭ") && +grade === 9 ? "ОГЭ" : list.includes("ЕГЭ") && +grade === 11 ? "ЕГЭ" : "Контрольные и домашние"];
+    return list.map(x => `<label><input type="checkbox" name="${name}" value="${esc(x)}" ${def.includes(x) ? "checked" : ""}> ${esc(goalLabel(x))}</label>`).join("");
+  }
   function planFor(subject, grade, goals){
     if (Array.isArray(grade) || grade === undefined){ goals = grade; grade = subject; subject = "rus"; } // старый вызов planFor(grade, goals)
     goals = goals || []; const S = subj(subject);
@@ -292,5 +302,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();
