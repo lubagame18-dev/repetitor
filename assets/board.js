@@ -265,28 +265,57 @@ window.Board = (() => {
       await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
       return window.JSZip;
     }
+    async function dataUrl(zip, name) {
+      try {
+        const b64 = await zip.file(name).async("base64");
+        const ext = (name.split(".").pop() || "png").toLowerCase();
+        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "gif" ? "image/gif" : ext === "svg" ? "image/svg+xml" : "image/png";
+        return "data:" + mime + ";base64," + b64;
+      } catch (e) { return null; }
+    }
+    function imgsHTML(list, max) {
+      return (list || []).slice(0, max || 12).map(src => src ? `<div style="margin:12px 0"><img src="${src}" alt="" style="max-width:100%;border-radius:8px;border:1px solid #e6e2f2"></div>` : "").join("");
+    }
     async function docxPages(file){
       try {
         const JSZip = await loadJSZip(); const zip = await JSZip.loadAsync(file);
         const xml = await zip.file("word/document.xml").async("string");
         const paras = [...xml.matchAll(/<w:p[\s\S]*?<\/w:p>/g)].map(m => [...m[0].matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map(x => x[1]).join("")).filter(Boolean);
         const text = paras.join("\n").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
-        if (!text.trim()) { U.toast("В документе не найден текст"); return; }
-        addPage("Документ", `<div class="bd-sheet"><h2>${esc(file.name)}</h2><div style="white-space:pre-line;font-size:15px;line-height:1.55">${esc(text.slice(0, 20000))}</div></div>`, true);
-        U.toast("Документ добавлен отдельным листом доски");
+        const media = Object.keys(zip.files).filter(n => /^word\/media\//.test(n) && /\.(png|jpe?g|gif)$/i.test(n)).slice(0, 12);
+        const imgs = [];
+        for (const n of media) imgs.push(await dataUrl(zip, n));
+        addPage("Документ", `<div class="bd-sheet"><h2>${esc(file.name)}</h2>${imgsHTML(imgs, 12)}<div style="white-space:pre-line;font-size:15px;line-height:1.55">${esc((text || "").slice(0, 20000))}</div></div>`, true);
+        U.toast("Документ добавлен листом доски" + (imgs.length ? " (изображений: " + imgs.length + ")" : ""));
       } catch (e) { U.toast("Не удалось открыть документ: " + e.message); }
     }
     async function pptxPages(file){
       try {
         const JSZip = await loadJSZip(); const zip = await JSZip.loadAsync(file);
-        const names = Object.keys(zip.files).filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => (+a.match(/\d+/)[0]) - (+b.match(/\d+/)[0]));
+        const slides = Object.keys(zip.files).filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => (+a.match(/\d+/)[0]) - (+b.match(/\d+/)[0]));
         let made = 0;
-        for (const n of names) {
+        for (const n of slides) {
+          made++;
+          const num = n.match(/slide(\d+)\.xml/)[1];
           const xml = await zip.file(n).async("string");
-          const texts = [...xml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)].map(x => x[1]).join("\n").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
-          addPage("Слайд " + (++made), `<div class="bd-sheet"><h2>Слайд ${made}</h2><div style="white-space:pre-line;font-size:16px;line-height:1.6">${esc(texts || "(текст не найден)")}</div></div>`, true);
+          const text = [...xml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)].map(x => x[1]).join("\n").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+          /* изображения слайда: r:embed -> rels -> media */
+          const relName = "ppt/slides/_rels/slide" + num + ".xml.rels";
+          let rels = "";
+          try { rels = await zip.file(relName).async("string"); } catch (e) { }
+          const map = {};
+          [...rels.matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g)].forEach(m => { map[m[1]] = m[2]; });
+          const ids = [...xml.matchAll(/r:embed="([^"]+)"/g)].map(m => m[1]);
+          const imgs = [];
+          for (const id of ids.slice(0, 6)) {
+            const tgt = map[id]; if (!tgt) continue;
+            const full = tgt.replace(/^\.\.\//, "ppt/");
+            const src = await dataUrl(zip, full);
+            if (src) imgs.push(src);
+          }
+          addPage("Слайд " + made, `<div class="bd-sheet"><h2>Слайд ${made}</h2>${imgsHTML(imgs, 6)}<div style="white-space:pre-line;font-size:16px;line-height:1.6">${esc(text || "")}</div></div>`, true);
         }
-        U.toast("Добавлено слайдов: " + made);
+        U.toast("Добавлено слайдов: " + made + " (с картинками)");
       } catch (e) { U.toast("Не удалось открыть презентацию: " + e.message); }
     }
     async function handleFiles(files){
