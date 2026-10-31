@@ -4,7 +4,8 @@ const {esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, toast} = U;
 const FIPI = "https://oge.fipi.ru/bank/index.php?proj=2F5EE3B12FE2A0EA40B06BF61A015416";
 const RESHU = "https://rus-oge.sdamgia.ru";
 const CFG = window.APP_CONFIG || {};
-const sb = U.supa();
+const sb = U.supa();/* встроенные готовые материалы по классам (работают и без базы) */
+try { if (window.BUILTIN_COURSES) U.loadBase(Object.entries(window.BUILTIN_COURSES).map(([key, data]) => ({ key, data }))); } catch (e) { }
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
            rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set()};
 const $ = s => document.querySelector(s);
@@ -53,6 +54,7 @@ async function load(){
     S.mats = data.materials || [];
     S.works = {}; (data.works || []).forEach(w => (S.works[w.lesson_id] = S.works[w.lesson_id] || {})[w.task] = w.data);
     S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
+    if (!S.base.length && window.BUILTIN_COURSES?.[S.profile?.course]) S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}];
     U.loadBase(S.base);
     LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
   } else {

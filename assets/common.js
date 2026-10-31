@@ -219,7 +219,7 @@ window.U = (() => {
   /* встроенная база приходит из Supabase (по подписке) */
   function loadBase(rows){
     window.COURSES = window.COURSES || {};
-    (rows || []).forEach(r => { window.COURSES[r.key] = r.data; if (r.keys){ window.COURSE_KEYS = window.COURSE_KEYS || {}; window.COURSE_KEYS[r.key] = r.keys; } });
+    (rows || []).forEach(r => { window.COURSES[r.key] = r.data; if (r.keys){ window.COURSE_KEYS = window.COURSE_KEYS || {}; window.COURSE_KEYS[r.key] = r.keys; } });    if (window.BUILTIN_COURSES) Object.keys(window.BUILTIN_COURSES).forEach(k => { if (!window.COURSES[k]) window.COURSES[k] = window.BUILTIN_COURSES[k]; });
     if (U.applyTheme && U.theme) U.applyTheme(U.theme().k);   // перекрасить разделы новых курсов в цвета темы
   }
   const packOf = course => { const c = getCourse(course); if (!c || (c.virtual && !c.locked)) return null; return /^rus-\d+$/.test(course) ? "school-rus" : course; };
