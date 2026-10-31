@@ -407,6 +407,7 @@ window.Board = (() => {
       {key:"lined", label:"В линейку", html:`<div class="bd-sheet bd-lined"></div>`}, {key:"grid", label:"В клетку", html:`<div class="bd-sheet bd-grid"></div>`}];
     const out = [], noInputs = h => h.replace(/<button[\s\S]*?<\/button>/g, "").replace(/<input[^>]*>/g, '<span class="blank" style="min-width:160px"></span>');
     if (l.practice?.length) out.push({key:"practice", label:"Практика", html:`<div class="bd-sheet"><h2>${esc(l.title)}: практика</h2>${U.practiceHTML(l, false)}</div>`});
+    if ((l.test || []).length) out.push({key:"test", label:"Тест", html:`<div class="bd-sheet"><h2>${esc(l.title)}: проверь себя</h2><ol>${(l.test || []).map(q => `<li style="margin-bottom:16px">${esc(q.q)}${q.o ? "<br><span style='font-size:15px;color:#555'>" + q.o.map((x, k) => (k + 1) + ") " + esc(x)).join("   ") + "</span>" : ""}<span class="blank"></span></li>`).join("")}</ol><p class="small muted">Ответы не показываются: проверка — в разделе «Тест» урока.</p></div>`});
     out.push({key:"theory", label:"Теория", html:`<div class="bd-sheet">${noInputs(U.theoryHTML(l))}</div>`});
     const w = l.writing, txt = w ? (w.type === "izl" ? course.izl?.[w.text] : course.texts?.[w.text]) : null;
     if (txt) out.push({key:"text", label:"Текст для письма", html:`<div class="bd-sheet"><h2>${esc(txt.title)}</h2>${w.type === "izl" ? txt.paras.map(p => `<p>${esc(p)}</p>`).join("") : `<p>${esc(txt.text)}</p>`}</div>`});
