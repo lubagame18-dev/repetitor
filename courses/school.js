@@ -12,12 +12,16 @@ window.BuiltinLoader = (() => {
   }
   async function ensure(key) {
     const ALIAS = { "oge-rus": "oge-ru", "oge-ru": "oge-rus", "ege-rus": "ege-ru", "ege-ru": "ege-rus" };
-    const meta = window.BUILTIN_INDEX && (window.BUILTIN_INDEX[key] || window.BUILTIN_INDEX[ALIAS[key]]);
+    const IDX = window.BUILTIN_INDEX || {};
+    const dataKey = IDX[key] ? key : (ALIAS[key] || key);
+    const meta = IDX[dataKey];
     if (!meta) return false;
     const ok = await subject(meta.subj);
     if (!ok) return false;
-    if (!window.BUILTIN_COURSES || !window.BUILTIN_COURSES[key]) return false;
-    if (window.U && U.loadBase) U.loadBase([{ key, data: window.BUILTIN_COURSES[key] }]);
+    const data = window.BUILTIN_COURSES && (window.BUILTIN_COURSES[dataKey] || window.BUILTIN_COURSES[key]);
+    if (!data) return false;
+    if (dataKey !== key) window.BUILTIN_COURSES[key] = data;
+    if (window.U && U.loadBase) U.loadBase([{ key, data }]);
     return true;
   }
   const has = key => !!(window.BUILTIN_COURSES && window.BUILTIN_COURSES[key]);

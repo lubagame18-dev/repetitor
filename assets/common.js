@@ -232,7 +232,7 @@ window.U = (() => {
     const start = p.start_date ? new Date(p.start_date + "T00:00:00") : null, ov = p.dates || {};
     mats = (mats || []).filter(m => m.course === p.course && (!m.student_id || m.student_id === p.id));
     const own = mats.filter(m => m.kind === "lesson").map(m => ({...emptyLesson(), ...m.data, id: m.lesson_id, custom: true, mid: m.id}));
-    let lessons = base.lessons.map((l, i) => ({...l, date: start ? iso(new Date(start.getTime() + i * 7 * 864e5)) : l.date}));
+    let lessons = base.lessons.map((l, i) => ({...l, date: start ? iso(new Date(start.getTime() + i * 7 * 864e5)) : (l.date || iso(new Date(Date.now() + i * 7 * 864e5)))}));
     lessons = [...lessons, ...own].map(l => ({...l, date: ov[l.id] || l.date, materials: mats.filter(m => m.kind !== "lesson" && m.lesson_id === l.id)}))
       .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
     return {...base, events: start ? (base.events || []).filter(e => e.kind === "exam") : base.events, lessons};
