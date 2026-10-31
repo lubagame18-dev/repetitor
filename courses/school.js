@@ -11,7 +11,8 @@ window.BuiltinLoader = (() => {
     try { await script(f); loaded[subj] = true; return true; } catch (e) { return false; }
   }
   async function ensure(key) {
-    const meta = window.BUILTIN_INDEX && window.BUILTIN_INDEX[key];
+    const ALIAS = { "oge-rus": "oge-ru", "oge-ru": "oge-rus", "ege-rus": "ege-ru", "ege-ru": "ege-rus" };
+    const meta = window.BUILTIN_INDEX && (window.BUILTIN_INDEX[key] || window.BUILTIN_INDEX[ALIAS[key]]);
     if (!meta) return false;
     const ok = await subject(meta.subj);
     if (!ok) return false;

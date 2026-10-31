@@ -488,7 +488,7 @@ function viewFolder(){
       <button class="btn ghost sm" data-act="download" title="Скачать урок как документ Word">⤓ Скачать</button></div></div>
   <article class="window glass" style="--c:${b.color}">
     <div class="head">
-      <div class="corners"><div class="mono muted">Дата:<br><b style="color:var(--ink)">${fmt(l.date,{day:"numeric",month:"long",year:"numeric"})}</b></div><div class="mono muted">${esc(l.oge.split(" ")[0])}:<br><b style="color:var(--ink)">${esc(l.oge.replace(/^\S+\s*/,"") || l.oge)}</b></div></div>
+      <div class="corners"><div class="mono muted">Дата:<br><b style="color:var(--ink)">${fmt(l.date,{day:"numeric",month:"long",year:"numeric"})}</b></div><div class="mono muted">${esc((l.oge || "Урок").split(" ")[0])}:<br><b style="color:var(--ink)">${esc(((l.oge || "Урок").replace(/^\S+\s*/,"") || l.oge || "Урок"))}</b></div></div>
       <h1>${esc(l.title)}</h1>
       <div class="rule">✦</div>
       <p class="mono muted">${esc(b.name)} · урок ${i+1} из ${L.length}</p>
@@ -511,7 +511,7 @@ function viewFolder(){
   ${L[i + 1] ? '<p class="small muted" style="margin:10px 0 0">Следующий урок: <b>' + esc(L[i + 1].title) + '</b> · ' + fmt(L[i + 1].date, { day: "numeric", month: "long" }) + '</p>' : '<p class="small muted" style="margin:10px 0 0">Это последний урок курса.</p>'}
 </div>
     <div class="pane">${pane}</div>
-    <div class="foot mono muted"><span>${miniAll ? `мини-практика ${miniDone}/${miniAll}` : `${l.learn.length} темы урока`}</span><span>тест ${r ? pct(r.best) + "%" : "–"} · дз ${hr ? pct(hr.best) + "%" : "–"}</span></div>
+    <div class="foot mono muted"><span>${miniAll ? `мини-практика ${miniDone}/${miniAll}` : `${(l.learn || []).length} темы урока`}</span><span>тест ${r ? pct(r.best) + "%" : "–"} · дз ${hr ? pct(hr.best) + "%" : "–"}</span></div>
   </article>`;
 }
 

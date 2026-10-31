@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Заливка базы в Supabase · Репетитор</title>
+<style>
+body{font-family:Manrope,system-ui,sans-serif;max-width:860px;margin:32px auto;padding:0 16px;color:#24183d;background:#faf8ff}
+h1{font-size:1.5rem} .card{background:#fff;border:1px solid #e6e2f2;border-radius:14px;padding:16px;margin:14px 0}
+label{display:block;font-weight:700;margin:10px 0 4px} input{width:100%;padding:10px;border:1px solid #d8d2ea;border-radius:10px;font:inherit}
+button{margin-top:12px;padding:10px 16px;border:0;border-radius:10px;background:#7b4cf5;color:#fff;font-weight:800;cursor:pointer}
+button.ghost{background:#eee9fb;color:#4b2ea8} #log{white-space:pre-wrap;font:13px/1.5 ui-monospace,monospace;max-height:360px;overflow:auto;background:#f5f2ff;border-radius:10px;padding:12px;margin-top:12px}
+.ok{color:#0a7a3d;font-weight:700}.bad{color:#b00020;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Заливка встроенной базы в Supabase</h1>
+<p>Загружает готовые курсы (130 курсов, 7783 урока) в таблицу <code>course_data</code>. Нужен вход вашей почтой разработчика — ключи и данные останутся в базе сайта.</p>
+
+<div class="card" id="login">
+  <b>Вход</b>
+  <label for="em">Почта (ваш аккаунт учителя/разработчика)</label>
+  <input id="em" type="email" autocomplete="username" placeholder="you@mail.ru">
+  <label for="pw">Пароль</label>
+  <input id="pw" type="password" autocomplete="current-password" placeholder="пароль Supabase">
+  <button id="go">Войти</button>
+  <p id="who" class="small"></p>
+</div>
+
+<div class="card">
+  <b>Заливка курсов</b>
+  <p class="small">Если курсы уже есть — они обновятся (upsert). Ключи к практике сохраняются отдельно, ученикам они не показываются.</p>
+  <button id="up">⬆ Залить все курсы в Supabase</button>
+  <button id="cnt" class="ghost">Проверить, сколько уже в базе</button>
+  <div id="log">Готово к работе.</div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.100.0/dist/umd/supabase.js"></script>
+<script src="courses/school.js"></script>
+<script>
+const CFG = window.APP_CONFIG || {};
+const sb = window.supabase ? supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
+const $ = s => document.querySelector(s);
+const log = (m, cls) => { const el = $("#log"); el.innerHTML += "\n" + (cls ? `<span class="${cls}">${m}</span>` : m); el.scrollTop = el.scrollHeight; };
+
+async function session() {
+  if (!sb) return null;
+  const { data } = await sb.auth.getSession();
+  return data.session || null;
+}
+async function showWho() {
+  const s = await session();
+  $("#who").textContent = s ? "Вы вошли как " + s.user.email : "Сессия не найдена — войдите по почте и паролю.";
+}
+$("#go").onclick = async () => {
+  if (!sb) { log("Supabase не загрузился", "bad"); return; }
+  const { error } = await sb.auth.signInWithPassword({ email: $("#em").value.trim(), password: $("#pw").value });
+  if (error) { log("Ошибка входа: " + error.message, "bad"); return; }
+  log("Вход выполнен: " + $("#em").value.trim(), "ok"); showWho();
+};
+$("#go").onclick && showWho();
+
+async function loadSubject(subj) {
+  if (window.__subjLoaded?.[subj]) return;
+  await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "courses/school/" + subj + ".js?v=29"; s.onload = res; s.onerror = () => rej(new Error("не загрузился " + subj)); document.head.appendChild(s); });
+  (window.__subjLoaded = window.__subjLoaded || {})[subj] = true;
+}
+function splitCourse(course) {
+  const data = JSON.parse(JSON.stringify(course));
+  const keys = {};
+  (data.lessons || []).forEach(l => {
+    const arr = (l.practice || []).map(p => {
+      const k = p.key || "";
+      delete p.key;
+      return k;
+    });
+    if (arr.some(Boolean)) keys[l.id] = arr;
+  });
+  return { data, keys };
+}
+$("#up").onclick = async () => {
+  if (!sb) return;
+  const s = await session();
+  if (!s) { log("Сначала войдите (выше).", "bad"); return; }
+  const idx = window.BUILTIN_INDEX || {};
+  const keys = Object.keys(idx);
+  log("Курсов к заливке: " + keys.length);
+  const subs = [...new Set(keys.map(k => idx[k].subj))];
+  for (const subj of subs) { try { await loadSubject(subj); log("Загружен файл предмета: " + subj); } catch (e) { log("Ошибка загрузки " + subj + ": " + e.message, "bad"); } }
+  let ok = 0, bad = 0;
+  for (const key of keys) {
+    const course = window.BUILTIN_COURSES && window.BUILTIN_COURSES[key];
+    if (!course) { bad++; log("Нет данных: " + key, "bad"); continue; }
+    const { data, keys: kk } = splitCourse(course);
+    const { error } = await sb.from("course_data").upsert({ key, data, keys: Object.keys(kk).length ? kk : null, updated_at: new Date().toISOString() });
+    if (error) { bad++; log("Ошибка " + key + ": " + error.message, "bad"); }
+    else { ok++; log("✓ " + key + " — уроков: " + (data.lessons || []).length); }
+  }
+  log("Итого: успешно " + ok + ", ошибок " + bad, bad ? "bad" : "ok");
+};
+$("#cnt").onclick = async () => {
+  if (!sb) return;
+  const { count, error } = await sb.from("course_data").select("key", { count: "exact", head: true });
+  if (error) log("Ошибка чтения: " + error.message, "bad"); else log("В course_data сейчас строк: " + count);
+};
+</script>
+</body>
+</html>
