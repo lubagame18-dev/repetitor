@@ -201,7 +201,7 @@ window.Board = (() => {
 
     /* ---------- вложения: файлы, буфер обмена, перетаскивание ---------- */
     const fileInput = document.createElement("input");
-    fileInput.type = "file"; fileInput.multiple = true; fileInput.accept = "image/*,application/pdf,video/*"; fileInput.style.display = "none";
+    fileInput.type = "file"; fileInput.multiple = true; fileInput.accept = "image/*,application/pdf,video/*,.docx,.pptx"; fileInput.style.display = "none";
     root.appendChild(fileInput);
     const dropHint = document.createElement("div"); dropHint.className = "bd-drop"; dropHint.textContent = "Отпустите файл — он появится на доске";
     wrap.appendChild(dropHint);
@@ -259,6 +259,36 @@ window.Board = (() => {
         return shots;
       } finally { URL.revokeObjectURL(url); }
     }
+
+    async function loadJSZip(){
+      if (window.JSZip) return window.JSZip;
+      await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+      return window.JSZip;
+    }
+    async function docxPages(file){
+      try {
+        const JSZip = await loadJSZip(); const zip = await JSZip.loadAsync(file);
+        const xml = await zip.file("word/document.xml").async("string");
+        const paras = [...xml.matchAll(/<w:p[\s\S]*?<\/w:p>/g)].map(m => [...m[0].matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map(x => x[1]).join("")).filter(Boolean);
+        const text = paras.join("\n").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+        if (!text.trim()) { U.toast("В документе не найден текст"); return; }
+        addPage("Документ", `<div class="bd-sheet"><h2>${esc(file.name)}</h2><div style="white-space:pre-line;font-size:15px;line-height:1.55">${esc(text.slice(0, 20000))}</div></div>`, true);
+        U.toast("Документ добавлен отдельным листом доски");
+      } catch (e) { U.toast("Не удалось открыть документ: " + e.message); }
+    }
+    async function pptxPages(file){
+      try {
+        const JSZip = await loadJSZip(); const zip = await JSZip.loadAsync(file);
+        const names = Object.keys(zip.files).filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => (+a.match(/\d+/)[0]) - (+b.match(/\d+/)[0]));
+        let made = 0;
+        for (const n of names) {
+          const xml = await zip.file(n).async("string");
+          const texts = [...xml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)].map(x => x[1]).join("\n").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+          addPage("Слайд " + (++made), `<div class="bd-sheet"><h2>Слайд ${made}</h2><div style="white-space:pre-line;font-size:16px;line-height:1.6">${esc(texts || "(текст не найден)")}</div></div>`, true);
+        }
+        U.toast("Добавлено слайдов: " + made);
+      } catch (e) { U.toast("Не удалось открыть презентацию: " + e.message); }
+    }
     async function handleFiles(files){
       let y = 100;
       for (const f of files) {
@@ -266,6 +296,8 @@ window.Board = (() => {
         if (/^image\//.test(f.type)) items2 = await imageFileToItems(f);
         else if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)) items2 = await pdfToItems(f);
         else if (/^video\//.test(f.type)) items2 = await videoToItems(f);
+        else if (/\.(docx)$/i.test(f.name)) { await docxPages(f); continue; }
+        else if (/\.(pptx)$/i.test(f.name)) { await pptxPages(f); continue; }
         else { U.toast("Формат «" + f.name + "» пока не преобразуется в изображения. Прикрепите фото или PDF."); continue; }
         items2.forEach(it => { const hh = addImage(it.src, it.ratio, 40, y, 480); y += hh + 30; });
       }
