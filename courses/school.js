@@ -7,7 +7,8 @@ window.BuiltinLoader = (() => {
   }
   async function subject(subj) {
     if (loaded[subj]) return true;
-    const f = "courses/school/" + subj + ".js?v=18";
+    const VER = (() => { try { const sc = [...document.scripts].find(x => /courses\/school\.js/.test(x.src)); return (sc && (sc.src.match(/[?&]v=(\d+)/) || [])[1]) || String(Date.now()); } catch (e) { return String(Date.now()); } })();
+    const f = "courses/school/" + subj + ".js?v=" + VER;
     try { await script(f); loaded[subj] = true; return true; } catch (e) { return false; }
   }
   async function ensure(key) {
