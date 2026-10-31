@@ -436,3 +436,5 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
 .lt-opts li.pick.good{background:color-mix(in srgb,var(--good) 25%,var(--chip))}
 .room-side .tabs{flex-wrap:wrap;overflow:visible}
 body.in-call .main{padding-bottom:230px}
+
+.bd-drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(123,76,245,.12);border:3px dashed var(--violet);border-radius:12px;color:var(--violet);font-weight:800;z-index:5;pointer-events:none}

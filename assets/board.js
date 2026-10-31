@@ -15,6 +15,7 @@ window.Board = (() => {
     const drafts = new Map();          // key -> stroke being drawn by peer
     const me = Math.random().toString(36).slice(2, 9);
     let channel = null, lastCursor = 0, lastDraft = 0, draftBuf = [];
+    const imgCache = new Map(); const pageCache = new Map(); const pagesArr = o.pages.slice();
 
     root.innerHTML = `
       <div class="bd-bar">
@@ -26,6 +27,8 @@ window.Board = (() => {
           <button data-tool="erase" title="Ластик">⌫</button>
           <button data-tool="hand" title="Листать">✋</button>
           ${COLORS.map(c => `<button class="bd-color" data-color="${c}" style="--bc:${c}" aria-label="Цвет"></button>`).join("")}
+          <button data-act="attach" title="Прикрепить файл (фото, PDF, документ)">📎</button>
+          <button data-act="camera" title="Фото с камеры">📷</button>
           <button data-act="undo" title="Отменить своё последнее">↶</button>
           ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">Очистить</button>` : ""}
         </div>
@@ -66,26 +69,54 @@ window.Board = (() => {
       ctx.save(); ctx.fillStyle = t.c; ctx.font = "600 22px Nunito, system-ui, sans-serif"; ctx.textBaseline = "top";
       String(t.s).split("\n").forEach((line, i) => ctx.fillText(line, t.x, t.y + i * 28)); ctx.restore();
     }
+    function drawImageItem(it){
+      const w = it.w || 480, h = it.h || w / (it.ratio || 1.5);
+      const cached = imgCache.get(it.src);
+      if (cached && cached.complete && cached.naturalWidth){ ctx.drawImage(cached, it.x, it.y, w, h); return; }
+      if (!cached){ const im = new Image(); im.onload = () => { imgCache.set(it.src, im); redraw(); }; im.src = it.src; imgCache.set(it.src, im); }
+      ctx.save(); ctx.fillStyle = "#f1eefb"; ctx.fillRect(it.x, it.y, w, h); ctx.restore();
+    }
+    function drawSeg(a, b, s){
+      ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.globalAlpha = s.h ? 0.35 : 1;
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.restore();
+    }
     function redraw(){
-      ctx.clearRect(0, 0, W, height);
-      items.forEach(it => it.t === "s" ? drawStroke(it) : drawText(it));
+      ctx.clearRect(0, 0, W, height + 50);
+      items.forEach(it => { if (it.t === "s") drawStroke(it); else if (it.t === "i") drawImageItem(it); else drawText(it); });
       drafts.forEach(drawStroke);
-      if (drawing) drawStroke(drawing);
+      if (drawing && !drawing.erase) drawStroke(drawing);
     }
     function pos(e){ const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scale), Math.round((e.clientY - r.top) / scale)]; }
 
     /* ---------- лист ---------- */
+    function renderPageButtons(){
+      const box = root.querySelector(".bd-pages"); if (!box) return;
+      box.innerHTML = pagesArr.map(p => `<button data-bpage="${p.key}" aria-pressed="${p.key === page}">${esc(p.label)}</button>`).join("");
+    }
     async function openPage(key){
-      if (!o.pages.some(p => p.key === key)) key = o.pages[0].key;
+      if (!pagesArr.some(p => p.key === key)) key = pagesArr[0].key;
       page = key;
-      root.querySelectorAll("[data-bpage]").forEach(b => b.setAttribute("aria-pressed", b.dataset.bpage === key));
-      bg.innerHTML = o.pages.find(p => p.key === key).html;
+      renderPageButtons();
+      bg.innerHTML = (pagesArr.find(p => p.key === key) || pagesArr[0]).html;
       items = new Map(); mine = []; drafts.clear();
+      const cached = pageCache.get(key);
+      if (cached) { cached.forEach(r => items.set(String(r.id), r.item)); }
       layout();
-      try { const list = await o.api.load(key); list.forEach(r => items.set(String(r.id), r.item)); } catch(_) {}
-      layout();
+      if (!cached) {
+        try { const list = await o.api.load(key); list.forEach(r => items.set(String(r.id), r.item)); pageCache.set(key, list); } catch(_) {}
+        layout();
+      }
       sendPresence();
       o.onPage && o.onPage(key);
+    }
+    /* добавить лист доски (вложение/презентация) и при желании показать всем */
+    function addPage(label, html, broadcast){
+      const key = "x" + Date.now().toString(36);
+      pagesArr.push({ key, label: label.slice(0, 24), html });
+      renderPageButtons();
+      if (broadcast) send("addpage", { key, label, html });
+      return key;
     }
 
     /* ---------- рисование ---------- */
@@ -96,6 +127,7 @@ window.Board = (() => {
       items.forEach((it, id) => {
         if (found) return;
         if (it.t === "s"){ for (const p of it.p){ if (Math.hypot(p[0] - pt[0], p[1] - pt[1]) < 14 + it.w){ found = id; break; } } }
+        else if (it.t === "i"){ const w = it.w || 480, h = it.h || w / (it.ratio || 1.5); if (pt[0] >= it.x && pt[0] <= it.x + w && pt[1] >= it.y && pt[1] <= it.y + h) found = id; }
         else if (pt[0] >= it.x - 6 && pt[0] <= it.x + 12 * String(it.s).length + 6 && pt[1] >= it.y - 6 && pt[1] <= it.y + 30 * String(it.s).split("\n").length) found = id;
       });
       return found;
@@ -129,8 +161,10 @@ window.Board = (() => {
       if (!drawing) return;
       if (drawing.erase){ const id = hitTest(p); if (id) removeIds([id]); return; }
       const last = drawing.p[drawing.p.length - 1];
-      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 2) return;
-      drawing.p.push(p); draftBuf.push(p); redraw();
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.5) return;
+      drawing.p.push(p); draftBuf.push(p);
+      drawSeg(last, p, drawing);
+      if (drawing.p.length > 1200) drawing.p = drawing.p.filter((_, i2) => i2 % 2 === 0);
       if (now - lastDraft > 60){ lastDraft = now; send("draft", {c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf}); draftBuf = [p]; }
     });
     const end = () => {
@@ -165,6 +199,94 @@ window.Board = (() => {
       }
     });
 
+    /* ---------- вложения: файлы, буфер обмена, перетаскивание ---------- */
+    const fileInput = document.createElement("input");
+    fileInput.type = "file"; fileInput.multiple = true; fileInput.accept = "image/*,application/pdf,video/*"; fileInput.style.display = "none";
+    root.appendChild(fileInput);
+    const dropHint = document.createElement("div"); dropHint.className = "bd-drop"; dropHint.textContent = "Отпустите файл — он появится на доске";
+    wrap.appendChild(dropHint);
+
+    function addImage(src, ratio, x, y, w){
+      const width = w || 460, hh = width / (ratio || 1.5);
+      addItem({ t: "i", x: x ?? (40 + Math.round(Math.random() * 40)), y: y ?? 120, w: width, h: hh, ratio: ratio || 1.5, src });
+      return hh;
+    }
+    function canvasToJpeg(cv2, maxW, q){
+      const k = Math.min(1, (maxW || 1600) / cv2.width);
+      if (k < 1){ const c2 = document.createElement("canvas"); c2.width = Math.round(cv2.width * k); c2.height = Math.round(cv2.height * k); c2.getContext("2d").drawImage(cv2, 0, 0, c2.width, c2.height); cv2 = c2; }
+      return cv2.toDataURL("image/jpeg", q || 0.78);
+    }
+    async function imageFileToItems(file){
+      const url = URL.createObjectURL(file);
+      try {
+        const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+        const k = Math.min(1, 1600 / im.width), c2 = document.createElement("canvas");
+        c2.width = Math.round(im.width * k); c2.height = Math.round(im.height * k);
+        c2.getContext("2d").drawImage(im, 0, 0, c2.width, c2.height);
+        return [{ src: canvasToJpeg(c2, 1600, 0.78), ratio: im.width / im.height }];
+      } finally { URL.revokeObjectURL(url); }
+    }
+    async function pdfToItems(file){
+      try {
+        if (!window.pdfjsLib) await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+        if (!window.pdfjsLib) return [];
+        const buf = await file.arrayBuffer();
+        const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+        const out = [];
+        const n = Math.min(doc.numPages, 8);
+        for (let i = 1; i <= n; i++) {
+          const pg = await doc.getPage(i), vp = pg.getViewport({ scale: 1.4 });
+          const c2 = document.createElement("canvas"); c2.width = vp.width; c2.height = vp.height;
+          await pg.render({ canvasContext: c2.getContext("2d"), viewport: vp }).promise;
+          out.push({ src: canvasToJpeg(c2, 1600, 0.76), ratio: vp.width / vp.height });
+        }
+        return out;
+      } catch (e) { U.toast("PDF не удалось открыть: " + e.message); return []; }
+    }
+    async function videoToItems(file){
+      const url = URL.createObjectURL(file);
+      try {
+        const v = document.createElement("video"); v.src = url; v.muted = true; v.playsInline = true;
+        await new Promise(res => { v.onloadedmetadata = res; setTimeout(res, 2500); });
+        const shots = [];
+        for (const t of [0.5, Math.min(2, v.duration || 1), Math.min(4, v.duration || 2)]) {
+          await new Promise(res => { v.onseeked = res; v.currentTime = Math.min(t, (v.duration || 1) - 0.05); setTimeout(res, 900); });
+          const c2 = document.createElement("canvas"); c2.width = v.videoWidth || 640; c2.height = v.videoHeight || 360;
+          c2.getContext("2d").drawImage(v, 0, 0, c2.width, c2.height);
+          shots.push({ src: canvasToJpeg(c2, 1200, 0.75), ratio: c2.width / c2.height });
+        }
+        addPage("Видео (кадры)", `<div class="bd-sheet"><h2>${esc(file.name)}</h2><p class="small muted">Кадры видео добавлены на доску. Полный видеофайл доступен у учителя.</p></div>`, false);
+        return shots;
+      } finally { URL.revokeObjectURL(url); }
+    }
+    async function handleFiles(files){
+      let y = 100;
+      for (const f of files) {
+        let items2 = [];
+        if (/^image\//.test(f.type)) items2 = await imageFileToItems(f);
+        else if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)) items2 = await pdfToItems(f);
+        else if (/^video\//.test(f.type)) items2 = await videoToItems(f);
+        else { U.toast("Формат «" + f.name + "» пока не преобразуется в изображения. Прикрепите фото или PDF."); continue; }
+        items2.forEach(it => { const hh = addImage(it.src, it.ratio, 40, y, 480); y += hh + 30; });
+      }
+      U.toast(items2LengthMsg);
+    }
+    let items2LengthMsg = "Материал добавлен на доску";
+    root.addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
+      if (b.dataset.act === "attach") fileInput.click();
+      if (b.dataset.act === "camera"){ const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*"; inp.capture = "environment"; inp.onchange = () => inp.files?.length && handleFiles([...inp.files]); inp.click(); }
+    });
+    fileInput.addEventListener("change", () => { if (fileInput.files?.length) handleFiles([...fileInput.files]); fileInput.value = ""; });
+    wrap.addEventListener("dragover", e => { e.preventDefault(); dropHint.style.display = "flex"; });
+    wrap.addEventListener("dragleave", () => { dropHint.style.display = "none"; });
+    wrap.addEventListener("drop", e => { e.preventDefault(); dropHint.style.display = "none"; if (e.dataTransfer?.files?.length) handleFiles([...e.dataTransfer.files]); });
+    document.addEventListener("paste", e => {
+      if (!root.isConnected) return;
+      const files = [...(e.clipboardData?.files || [])];
+      if (files.length) { e.preventDefault(); handleFiles(files); }
+    });
+
     /* ---------- реальное время ---------- */
     function send(type, payload){ if (channel) channel.send({type:"broadcast", event:"ev", payload:{type, from:me, page, ...payload}}); }
     function sendPresence(){ if (channel) channel.track({id:me, name:o.name, role:o.role, page}).catch(() => {}); }
@@ -186,6 +308,7 @@ window.Board = (() => {
       channel = o.sb.channel(o.channelName, {config:{broadcast:{self:false}, presence:{key:me}}});
       channel.on("broadcast", {event:"ev"}, ({payload:m}) => {
         if (m.from === me) return;
+        if (m.type === "addpage"){ if (!pagesArr.some(x => x.key === m.key)){ pagesArr.push({ key: m.key, label: m.label, html: m.html }); renderPageButtons(); } return; }
         if (m.type === "page" && o.role === "student"){ if (m.page !== page){ openPage(m.page); U.toast("Учитель открыл другой лист"); } return; }
         if (m.page !== page) return;
         if (m.type === "cursor"){
