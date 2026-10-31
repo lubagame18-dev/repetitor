@@ -494,6 +494,22 @@ function viewFolder(){
       <p class="mono muted">${esc(b.name)} · урок ${i+1} из ${L.length}</p>
     </div>
     <div class="tabs" role="group" aria-label="Разделы урока"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>${tabs.map(([k,n,ic]) => `<button data-sub="${k}" aria-pressed="${S.sub===k}">${ic}${n}</button>`).join("")}</div>
+   
+    <div class="card" style="margin:0 0 14px;border-left:4px solid var(--violet)">
+  <div class="kicker">Твой план на этот урок</div>
+  <ol style="margin:8px 0 10px;padding-left:20px;line-height:1.7">
+    <li>${S.sub === "theory" || miniDone ? "✅" : "•"} <b>Теория</b> — прочитай микротемы</li>
+    <li>${miniAll && miniDone === miniAll ? "✅" : "•"} <b>Отработка</b> — мини-практика после каждой микротемы (${miniDone}/${miniAll || 0})</li>
+    <li>${r ? "✅" : "•"} <b>Тест по уроку</b> — проверь себя${r ? " (лучший: " + pct(r.best) + "%)" : ""}</li>
+    <li>${hr || h ? "✅" : "•"} <b>Домашка</b> — закрепи и сдай</li>
+  </ol>
+  ${(() => {
+    const next = !(S.sub === "theory" || miniDone) ? ["theory", "Начать с теории"] : (!miniAll || miniDone < miniAll) ? ["practice", "Перейти к отработке"] : (!r ? ["test", "Пройти тест"] : [null, null]);
+    if (next[0]) return '<button class="btn sm" data-sub="' + next[0] + '">' + next[1] + ' →</button>';
+    return (l.hw || l.hwtest?.length) && !hr ? '<button class="btn sm" data-sub="hw">Сделать домашку →</button>' : '<span class="chip">Урок пройден — можно закрыть ✅</span>';
+  })()}
+  ${L[i + 1] ? '<p class="small muted" style="margin:10px 0 0">Следующий урок: <b>' + esc(L[i + 1].title) + '</b> · ' + fmt(L[i + 1].date, { day: "numeric", month: "long" }) + '</p>' : '<p class="small muted" style="margin:10px 0 0">Это последний урок курса.</p>'}
+</div>
     <div class="pane">${pane}</div>
     <div class="foot mono muted"><span>${miniAll ? `мини-практика ${miniDone}/${miniAll}` : `${l.learn.length} темы урока`}</span><span>тест ${r ? pct(r.best) + "%" : "–"} · дз ${hr ? pct(hr.best) + "%" : "–"}</span></div>
   </article>`;
@@ -873,7 +889,7 @@ document.addEventListener("click", async e => {
     S.open = l.id; S.sub = t.dataset.sub || "theory"; S.view = "folder"; S.drawer = false; render(); scrollTo(0,0); return;
   }
   if (t.dataset.sub){ if (S.view === "room" && S.test && S.testInRoom){ if (S.test.i < S.test.qs.length) testLive({quit: true}); S.test = null; S.testInRoom = false; }
-    S.sub = t.dataset.sub; if (S.view === "room") liveTrack(); if (t.dataset.bpage) S.boardPage = t.dataset.bpage; render(); if (t.dataset.bpage) document.querySelector(".window .tabs")?.scrollIntoView({behavior:"smooth"}); return; }
+    S.sub = t.dataset.sub; try { LS.set("seen:" + S.open + ":" + S.sub, 1); } catch (e) { } if (S.view === "room") liveTrack(); if (t.dataset.bpage) S.boardPage = t.dataset.bpage; render(); if (t.dataset.bpage) document.querySelector(".window .tabs")?.scrollIntoView({behavior:"smooth"}); return; }
   if (t.dataset.etype){ LS.set("etype", t.dataset.etype); render(); return; }
   if (t.dataset.test){ startTest(t.dataset.test, t.dataset.kind || "lesson"); return; }
   if (t.dataset.pick && S.test.picked == null){
