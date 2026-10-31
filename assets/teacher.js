@@ -594,7 +594,8 @@ function startCallT(s){
     onConnected: (id, name) => { toast(`${name || "Ученик"} подключился к видеозвонку`); if (T.room && T.view !== "room"){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); } }});
 }
 function startRoom(s, lesson, keepPlan){
-  const url = callOf(s); if (url && url !== s.call_url) saveCall(s, url, true);
+  let url = callOf(s); if (url && url !== s.call_url) saveCall(s, url, true);
+  if (!url){ toast("Ссылка на созвон не добавлена: откройте Телемост, скопируйте ссылку встречи и вставьте её в поле «Ссылка на созвон» — ученик получит её сразу."); }
   const c = U.courseFor(s, T.mats), planned = c?.lessons.length ? lessonNow(c) : null;
   const to = [s.id, s.pair_id].filter(Boolean);
   T.room = {sid: s.id, to, lesson: lesson || planned || "free", planned, keepPlan: !!keepPlan, since: Date.now(), covered: new Set(),

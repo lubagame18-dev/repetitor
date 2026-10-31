@@ -1,5 +1,5 @@
 /* Офлайн-кэш приложения ученика. При обновлении файлов увеличьте номер версии. */
-const CACHE = "oge-rus-v17";
+const CACHE = "oge-rus-v18";
 const FILES = ["./", "index.html", "config.js", "assets/app.css", "assets/common.js", "assets/student.js", "assets/map.js", "assets/board.js", "assets/work.js", "assets/call.js", "assets/kotik.webp", "courses/catalog.js", "courses/school.js", "courses/entry.js", "assets/look.js", "assets/mascots/duck.webp", "assets/mascots/lamb.webp", "assets/mascots/hedgehog.webp", "assets/bg/bordo.webp", "assets/bg/lemon.webp", "assets/bg/peach.webp", "assets/bg/hvoya.webp", "icons/icon-192.png", "manifest.webmanifest"];
 
 self.addEventListener("install", e => {

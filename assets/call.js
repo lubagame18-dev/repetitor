@@ -4,7 +4,11 @@
 window.Call = (() => {
   const {esc} = U;
   let st = null;
-  const ice = () => ({iceServers: [{urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"]}, ...((window.APP_CONFIG && window.APP_CONFIG.TURN) || [])]});
+  const ice = () => {
+    const turn = (window.APP_CONFIG && window.APP_CONFIG.TURN) || [];
+    const relay = {urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject"};
+    return {iceServers: [{urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"]}, relay, ...turn]};
+  };
 
   async function getMedia(){
     const v = {width: {ideal: 640}, height: {ideal: 480}, facingMode: "user"};

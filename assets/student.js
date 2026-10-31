@@ -4,8 +4,8 @@ const {esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, toast} = U;
 const FIPI = "https://oge.fipi.ru/bank/index.php?proj=2F5EE3B12FE2A0EA40B06BF61A015416";
 const RESHU = "https://rus-oge.sdamgia.ru";
 const CFG = window.APP_CONFIG || {};
-const sb = U.supa();/* встроенные готовые материалы по классам (работают и без базы) */
-try { if (window.BUILTIN_COURSES) U.loadBase(Object.entries(window.BUILTIN_COURSES).map(([key, data]) => ({ key, data }))); } catch (e) { }
+const sb = U.supa();/* встроенные готовые материалы по классам (подгружаются лениво по предмету) */
+try { const k0 = (LS.get("session")?.profile?.course) || CFG.DEFAULT_COURSE; if (window.BuiltinLoader && k0) BuiltinLoader.ensure(k0); } catch (e) { }
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
            rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set()};
 const $ = s => document.querySelector(s);
@@ -39,6 +39,7 @@ const entryTest = () => subjKey() === "rus" ? window.ENTRY_TESTS?.[String(grade(
 const entryRes = () => U.aggregate(S.rows, "entry")["entry-" + grade()];
 
 /* ---------- данные ---------- */
+document.addEventListener("builtin-loaded", function(){ try { recompute(); render(); } catch (e) { } });
 function recompute(){ S.results = U.aggregate(S.rows, "lesson"); S.hwres = U.aggregate(S.rows, "hw"); S.minis = U.aggregate(S.rows, "mini"); S.course = U.courseFor(S.profile, S.mats); U.applyTheme(LS.get("theme", null) || S.profile?.theme); U.setMascot(LS.get("mascot", null) || S.profile?.mascot); }
 function saveSession(){ LS.set("session", {token:S.token, profile:S.profile}); }
 async function load(){
@@ -54,7 +55,7 @@ async function load(){
     S.mats = data.materials || [];
     S.works = {}; (data.works || []).forEach(w => (S.works[w.lesson_id] = S.works[w.lesson_id] || {})[w.task] = w.data);
     S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
-    if (!S.base.length && window.BUILTIN_COURSES?.[S.profile?.course]) S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}];
+    if (!S.base.length && window.BuiltinLoader && S.profile?.course) BuiltinLoader.ensure(S.profile.course).then(ok => { if (ok && window.BUILTIN_COURSES?.[S.profile.course]) { S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); recompute(); render(); } });
     U.loadBase(S.base);
     LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
   } else {
@@ -129,7 +130,7 @@ function liveStart(){
     if (m.type === "call"){
       if (m.url) S.profile.call_url = m.url;
       const bar = document.getElementById("callbar");
-      bar.innerHTML = `<span>📞 Учитель начал занятие</span><a class="btn sm" href="${esc(S.profile.call_url || "#")}" target="_blank" rel="noopener">Подключиться</a><button class="btn ghost sm" data-go="myboard">Доска</button><button class="iconbtn" aria-label="Скрыть" onclick="this.parentElement.hidden=true">✕</button>`;
+      bar.innerHTML = `<span>📞 Учитель начал занятие</span>${S.profile.call_url ? `<a class="btn sm" href="${esc(S.profile.call_url)}" target="_blank" rel="noopener">Подключиться</a>` : `<span class="small muted">Ссылка на созвон пока не добавлена — попросите учителя вставить её в карточке ученика.</span>`}<button class="btn ghost sm" data-go="myboard">Доска</button><button class="iconbtn" aria-label="Скрыть" onclick="this.parentElement.hidden=true">✕</button>`;
       bar.hidden = false; return;
     }
     if (m.type === "goto" && m.lesson === "free"){ S.view = "myboard"; S.drawer = false; if (m.page) S.boardPage = m.page; render(); toast("Учитель открыл личную доску"); return; }
