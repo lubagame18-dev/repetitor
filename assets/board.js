@@ -19,7 +19,7 @@ window.Board = (() => {
 
     root.innerHTML = `
       <div class="bd-bar">
-        <div class="bd-pages" role="group" aria-label="Лист доски">${o.pages.map(p => `<button data-bpage="${p.key}">${esc(p.label)}</button>`).join("")}</div>
+        <div class="bd-pages" role="group" aria-label="Лист доски"><button data-pstep="-1" title="Предыдущий лист" aria-label="Предыдущий лист">‹</button>${o.pages.map(p => `<button data-bpage="${p.key}">${esc(p.label)}</button>`).join("")}<button data-pstep="1" title="Следующий лист" aria-label="Следующий лист">›</button></div>
         <div class="bd-tools" role="group" aria-label="Инструменты">
           <button data-tool="pen" title="Ручка">✎</button>
           <button data-tool="hl" title="Маркер">▮</button>
@@ -90,6 +90,27 @@ window.Board = (() => {
     function pos(e){ const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scale), Math.round((e.clientY - r.top) / scale)]; }
 
     /* ---------- лист ---------- */
+    function stepPage(dir){
+      const i = pagesArr.findIndex(x => x.key === page);
+      const nx = pagesArr[(i + dir + pagesArr.length) % pagesArr.length];
+      if (!nx) return;
+      openPage(nx.key);
+      if (o.role === "teacher") send("page", { page: nx.key });
+    }
+    document.addEventListener("keydown", e => {
+      if (!root.isConnected) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return;
+      if (e.key === "ArrowRight" || e.key === "PageDown") { stepPage(1); }
+      if (e.key === "ArrowLeft" || e.key === "PageUp") { stepPage(-1); }
+    });
+    /* свайп по доске для листания (инструмент «рука») */
+    let swipeX = null;
+    wrap.addEventListener("pointerdown", e => { if (tool === "hand") swipeX = e.clientX; });
+    wrap.addEventListener("pointerup", e => {
+      if (tool !== "hand" || swipeX == null) return;
+      const dx = e.clientX - swipeX; swipeX = null;
+      if (Math.abs(dx) > 60) stepPage(dx < 0 ? 1 : -1);
+    });
     function renderPageButtons(){
       const box = root.querySelector(".bd-pages"); if (!box) return;
       box.innerHTML = pagesArr.map(p => `<button data-bpage="${p.key}" aria-pressed="${p.key === page}">${esc(p.label)}</button>`).join("");
@@ -189,6 +210,7 @@ window.Board = (() => {
 
     root.addEventListener("click", async e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
+      if (b.dataset.pstep){ stepPage(+b.dataset.pstep); return; }
       if (b.dataset.bpage){ openPage(b.dataset.bpage); if (o.role === "teacher") send("page", {page:b.dataset.bpage}); }
       if (b.dataset.tool) setTool(b.dataset.tool);
       if (b.dataset.color){ setColor(b.dataset.color); if (tool === "hl" || tool === "erase" || tool === "hand") setTool("pen"); }
