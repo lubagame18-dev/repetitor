@@ -76,7 +76,7 @@ function view(){
     ${U.pass("d-codein", 'required autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"')}
     <p class="small muted">Код вводится один раз: после этого кабинет навсегда получает права разработчика.</p>
     <button class="btn" type="submit">Войти в режим разработчика</button>${msg}
-    <div class="row between"><a class="linkbtn" href="teacher.html">Кабинет учителя</a><button class="linkbtn" type="button" data-act="logout">Выйти из кабинета</button></div></form>`;
+    <div class="row between"><a class="linkbtn" href="teacher.html">Кабинет учителя</a><a class="linkbtn" href="base-sync.html">⬆ База в Supabase</a><button class="linkbtn" type="button" data-act="logout">Выйти из кабинета</button></div></form>`;
   const prov = D.settings.__provider || "";
   const s = D.stats || {};
   const anon = D.session?.user?.is_anonymous;
@@ -159,7 +159,7 @@ function view(){
 }
 
 function render(){
-  $("#app").innerHTML = `<div class="shell" style="display:block"><header class="topnav"><div class="in glass"><span class="ttl">Кабинет разработчика</span><a class="btn ghost sm" href="teacher.html">Кабинет учителя</a>${D.session ? `<button class="btn ghost sm" data-act="logout">Выйти</button>` : ""}</div></header>
+  $("#app").innerHTML = `<div class="shell" style="display:block"><header class="topnav"><div class="in glass"><span class="ttl">Кабинет разработчика</span><a class="btn ghost sm" href="teacher.html">Кабинет учителя</a><a class="linkbtn" href="base-sync.html">⬆ База в Supabase</a>${D.session ? `<button class="btn ghost sm" data-act="logout">Выйти</button>` : ""}</div></header>
     <main class="main">${view()}</main></div>`;
 }
 
