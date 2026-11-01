@@ -29,5 +29,5 @@ window.BuiltinLoader = (() => {
   return { ensure, subject, has, loaded, meta: () => window.BUILTIN_INDEX || {} };
 })();
 /* rus57:start */
-Object.assign(window.BUILTIN_INDEX = window.BUILTIN_INDEX || {}, {"oge-ru":{"subj":"ru57","lessons":46,"title":"Подготовка к ОГЭ. Русский язык","ver":2}});
+Object.assign(window.BUILTIN_INDEX = window.BUILTIN_INDEX || {}, {"rus-5":{"subj":"ru57","lessons":88,"title":"Русский язык, 5 класс","ver":2},"oge-ru":{"subj":"ru57","lessons":46,"title":"Подготовка к ОГЭ. Русский язык","ver":2}});
 /* rus57:end */
