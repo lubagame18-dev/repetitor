@@ -74,6 +74,20 @@ window.U = (() => {
       ${mini.map((m, k) => `<div class="mini-q"><p>${esc(m.q)}</p>${withKeys ? `<b>${esc(m.a.split("|")[0])}</b>` : `<input type="text" data-mq="${k}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Ответ">`}<span class="ans" hidden></span></div>`).join("")}
       ${withKeys ? "" : `<div class="row" style="margin-top:10px"><button class="btn sm" data-act="mini-check" data-mini-id="${esc(l.id)}:${bi}">Проверить</button><span class="small muted mini-res"></span></div>`}</div>`;
   }
+  /* дополнительные блоки урока: картинка-схема, алгоритм, особые случаи, стих-запоминалка */
+  function picHTML(p){
+    if (!p) return "";
+    const flow = p.flow?.length ? `<div class="pic-flow">${p.flow.map((x, i) => `${i ? '<span class="pic-arr" aria-hidden="true">→</span>' : ""}<span class="pic-box">${mark(x)}</span>`).join("")}</div>` : "";
+    const cards = p.cards?.length ? `<div class="pic-cards">${p.cards.map(([e, h, t]) => `<div class="pic-card"><div class="pic-emo" aria-hidden="true">${esc(e)}</div><b>${mark(h)}</b>${t ? `<div class="small">${mark(t)}</div>` : ""}</div>`).join("")}</div>` : "";
+    return `<div class="tblock pic"><h3>${esc(p.h || "Посмотри на схему")}</h3>${flow}${cards}${p.cap ? `<p class="small muted" style="margin-top:8px">${mark(p.cap)}</p>` : ""}</div>`;
+  }
+  function extrasHTML(l){
+    const a = l.algo, sp = l.special, po = l.poem;
+    return picHTML(l.pic)
+      + (a?.steps?.length ? `<div class="tblock algo"><h3>🧭 ${esc(a.h || "Алгоритм")}</h3><ol>${a.steps.map(x => `<li>${mark(x)}</li>`).join("")}</ol>${a.ex?.length ? `<div class="ex">${a.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div>` : "")
+      + (sp?.length ? `<div class="tblock special"><h3>⚠️ Особые случаи</h3><div class="sp-list">${sp.map(([c, e, n]) => `<div class="sp-item"><b>${mark(c)}</b>${e ? `<div class="sp-ex">${mark(e)}</div>` : ""}${n ? `<div class="small muted">${mark(n)}</div>` : ""}</div>`).join("")}</div></div>` : "")
+      + (po?.lines?.length ? `<div class="tblock poem"><h3>🎵 ${esc(po.h || "Стишок-запоминалка")}</h3><div class="poem-txt">${po.lines.map(x => `<div>${mark(x)}</div>`).join("")}</div></div>` : "");
+  }
   function theoryHTML(l, withKeys){
     const blocks = l.theory.map((t, bi) => `<div class="tblock">
       <h3>${esc(t.h)}</h3>
@@ -85,7 +99,7 @@ window.U = (() => {
       ${miniHTML(l, bi, t.mini, withKeys)}
     </div>`).join("");
     const m = l.memo;
-    return `<div class="theory">${blocks}
+    return `<div class="theory">${blocks}${extrasHTML(l)}
       ${m ? `<div class="memo"><img data-m src="${U.mascot ? U.mascot() : "assets/kotik.webp"}" alt=""><div><b>${esc(m.h)}</b><p style="margin-top:4px">${mark(m.t)}</p>${m.ex?.length ? `<div class="ex">${m.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div></div>` : ""}
       ${/\[\[[xwspoa]:/.test(JSON.stringify(l.theory)) ? "" : "<!--"}<div class="legend-signs muted"><span><span class="u-s">подлежащее</span></span><span><span class="u-p">сказуемое</span></span><span><span class="u-o">дополнение</span></span><span><span class="u-w">определение</span></span><span><span class="u-a">обстоятельство</span></span><span><span class="u-x">слово</span> – определяемое</span></div>${/\[\[[xwspoa]:/.test(JSON.stringify(l.theory)) ? "" : "-->"}
     </div>`;

@@ -438,3 +438,21 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
 body.in-call .main{padding-bottom:230px}
 
 .bd-drop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(123,76,245,.12);border:3px dashed var(--violet);border-radius:12px;color:var(--violet);font-weight:800;z-index:5;pointer-events:none}
+
+/* блоки урока: схема-картинка, алгоритм, особые случаи, стих */
+.pic-flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
+.pic-box{background:var(--glass-2);border:1.5px solid color-mix(in srgb,var(--violet) 45%,transparent);border-radius:12px;padding:6px 10px;line-height:2}
+.pic-arr{font-weight:700;color:var(--violet);font-size:1.2rem}
+.pic-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px}
+.pic-card{background:var(--glass-2);border-radius:16px;padding:10px 12px;text-align:center;line-height:1.5}
+.pic-emo{font-size:2.2rem;line-height:1.2;margin-bottom:4px}
+.algo ol{margin:6px 0 0;padding-left:22px}
+.algo li{margin:4px 0}
+.algo{border-left:4px solid var(--mint)}
+.special{border-left:4px solid var(--peach)}
+.sp-list{display:grid;gap:8px;margin-top:6px}
+.sp-item{background:var(--glass-2);border-radius:12px;padding:8px 12px}
+.sp-ex{margin:4px 0;line-height:2}
+.poem{border-left:4px solid var(--pink)}
+.poem-txt{font-style:italic;line-height:1.7;margin-top:4px}
+.bd-sheet .pic-box,.bd-sheet .pic-card,.bd-sheet .sp-item{background:#f3eefc;color:#24183d}
