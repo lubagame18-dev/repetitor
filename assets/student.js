@@ -123,7 +123,7 @@ function liveStart(){
       if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
       S.room.lesson = m.lesson; S.open = m.lesson; S.test = null; S.testInRoom = false; if (m.tab) S.sub = m.tab; if (m.page) S.boardPage = m.page;
       closeJoin(); S.view = "room"; S.drawer = false; render(); scrollTo(0, 0);
-      const TAB = {theory:"Теория", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
+      const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
       toast(`Учитель перенёс тебя: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`); liveTrack(); return;
     }
     if (m.type === "endlesson"){ if (window.Call) Call.leave(true); S.joinHow = null; S.room = null; S.roomEnded = Date.now(); document.getElementById("callbar").hidden = true; closeJoin(); if (S.view === "room"){ S.view = "home"; render(); } toast("Учитель завершил урок. Молодец!"); return; }
@@ -152,7 +152,7 @@ function liveTrack(now){
   clearTimeout(liveT);
   liveT = setTimeout(() => {
     const l = S.view === "folder" && S.course?.lessons.find(x => x.id === S.open);
-    const TAB = {theory:"Теория", practice:"Практика", board:"Доска", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
+    const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", board:"Доска", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
     const rl = S.view === "room" && roomLesson();
     if (rl){ live.track({role:"student", id:S.profile.id, name:S.profile.name, where:`на уроке «${rl.title}» · ${S.test && S.testInRoom ? "проходит тест" : ({theory:"теория", practice:"практика", writing:"письмо", mats:"материалы", hw:"домашка", test:"тест"}[S.sub] || "доска")}`, lesson: rl.id, tab: S.sub, at: Date.now()}).catch(() => {}); return; }
     const where = S.view === "myboard" ? "на личной доске" : S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
@@ -276,7 +276,7 @@ function viewLogin(){
 /* ---------- оболочка ---------- */
 function drawerHTML(){
   const p = S.profile, ini = (p.name || "?").split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase();
-  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
+  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["self","Самообучение",I.book],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
   const mine = p.subjects?.length ? p.subjects : [{id:p.id, subject:subjKey(), grade:p.grade}];
   const others = U.SUBJECTS.filter(x => !mine.some(m => m.subject === x.k) && x.g.includes(+p.grade));
   const cur = S.view === "folder" ? "lessons" : S.view === "test" ? (S.test?.kind === "entry" ? "entry" : "lessons") : S.view;
@@ -295,7 +295,7 @@ function drawerHTML(){
    ${!sb ? '<p class="small muted" style="padding:0 8px">Демо-режим: данные хранятся на этом устройстве.</p>' : ""}
    <div class="drawer-foot"><button class="btn" data-act="install" style="width:100%;justify-content:center">${I.phone.replace('<svg','<svg width="18" height="18"')} Скачать на телефон</button></div>`;
 }
-const TITLES = {room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
+const TITLES = {self:"Самообучение", room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
 
 /* ---------- экраны ---------- */
 function folderHTML(l){
@@ -439,6 +439,8 @@ function materialsHTML(l){
     if (m.kind === "link" || m.kind === "file") inner = `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || m.url)}</a>${m.body ? `<p class="small muted">${esc(m.body)}</p>` : ""}
       ${m.kind === "file" && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(m.url || "") ? `<img src="${esc(m.url)}" alt="" style="margin-top:8px;border-radius:12px;max-height:340px">` : ""}`;
     if (m.kind === "text") inner = `<b>${esc(m.title || "Материал")}</b><div style="white-space:pre-line;margin-top:6px">${esc(m.body || "")}</div>`;
+    if (m.kind === "tasks" && m.data?.kind === "game") return `<div class="mat"><span class="ic">🎮</span><div style="min-width:0;flex:1"><b>${esc(m.title || m.data.theme?.title || "Игра")}</b><p class="small muted">Игра от учителя: ${Play.gamesFor(m.data.theme || {}).map(k => Play.GAMES[k].n).join(", ")}</p>
+      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap">${(m.data.game && Play.gamesFor(m.data.theme || {}).includes(m.data.game)) ? `<button class="btn sm" data-play-game="${m.id}" data-g="${m.data.game}">▶ ${esc(Play.GAMES[m.data.game].n)}</button>` : ""}<button class="btn ghost sm" data-play-game="${m.id}">Все игры</button></div></div></div>`;
     if (m.kind === "tasks") inner = `<b>${esc(m.title || "Задания")}</b>${U.miniHTML({id: "m" + m.id}, 0, m.data?.mini, false)}${m.data?.test?.length ? `<p class="small muted" style="margin-top:8px">Вопросы теста из этого набора – во вкладке «Тест».</p>` : ""}`;
     return `<div class="mat"><span class="ic">${ic}</span><div style="min-width:0;flex:1">${inner}</div></div>`;
   }).join("") + toBoard(M.some(m => m.kind === "text" || m.kind === "tasks") ? "m" + M.find(m => m.kind === "text" || m.kind === "tasks").id : "blank");
@@ -447,7 +449,7 @@ function materialsHTML(l){
 /* вкладки папки урока – одни и те же в папке и на уроке онлайн */
 function lessonTabs(l){
   const sh = S.sheets[l.id] || {}, T = tests(l), M = l.materials || [];
-  return [["theory","Теория",I.book], (l.practice?.length || sh.url) && ["practice","Практика",I.pen], ["board","Доска",I.board],
+  return [["theory","Теория",I.book], U.hasMnemo(l) && ["mnemo","Запоминалки",I.book], (l.practice?.length || sh.url) && ["practice","Практика",I.pen], ["board","Доска",I.board],
     l.writing && ["writing","Письмо",I.pen], (M.length || l.stub) && ["mats","Материалы",I.folder], (l.hw || l.hwtest?.length) && ["hw","Домашка",I.home2],
     T.test.length && ["test","Тест",I.check]].filter(Boolean);
 }
@@ -466,6 +468,7 @@ function lessonPane(l, sub){
       ${S.course.goal === "ОГЭ" ? `<p class="small muted" style="margin-top:14px">Реальные задания: <a href="${FIPI}" target="_blank" rel="noopener">открытый банк ФИПИ</a> · <a href="${RESHU}" target="_blank" rel="noopener">«Решу ОГЭ»</a></p>` : ""}
       ${S.course.goal === "ЕГЭ" ? `<p class="small muted" style="margin-top:14px">Реальные задания: <a href="https://ege.fipi.ru/bank/" target="_blank" rel="noopener">открытый банк ФИПИ</a> · <a href="https://rus-ege.sdamgia.ru" target="_blank" rel="noopener">«Решу ЕГЭ»</a></p>` : ""}`;
   if (S.sub === "board") pane = `<div class="board glass" id="board"></div><p class="small muted" style="margin-top:8px">Доска общая с учителем${S.profile.pair ? ` и с ${esc(S.profile.pair.name.split(" ")[0])}` : ""}: видно курсоры и всё, что рисуют. Чтобы листать на телефоне – выбери ✋, увеличить – двумя пальцами.</p>`;
+  if (S.sub === "mnemo") pane = U.mnemoTabHTML(l);
   if (S.sub === "writing") pane = writingBody(l);
   if (S.sub === "mats") pane = materialsHTML(l);
   if (S.sub === "hw") pane = `<ol style="margin:0;padding-left:20px">
@@ -584,6 +587,62 @@ function viewEntry(){
       <div><button class="btn" data-act="start-entry">Начать тест</button></div></div>`}`;
 }
 
+/* ---------- самообучение ---------- */
+function selfLessons(){ return (S.course?.lessons || []).filter(l => isOpen(l) && !l.custom); }
+function selfLesson(){ const L = selfLessons(); return L.find(l => l.id === S.selfL) || lastPast() || L[L.length - 1] || null; }
+function selfGames(){ return (S.course?.lessons || []).flatMap(l => (l.materials || []).filter(m => m.kind === "tasks" && m.data?.kind === "game").map(m => ({m, l}))); }
+function viewSelf(){
+  if (!S.course) return noCourse();
+  const L = selfLessons(), l = selfLesson(), best = LS.get("self-best", {}) || {};
+  const card = (act, emo, h, d, extra = "") => `<button class="pl-card" data-act="${act}" ${extra}><span class="pl-emo">${emo}</span><b>${h}</b><span class="small muted">${d}</span>${best[act] ? `<span class="chip" style="margin-top:4px">лучший: ${esc(best[act])}</span>` : ""}</button>`;
+  const games = selfGames(), themes = (window.PLAY_BANKS?.themes || []);
+  return `<div class="section-title" style="margin-top:6px"><h2>Самообучение</h2></div>
+    <p class="muted" style="margin-bottom:12px">Тренируйся сам: повторяй теорию, проверяй себя, играй. Учитель видит, что ты занимался.</p>
+    ${L.length ? `<div class="card" style="margin-bottom:14px"><label for="self-l" class="small"><b>Урок для тренировки</b></label>
+      <select id="self-l" style="width:100%;margin-top:6px">${L.map(x => `<option value="${x.id}" ${x === l ? "selected" : ""}>${esc(x.title)}</option>`).join("")}</select></div>` : `<div class="card" style="margin-bottom:14px"><p class="muted">Уроки откроются в дни занятий – а пока можно тренировать ударения, орфографию и играть.</p></div>`}
+    <h3 style="margin:6px 0 10px">По уроку</h3>
+    <div class="pl-grid" style="margin-bottom:18px">
+      ${l ? card("self-trainer", "🎯", "Тренажёр урока", "Теория по шагам, вопросы с подсказками и работа над ошибками") : ""}
+      ${l ? card("self-tf", "✅", "Верно или неверно", "Быстрые карточки по вопросам урока") : ""}
+      ${l ? card("self-cards", "🧠", "Карточки-запоминалки", "Правила, исключения, мнемотехники – переворачивай и запоминай") : ""}
+      ${l ? card("self-quiz", "📝", "Тест для самопроверки", "Вопросы урока в случайном порядке") : ""}
+      ${l ? card("self-lgames", "🎮", "Игры по уроку", "Викторина на время, найди пару, мемори") : ""}
+      ${L.length > 1 ? card("self-mix", "🔀", "Повторение всего", "Вопросы из всех пройденных уроков вперемешку") : ""}
+    </div>
+    <h3 style="margin:6px 0 10px">Тренировки</h3>
+    <div class="pl-grid" style="margin-bottom:18px">
+      ${card("self-stress", "🔊", "Карточки ударений", "Нажми на ударную гласную: звони́т, то́рты, щаве́ль…")}
+      ${card("self-spell", "✍️", "Вставь букву", "Орфография: корни, приставки, суффиксы, Н и НН, Ь")}
+    </div>
+    ${games.length ? `<h3 style="margin:6px 0 10px">Игры от учителя</h3><div class="pl-grid" style="margin-bottom:18px">${games.map(({m, l: gl}) => `<button class="pl-card" data-play-game="${m.id}"><span class="pl-emo">🎮</span><b>${esc(m.title || m.data.theme?.title || "Игра")}</b><span class="small muted">${esc(gl.title)}</span></button>`).join("")}</div>` : ""}
+    <h3 style="margin:6px 0 10px">Игры по темам</h3>
+    <div class="pl-grid">${themes.map(t => `<button class="pl-card" data-play-theme="${t.id}"><span class="pl-emo">🕹️</span><b>${esc(t.title)}</b><span class="small muted">${Play.gamesFor(t).map(k => Play.GAMES[k].n).join(" · ")}</span></button>`).join("")}</div>`;
+}
+function selfDone(act){
+  return r => {
+    liveAct(`самообучение · ${r.title}: ${r.ok} из ${r.n}`);
+    try { const b = LS.get("self-best", {}) || {}; const pc = r.n ? Math.round(r.ok / r.n * 100) : 0; const prev = parseInt(b[act] || "0"); if (pc >= prev){ b[act] = pc + "%"; LS.set("self-best", b); } } catch(_) {}
+  };
+}
+function selfAct(a, t){
+  const l = selfLesson();
+  Play.onDone = selfDone(a);
+  if (a === "self-trainer") Play.trainer(l);
+  if (a === "self-tf") Play.tfCards(l.title, Play.tfFromQuiz(Play.quizFromLessons([l])));
+  if (a === "self-cards") Play.flashcards(l.title, Play.cardsFromLessons([l]));
+  if (a === "self-quiz") Play.quizRun(l.title, Play.quizFromLessons([l]));
+  if (a === "self-lgames") Play.chooseGame({title: l.title, quiz: Play.quizFromLessons([l]).filter(q => Array.isArray(q.o))});
+  if (a === "self-mix") Play.quizRun("Повторение пройденного", Play.quizFromLessons(selfLessons()), "Повторение");
+  if (a === "self-stress") Play.stress(PLAY_BANKS.stress);
+  if (a === "self-spell") Play.spell(PLAY_BANKS.spell);
+}
+function playGame(mid, g){
+  const m = (S.course?.lessons || []).flatMap(l => l.materials || []).find(x => String(x.id) === String(mid)); if (!m) return;
+  const th = {...(m.data.theme || {}), title: m.title || m.data.theme?.title || "Игра"};
+  Play.onDone = r => liveAct(`игра «${th.title}»: ${r.ok} из ${r.n}`);
+  if (g) Play.game(g, th); else Play.chooseGame(th);
+}
+
 function viewStats(){
   const et = entryTest(), er = entryRes();
   return `<div class="section-title" style="margin-top:6px"><h2>Статистика</h2></div>
@@ -696,12 +755,11 @@ function testLive(extra){
 function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text, ...extra}}).catch(() => {}); }
 /* ---------- отрисовка ---------- */
 function render(){
-  if (S.board){ S.board.destroy(); S.board = null; }
   const app = $("#app");
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   const v = S.view;
-  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():viewInstall();
+  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():viewInstall();
   app.innerHTML = `<div class="shell">
     <div class="drawer-back" ${S.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${S.drawer ? "open" : ""}" aria-label="Меню">${drawerHTML()}</nav>
@@ -715,7 +773,7 @@ function render(){
     </div></div>`;
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
-    S.board = Board.mount($("#board"), {
+    S.board = Board.keep($("#board"), "s:" + l.id, {
       api: Board.api("student", sb, {code:S.token, lesson:l.id}),
       sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null, page: S.boardPage,
       role: "student", name: S.profile.name, pages: Board.pages(S.course, l), onPage: p => S.boardPage = p
@@ -727,14 +785,15 @@ function render(){
   }
   if (v === "room"){
     const l = roomLesson();
-    S.board = Board.mount($("#board"), {api: Board.api("student", sb, {code:S.token, lesson:l.id}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null,
+    S.board = Board.keep($("#board"), "s:" + l.id, {api: Board.api("student", sb, {code:S.token, lesson:l.id}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null,
       page: S.boardPage, role: "student", name: S.profile.name, pages: Board.pages(S.course || {}, l), onPage: p => S.boardPage = p});
     if ($("#wk-root")){ const states = (S.works = S.works || {})[l.id] = S.works[l.id] || {}; Work.bind($("#wk-root"), states, (i, st) => saveWork(l.id, i, st)); }
   }
   if (v === "myboard"){
-    S.board = Board.mount($("#board"), {api: Board.api("student", sb, {code:S.token, lesson:"free"}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-free` : null,
+    S.board = Board.keep($("#board"), "s:free", {api: Board.api("student", sb, {code:S.token, lesson:"free"}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-free` : null,
       page: S.boardPage, role: "student", name: S.profile.name, pages: Board.pages(S.course || {}, FREE), onPage: p => S.boardPage = p});
   }
+  if (!$("#board")){ Board.release(); S.board = null; }
   if (S.profile && sb){ liveStart(); liveTrack(); }
 }
 
@@ -838,6 +897,7 @@ document.addEventListener("submit", async e => {
   }
 });
 document.addEventListener("change", async e => {
+  if (e.target.id === "self-l"){ S.selfL = e.target.value; render(); return; }
   if (e.target.id === "ss-subj"){
     const sub = U.subj(e.target.value); S.sSubj = sub.k;
     const g0 = sub.g.includes(9) ? 9 : sub.g[0];
@@ -859,7 +919,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  const t = e.target.closest("[data-play-game],[data-play-theme],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
   if (t.dataset.role){ S.role = t.dataset.role; S.mode = "in"; S.authMsg = null; S.signupDone = null; render(); return; }
   if (t.dataset.authmode){ if (t.dataset.authmode !== "signup") S.signupDone = null; S.mode = t.dataset.authmode; S.authMsg = null; render(); return; }
   if (t.dataset.switch){
@@ -889,6 +949,9 @@ document.addEventListener("click", async e => {
     return;
   }
   if (t.tagName === "A" && !t.href.startsWith("http")) e.preventDefault();
+  if (t.dataset.playGame){ playGame(t.dataset.playGame, t.dataset.g); return; }
+  if (t.dataset.playTheme){ const th = (PLAY_BANKS.themes || []).find(x => x.id === t.dataset.playTheme); if (th){ Play.onDone = selfDone("theme-" + th.id); Play.chooseGame(th); } return; }
+  if (t.dataset.act && t.dataset.act.startsWith("self-")){ selfAct(t.dataset.act, t); return; }
   if (t.dataset.go){
     if (S.regDone){ S.invite = null; S.regDone = null; }
     S.view = t.dataset.go; S.drawer = false; render(); scrollTo(0,0); return;

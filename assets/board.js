@@ -27,7 +27,9 @@ window.Board = (() => {
           <button data-tool="erase" title="Ластик">⌫</button>
           <button data-tool="hand" title="Листать">✋</button>
           ${COLORS.map(c => `<button class="bd-color" data-color="${c}" style="--bc:${c}" aria-label="Цвет"></button>`).join("")}
-          <button data-act="attach" title="Прикрепить файл (фото, PDF, документ)">📎</button>
+          <button data-tool="touch" title="Работать с сайтом или презентацией (нажимать внутри)">👆</button>
+          <button data-act="attach" title="Прикрепить файл (фото, PDF-презентация, документ)">📎</button>
+          <button data-act="embed" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…">🌐</button>
           <button data-act="camera" title="Фото с камеры">📷</button>
           <button data-act="undo" title="Отменить своё последнее">↶</button>
           ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">Очистить</button>` : ""}
@@ -97,12 +99,13 @@ window.Board = (() => {
       openPage(nx.key);
       if (o.role === "teacher") send("page", { page: nx.key });
     }
-    document.addEventListener("keydown", e => {
+    const onKey = e => {
       if (!root.isConnected) return;
-      if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || document.activeElement?.isContentEditable) return;
       if (e.key === "ArrowRight" || e.key === "PageDown") { stepPage(1); }
       if (e.key === "ArrowLeft" || e.key === "PageUp") { stepPage(-1); }
-    });
+    };
+    document.addEventListener("keydown", onKey);
     /* свайп по доске для листания (инструмент «рука») */
     let swipeX = null;
     wrap.addEventListener("pointerdown", e => { if (tool === "hand") swipeX = e.clientX; });
@@ -133,15 +136,31 @@ window.Board = (() => {
     }
     /* добавить лист доски (вложение/презентация) и при желании показать всем */
     function addPage(label, html, broadcast){
-      const key = "x" + Date.now().toString(36);
-      pagesArr.push({ key, label: label.slice(0, 24), html });
+      const key = "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      label = label.slice(0, 24);
+      pagesArr.push({ key, label, html });
       renderPageButtons();
-      if (broadcast) send("addpage", { key, label, html });
+      if (broadcast){ send("addpage", { key, label, html }); o.api.add("_pages", {t: "pg", key, label, html}).catch(() => {}); }
       return key;
+    }
+    /* встроить сайт (Wordwall, YouTube, Google Презентации, Canva, любая страница с разрешённым встраиванием) */
+    function embedURL(u){
+      u = String(u || "").trim(); if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+      let m;
+      if ((m = u.match(/youtu\.be\/([\w-]+)/) || u.match(/youtube\.com\/watch\?v=([\w-]+)/))) return "https://www.youtube.com/embed/" + m[1];
+      if ((m = u.match(/docs\.google\.com\/presentation\/d\/([\w-]+)/))) return "https://docs.google.com/presentation/d/" + m[1] + "/embed?start=false&loop=false";
+      if ((m = u.match(/wordwall\.net\/(?:ru\/)?resource\/(\d+)/))) return "https://wordwall.net/embed/resource/" + m[1];
+      if (/canva\.com\/design\//.test(u) && !/[?&]embed/.test(u)) return u.split("?")[0].replace(/\/(edit|view)$/, "/view") + "?embed";
+      if ((m = u.match(/rutube\.ru\/video\/([\w]+)/))) return "https://rutube.ru/play/embed/" + m[1];
+      return u;
+    }
+    function embedPage(url, label, h){
+      const src = embedURL(url), hh = Math.max(300, Math.min(2400, +h || 560));
+      return addPage(label || "Сайт", `<div class="bd-sheet bd-embed"><iframe src="${esc(src)}" style="width:100%;height:${hh}px;border:0;border-radius:12px;background:#fff" allow="autoplay; fullscreen; clipboard-write; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe><p class="small muted" style="margin-top:6px">Чтобы нажимать внутри сайта, выберите 👆 «Работать с сайтом». Чтобы рисовать поверх – ручку ✎.</p></div>`, true);
     }
 
     /* ---------- рисование ---------- */
-    function setTool(t){ tool = t; root.querySelectorAll("[data-tool]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t)); cv.style.touchAction = t === "hand" ? "pan-y" : "none"; cv.style.cursor = t === "hand" ? "grab" : t === "text" ? "text" : "crosshair"; }
+    function setTool(t){ tool = t; root.querySelectorAll("[data-tool]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t)); cv.style.touchAction = t === "hand" ? "pan-y" : "none"; cv.style.cursor = t === "hand" ? "grab" : t === "text" ? "text" : "crosshair"; cv.style.pointerEvents = t === "touch" ? "none" : ""; bg.style.pointerEvents = t === "touch" ? "auto" : ""; }
     function setColor(c){ color = c; root.querySelectorAll("[data-color]").forEach(b => b.setAttribute("aria-pressed", b.dataset.color === c)); }
     function hitTest(pt){
       let found = null;
@@ -254,15 +273,18 @@ window.Board = (() => {
         if (!window.pdfjsLib) return [];
         const buf = await file.arrayBuffer();
         const doc = await pdfjsLib.getDocument({ data: buf }).promise;
-        const out = [];
-        const n = Math.min(doc.numPages, 8);
+        const n = Math.min(doc.numPages, 60); let first = null;
+        U.toast(`Открываю презентацию: ${n} стр.…`);
         for (let i = 1; i <= n; i++) {
-          const pg = await doc.getPage(i), vp = pg.getViewport({ scale: 1.4 });
+          const pg = await doc.getPage(i), vp0 = pg.getViewport({ scale: 1 }), vp = pg.getViewport({ scale: Math.min(2, 1400 / vp0.width) });
           const c2 = document.createElement("canvas"); c2.width = vp.width; c2.height = vp.height;
           await pg.render({ canvasContext: c2.getContext("2d"), viewport: vp }).promise;
-          out.push({ src: canvasToJpeg(c2, 1600, 0.76), ratio: vp.width / vp.height });
+          const key = addPage(`Слайд ${i}`, `<div class="bd-slide"><img src="${canvasToJpeg(c2, 1400, 0.74)}" alt="Слайд ${i}"></div>`, true);
+          if (!first) first = key;
         }
-        return out;
+        if (first){ openPage(first); if (o.role === "teacher") send("page", {page: first}); }
+        items2LengthMsg = `Презентация открыта: ${n} слайдов. Листайте стрелками ‹ ›, рисуйте поверх.`;
+        return [];
       } catch (e) { U.toast("PDF не удалось открыть: " + e.message); return []; }
     }
     async function videoToItems(file){
@@ -335,9 +357,9 @@ window.Board = (() => {
             const src = await dataUrl(zip, full);
             if (src) imgs.push(src);
           }
-          addPage("Слайд " + made, `<div class="bd-sheet"><h2>Слайд ${made}</h2>${imgsHTML(imgs, 6)}<div style="white-space:pre-line;font-size:16px;line-height:1.6">${esc(text || "")}</div></div>`, true);
+          addPage("Слайд " + made, `<div class="bd-slide bd-pptx"><div class="bd-slide-in">${imgs.length ? `<div class="bd-slide-imgs">${imgsHTML(imgs, 4)}</div>` : ""}<div class="bd-slide-txt">${esc(text || "").split("\n").map((x, k) => k ? `<p>${x}</p>` : `<h2>${x}</h2>`).join("")}</div></div></div>`, true);
         }
-        U.toast("Добавлено слайдов: " + made + " (с картинками)");
+        U.toast("Добавлено слайдов: " + made + ". Для точного вида сохраните презентацию как PDF или встройте ссылку Google Презентаций / Canva через 🌐.");
       } catch (e) { U.toast("Не удалось открыть презентацию: " + e.message); }
     }
     async function handleFiles(files){
@@ -358,17 +380,27 @@ window.Board = (() => {
     root.addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
       if (b.dataset.act === "attach") fileInput.click();
+      if (b.dataset.act === "embed"){
+        if (root.querySelector(".bd-embedform")) return;
+        const f = document.createElement("form"); f.className = "bd-embedform card";
+        f.innerHTML = `<b>Встроить сайт на доску</b><p class="small muted" style="margin:4px 0 8px">Ссылка на Wordwall, YouTube, RuTube, Google Презентации, Canva или любую страницу, которая разрешает встраивание. Сайт появится отдельным листом у вас обоих.</p>
+          <input name="u" placeholder="https://…" required style="width:100%"><div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><input name="l" placeholder="Название листа" style="flex:1;min-width:140px"><label class="small">Высота <input name="h" type="number" value="560" min="300" max="2400" step="20" style="width:90px"></label><button class="btn sm">Встроить</button><button type="button" class="btn ghost sm" data-x>Отмена</button></div>`;
+        root.querySelector(".bd-bar").after(f); f.u.focus();
+        f.addEventListener("submit", ev => { ev.preventDefault(); const key = embedPage(f.u.value, f.l.value || "Сайт", f.h.value); f.remove(); openPage(key); if (o.role === "teacher") send("page", {page: key}); setTool("touch"); });
+        f.querySelector("[data-x]").onclick = () => f.remove();
+      }
       if (b.dataset.act === "camera"){ const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*"; inp.capture = "environment"; inp.onchange = () => inp.files?.length && handleFiles([...inp.files]); inp.click(); }
     });
     fileInput.addEventListener("change", () => { if (fileInput.files?.length) handleFiles([...fileInput.files]); fileInput.value = ""; });
     wrap.addEventListener("dragover", e => { e.preventDefault(); dropHint.style.display = "flex"; });
     wrap.addEventListener("dragleave", () => { dropHint.style.display = "none"; });
     wrap.addEventListener("drop", e => { e.preventDefault(); dropHint.style.display = "none"; if (e.dataTransfer?.files?.length) handleFiles([...e.dataTransfer.files]); });
-    document.addEventListener("paste", e => {
+    const onPaste = e => {
       if (!root.isConnected) return;
       const files = [...(e.clipboardData?.files || [])];
       if (files.length) { e.preventDefault(); handleFiles(files); }
-    });
+    };
+    document.addEventListener("paste", onPaste);
 
     /* ---------- реальное время ---------- */
     function send(type, payload){ if (channel) channel.send({type:"broadcast", event:"ev", payload:{type, from:me, page, ...payload}}); }
@@ -421,7 +453,16 @@ window.Board = (() => {
 
     const ro = new ResizeObserver(() => layout()); ro.observe(stage);
     setTool("pen"); setColor(COLORS[0]); openPage(page);
-    return { destroy(){ ro.disconnect(); if (channel) o.sb.removeChannel(channel); } };
+    /* сохранённые листы (презентации, встроенные сайты) – общие для учителя и ученика */
+    (async () => {
+      try {
+        const list = await o.api.load("_pages");
+        let added = false;
+        list.forEach(r => { const it = r.item; if (it && it.t === "pg" && !pagesArr.some(x => x.key === it.key)){ pagesArr.push({key: it.key, label: it.label, html: it.html, dbId: r.id}); added = true; } });
+        if (added){ renderPageButtons(); if (!pagesArr.some(x => x.key === page) || o.page === page) openPage(o.page && pagesArr.some(x => x.key === o.page) ? o.page : page); }
+      } catch(_) {}
+    })();
+    return { destroy(){ ro.disconnect(); document.removeEventListener("keydown", onKey); document.removeEventListener("paste", onPaste); if (channel) o.sb.removeChannel(channel); }, relayout(){ layout(); }, page: () => page };
   }
 
   /* хранилище: Supabase (ученик – через функции, учитель – напрямую) или браузер */
@@ -471,5 +512,17 @@ window.Board = (() => {
     return out;
   }
 
-  return {mount, api, pages};
+  /* доска не пересоздаётся при каждой перерисовке экрана: тот же лист, то же соединение */
+  let kept = null;
+  function keep(container, key, opts){
+    if (!container) return null;
+    if (kept && kept.key === key){ container.replaceChildren(kept.holder); requestAnimationFrame(() => kept && kept.inst.relayout()); return kept.inst; }
+    release();
+    const holder = document.createElement("div"); holder.className = "bd-holder"; container.replaceChildren(holder);
+    const inst = mount(holder, opts); kept = {key, holder, inst}; return inst;
+  }
+  function release(){ if (kept){ try { kept.inst.destroy(); } catch(_) {} kept = null; } }
+  const keptPage = () => kept?.inst.page();
+
+  return {mount, api, pages, keep, release, keptPage};
 })();

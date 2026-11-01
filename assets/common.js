@@ -81,12 +81,23 @@ window.U = (() => {
     const cards = p.cards?.length ? `<div class="pic-cards">${p.cards.map(([e, h, t]) => `<div class="pic-card"><div class="pic-emo" aria-hidden="true">${esc(e)}</div><b>${mark(h)}</b>${t ? `<div class="small">${mark(t)}</div>` : ""}</div>`).join("")}</div>` : "";
     return `<div class="tblock pic"><h3>${esc(p.h || "Посмотри на схему")}</h3>${flow}${cards}${p.cap ? `<p class="small muted" style="margin-top:8px">${mark(p.cap)}</p>` : ""}</div>`;
   }
+  const mnemoCards = mn => `<div class="mn-list">${mn.map(([h, t, e]) => `<div class="mn-item"><b>🧠 ${mark(h)}</b><div>${mark(t)}</div>${e ? `<div class="sp-ex">${mark(e)}</div>` : ""}</div>`).join("")}</div>`;
   function extrasHTML(l){
-    const a = l.algo, sp = l.special, po = l.poem;
+    const a = l.algo, sp = l.special;
     return picHTML(l.pic)
       + (a?.steps?.length ? `<div class="tblock algo"><h3>🧭 ${esc(a.h || "Алгоритм")}</h3><ol>${a.steps.map(x => `<li>${mark(x)}</li>`).join("")}</ol>${a.ex?.length ? `<div class="ex">${a.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div>` : "")
-      + (sp?.length ? `<div class="tblock special"><h3>⚠️ Особые случаи</h3><div class="sp-list">${sp.map(([c, e, n]) => `<div class="sp-item"><b>${mark(c)}</b>${e ? `<div class="sp-ex">${mark(e)}</div>` : ""}${n ? `<div class="small muted">${mark(n)}</div>` : ""}</div>`).join("")}</div></div>` : "")
-      + (po?.lines?.length ? `<div class="tblock poem"><h3>🎵 ${esc(po.h || "Стишок-запоминалка")}</h3><div class="poem-txt">${po.lines.map(x => `<div>${mark(x)}</div>`).join("")}</div></div>` : "");
+      + (l.mnemo?.length ? `<div class="tblock mnemo"><h3>Как запомнить</h3>${mnemoCards(l.mnemo)}</div>` : "")
+      + (sp?.length ? `<div class="tblock special"><h3>⚠️ Особые случаи</h3><div class="sp-list">${sp.map(([c, e, n]) => `<div class="sp-item"><b>${mark(c)}</b>${e ? `<div class="sp-ex">${mark(e)}</div>` : ""}${n ? `<div class="small muted">${mark(n)}</div>` : ""}</div>`).join("")}</div></div>` : "");
+  }
+  /* вкладка «Запоминалки»: мнемотехники, памятка, стишок */
+  const hasMnemo = l => !!(l?.mnemo?.length || l?.memo || l?.poem?.lines?.length);
+  function mnemoTabHTML(l){
+    const m = l.memo, po = l.poem;
+    return `<div class="theory">
+      ${l.mnemo?.length ? `<div class="tblock mnemo"><h3>Мнемотехника</h3>${mnemoCards(l.mnemo)}</div>` : ""}
+      ${m ? `<div class="memo"><img data-m src="${U.mascot ? U.mascot() : "assets/kotik.webp"}" alt=""><div><b>${esc(m.h)}</b><p style="margin-top:4px">${mark(m.t)}</p>${m.ex?.length ? `<div class="ex">${m.ex.map(x => `<div>${mark(x)}</div>`).join("")}</div>` : ""}</div></div>` : ""}
+      ${po?.lines?.length ? `<div class="tblock poem"><h3>🎵 ${esc(po.h || "Стишок")}</h3><div class="poem-txt">${po.lines.map(x => `<div>${mark(x)}</div>`).join("")}</div></div>` : ""}
+    </div>`;
   }
   function theoryHTML(l, withKeys){
     const blocks = l.theory.map((t, bi) => `<div class="tblock">
@@ -255,7 +266,10 @@ window.U = (() => {
     mats = (mats || []).filter(m => m.course === p.course && (!m.student_id || m.student_id === p.id));
     const own = mats.filter(m => m.kind === "lesson").map(m => ({...emptyLesson(), ...m.data, id: m.lesson_id, custom: true, mid: m.id}));
     let lessons = base.lessons.map((l, i) => ({...l, date: start ? iso(new Date(start.getTime() + i * 7 * 864e5)) : (l.date || iso(new Date(Date.now() + i * 7 * 864e5)))}));
-    lessons = [...lessons, ...own].map(l => ({...l, date: ov[l.id] || l.date, materials: mats.filter(m => m.kind !== "lesson" && m.lesson_id === l.id)}))
+    /* правка тестов учителем: материал «tasks» с data.kind = "test-edit" заменяет тест и ДЗ-тест урока (свой – важнее общего) */
+    const edits = mats.filter(m => m.kind === "tasks" && m.data?.kind === "test-edit").sort((a, b) => (a.shared ? 0 : 1) - (b.shared ? 0 : 1) || a.id - b.id);
+    const editOf = id => edits.filter(m => m.lesson_id === id).pop();
+    lessons = [...lessons, ...own].map(l => { const ed = editOf(l.id); return {...l, ...(ed?.data?.test ? {test: ed.data.test} : {}), ...(ed?.data?.hwtest ? {hwtest: ed.data.hwtest} : {}), edited: !!ed, date: ov[l.id] || l.date, materials: mats.filter(m => m.kind !== "lesson" && m.lesson_id === l.id && !(m.kind === "tasks" && m.data?.kind === "test-edit"))}; })
       .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
     return {...base, events: start ? (base.events || []).filter(e => e.kind === "exam") : base.events, lessons};
   }
@@ -263,7 +277,7 @@ window.U = (() => {
 
   /* задания из материала «tasks» (свои или от нейросети): {mini:[{q,a}], test:[{q,o,a,e}]} */
   function lessonTests(l){
-    const extra = (l.materials || []).filter(m => m.kind === "tasks");
+    const extra = (l.materials || []).filter(m => m.kind === "tasks" && !m.data?.kind);
     return {test: [...(l.test || []), ...extra.flatMap(m => m.data?.test || [])], mini: extra.flatMap(m => m.data?.mini || [])};
   }
 
@@ -324,5 +338,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

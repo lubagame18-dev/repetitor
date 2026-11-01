@@ -347,10 +347,48 @@ function methodPlan(l){
           ["55–60", "Тест и ДЗ", "Тест по уроку в приложении; объяснить ДЗ" + (l.writing ? ", письмо" : "") + " и ДЗ-тест."]];
 }
 
+/* ---------- конструктор игр (как Wordwall): своя тема → любые игры платформы ---------- */
+const GAME_KINDS = {pairs: ["Пары", "Каждая строка: слово = значение\nбить баклуши = бездельничать\nводить за нос = обманывать\nзарубить на носу = запомнить"],
+  groups: ["Группы", "Каждая строка: Группа: слово, слово, слово\nС Ь: ночь, рожь, мышь\nБез Ь: врач, мяч, ёж"],
+  quiz: ["Вопросы", "Каждая строка: вопрос | верный ответ | неверный | неверный\nКак пишется «р..сток»? | росток | расток\nСколько звуков в слове «ёж»? | 3 | 2 | 4"]};
+function gameForm(l){
+  const f = T.gform || {kind: "pairs", title: "", text: "", game: ""};
+  return `<div class="card stack" id="game-form" style="gap:8px;margin-top:14px;box-shadow:none"><div class="kicker">🎮 Игра к уроку (как в Wordwall)</div>
+    <p class="small muted">Введите свою тему – платформа сама сделает из неё игры: викторину на время, «Найди пару», сортировку, мемори, «Верно или неверно». Игра появится у учеников в папке урока, в комнате урока и в «Самообучении».</p>
+    <label for="gm-title">Название</label><input id="gm-title" value="${esc(f.title || "")}" placeholder="${esc(l.title)} – игра">
+    <label for="gm-kind">Что вводим</label><select id="gm-kind">${Object.entries(GAME_KINDS).map(([k, v]) => `<option value="${k}" ${k === f.kind ? "selected" : ""}>${v[0]}</option>`).join("")}</select>
+    <label for="gm-text">Содержание</label><textarea id="gm-text" rows="7" placeholder="${esc(GAME_KINDS[f.kind][1])}">${esc(f.text || "")}</textarea>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button type="button" class="btn ghost sm" data-act="game-fill">Взять вопросы из теста урока</button><button type="button" class="btn ghost sm" data-act="game-try">▶ Проверить</button><button type="button" class="btn sm" data-act="game-save">Сохранить в урок</button></div>
+    ${T.me?.role === "developer" ? `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="gm-shared"> В общую базу – для всех учителей</label>` : ""}
+    <p class="small" id="gm-err" style="color:var(--bad)"></p></div>`;
+}
+function gameRead(){ return {kind: $("#gm-kind")?.value || "pairs", title: $("#gm-title")?.value || "", text: $("#gm-text")?.value || ""}; }
+async function gameAct(a, t){
+  const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open);
+  if (a === "game-play"){ const m = T.mats.find(x => String(x.id) === t.dataset.mid); if (m){ Play.onDone = null; Play.chooseGame({...m.data.theme, title: m.title || m.data.theme?.title}); } return; }
+  if (!l) return;
+  const f = T.gform = gameRead();
+  if (a === "game-fill"){
+    const qs = U.lessonTests(l).test.filter(q => Array.isArray(q.o));
+    if (!qs.length){ toast("В тесте урока нет вопросов с вариантами"); return; }
+    f.kind = "quiz"; f.title = f.title || l.title; f.text = qs.map(q => [q.q, q.o[q.a], ...q.o.filter((_, k) => k !== q.a)].map(x => String(x).replace(/\|/g, "/")).join(" | ")).join("\n"); render(); return;
+  }
+  const th = Play.parseTheme(f.kind, f.text, f.title || l.title);
+  if (th.error){ const el = $("#gm-err"); if (el) el.textContent = th.error; return; }
+  if (a === "game-try"){ Play.onDone = null; Play.chooseGame(th); return; }
+  if (a === "game-save"){
+    const {data, error} = await sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "tasks", title: th.title, shared: !!$("#gm-shared")?.checked, data: {kind: "game", theme: th, game: Play.gamesFor(th)[0]}}).select().single();
+    if (error){ toast("Не сохранилось: " + error.message); return; }
+    T.mats.push(data); T.gform = null; render(); cmd("all", "refresh", {msg: "Учитель добавил игру"}); toast("Игра сохранена в урок");
+  }
+}
+
 function materialsTab(cid, l){
-  const own = T.mats.filter(m => m.course === cid && m.lesson_id === l.id && m.kind !== "lesson" && !m.student_id);
+  const own = T.mats.filter(m => m.course === cid && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && !m.student_id && m.data?.kind !== "test-edit");
   const g = T.gen && T.gen.lesson === l.id ? T.gen : null;
-  return `${own.length ? own.map(m => `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝",tasks:"✏️"}[m.kind]}</span><div style="flex:1;min-width:0">
+  return `${own.length ? own.map(m => m.data?.kind === "game" ? `<div class="mat"><span class="ic">🎮</span><div style="flex:1;min-width:0"><b>${esc(m.title || "Игра")}</b>
+      <p class="small muted">Игры: ${Play.gamesFor(m.data.theme || {}).map(k => Play.GAMES[k].n).join(", ")}</p><div class="row" style="gap:6px;margin-top:4px"><button class="btn ghost sm" data-act="game-play" data-mid="${m.id}">▶ Посмотреть</button></div></div>
+      ${m.shared ? '<span class="chip">общая база</span>' : ""}${m.teacher_id === T.session?.user.id ? `<button class="btn ghost sm" data-delmat="${m.id}">Удалить</button>` : ""}</div>` : `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝",tasks:"✏️"}[m.kind]}</span><div style="flex:1;min-width:0">
       <b>${esc(m.title || m.url || "Материал")}</b>${m.url ? ` · <a href="${esc(m.url)}" target="_blank" rel="noopener">открыть</a>` : ""}
       ${m.kind === "text" ? `<div class="small" style="white-space:pre-line;margin-top:4px">${esc((m.body || "").slice(0, 400))}</div>` : ""}
       ${m.kind === "tasks" ? `<p class="small muted">Мини-практика: ${m.data?.mini?.length || 0} · вопросы теста: ${m.data?.test?.length || 0}</p>` : ""}</div>
@@ -364,6 +402,7 @@ function materialsTab(cid, l){
       <p class="small muted">Материал увидят все ваши ученики этого курса в папке урока: открыть на общей доске или скачать.</p>
       ${T.me?.role === "developer" ? `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="am-shared"> В общую базу – для всех учителей</label>` : ""}
       <div><button class="btn sm" type="submit">Добавить</button></div></form>
+    ${gameForm(l)}
     <div class="ai-box stack" style="gap:8px;margin-top:14px"><div class="kicker">Задания от нейросети</div>
       <label for="ag-topic">Тема</label><input type="text" id="ag-topic" value="${esc(g?.topic || l.title)}">
       <label for="ag-notes">Пожелания (необязательно)</label><input type="text" id="ag-notes" value="${esc(g?.notes || "")}" placeholder="Например, на причастный оборот после определяемого слова">
@@ -384,7 +423,7 @@ function viewLesson(){
   const keys = keysFor(cid, l);
   const lk = {...l, practice: l.practice.map((p,k) => ({...p, key: keys[k]}))};
   const sh = sheetFor(cid, l.id), Tt = U.lessonTests(l);
-  const tabs = [["method","Методика"],["theory","Теория"], l.practice.length && ["practice","Практика"], l.writing && ["writing","Письмо"], Tt.test.length && ["test","Тест"], l.hwtest?.length && ["hwtest","ДЗ-тест"], ["mats","Свои материалы"], ["sheet","Лист и ДЗ"], l.custom && ["edit","Изменить урок"]].filter(Boolean);
+  const tabs = [["method","Методика"],["theory","Теория"], U.hasMnemo(l) && ["mnemo","Запоминалки"], l.practice.length && ["practice","Практика"], l.writing && ["writing","Письмо"], ["test","Тест"], ["hwtest","ДЗ-тест"], ["mats","Свои материалы"], ["sheet","Лист и ДЗ"], l.custom && ["edit","Изменить урок"]].filter(Boolean);
   if (!tabs.some(t => t[0] === T.sub)) T.sub = "method";
   const testList = qs => `<ol style="padding-left:20px">${qs.map(q => `<li style="margin-bottom:12px"><b>${esc(q.q)}</b><ul>${q.o.map((o,k) => `<li ${k===q.a?'style="color:var(--good);font-weight:800"':""}>${esc(o)}${k===q.a?" ✓":""}</li>`).join("")}</ul><p class="small muted">${q.tag ? "Правило: " + esc(q.tag) + ". " : ""}${esc(q.e || "")}</p></li>`).join("")}</ol>`;
   let body = "";
@@ -408,8 +447,9 @@ function viewLesson(){
       ${w.type === "izl" ? `<p class="small"><b>Микротемы (ключ):</b></p><ol class="small">${c.izl[w.text].micro.map(m => `<li>${esc(m)}</li>`).join("")}</ol>` : ""}
       <details style="margin-top:8px"><summary><b>Текст</b></summary><div class="ttext">${U.writingSource(c, l, kinds[0]).html}</div></details>`;
   }
-  if (T.sub === "test") body = testList(Tt.test);
-  if (T.sub === "hwtest") body = testList(l.hwtest);
+  if (T.sub === "mnemo") body = U.mnemoTabHTML(l);
+  if (T.sub === "test") body = testEditor(cid, l, "test");
+  if (T.sub === "hwtest") body = testEditor(cid, l, "hwtest");
   if (T.sub === "mats") body = materialsTab(cid, l);
   if (T.sub === "edit"){
     const m = T.mats.find(x => x.id === l.mid);
@@ -605,9 +645,9 @@ function startRoom(s, lesson, keepPlan){
   roomSend("lesson"); if (T.room.lesson !== planned && !keepPlan) roomReplan();
   toast(T.online[s.id] ? "Ученику пришло приглашение на урок" : "Ученик пока не в сети – приглашение появится, как только он зайдёт");
 }
-const ROOM_TABS = {theory: "Теория", practice: "Практика", writing: "Письмо", mats: "Материалы", hw: "Домашка", test: "Тест"};
+const ROOM_TABS = {theory: "Теория", mnemo: "Запоминалки", practice: "Практика", writing: "Письмо", mats: "Материалы", hw: "Домашка", test: "Тест"};
 function roomTabs(l){
-  return [["theory"], l.practice?.length && ["practice"], l.writing && ["writing"], ((l.materials || []).length || l.stub) && ["mats"], (l.hw || l.hwtest?.length) && ["hw"], U.lessonTests(l).test.length && ["test"]]
+  return [["theory"], U.hasMnemo(l) && ["mnemo"], l.practice?.length && ["practice"], l.writing && ["writing"], ((l.materials || []).length || l.stub) && ["mats"], (l.hw || l.hwtest?.length) && ["hw"], U.lessonTests(l).test.length && ["test"]]
     .filter(Boolean).map(([k]) => [k, ROOM_TABS[k]]);
 }
 function liveTestHTML(m){
@@ -627,6 +667,7 @@ function roomPane(s, c, l, tab){
   const who = T.students.find(x => x.id === T.room.who) || s, pair = s.pair_id && T.students.find(x => x.id === s.pair_id);
   const whoSeg = pair ? `<div class="seg" role="group" aria-label="Чьи ответы" style="margin-bottom:10px">${[s, pair].map(o => `<button data-act="room-who" data-id="${o.id}" aria-pressed="${o.id === who.id}">${esc(o.name.split(" ")[0])}</button>`).join("")}</div>` : "";
   if (tab === "theory") return l.theory?.length ? U.theoryHTML(l, true) : `<p class="muted">У этого урока нет теории – см. «Материалы».</p>`;
+  if (tab === "mnemo") return U.mnemoTabHTML(l);
   if (tab === "practice"){
     const keys = keysFor(who.course, l), st = Object.fromEntries((T.works || []).filter(w => w.student_id === who.id && w.lesson_id === l.id).map(w => [w.task, w.data]));
     return whoSeg + `<p class="small muted">Тетрадь ${esc(who.name.split(" ")[0])} – обновляется вживую, рядом ключи.</p>`
@@ -636,7 +677,7 @@ function roomPane(s, c, l, tab){
     const w = (T.writings || []).find(x => x.student_id === who.id && x.lesson_id === l.id);
     return whoSeg + `<p><b>Задание:</b> ${esc(l.writing.task || "")}</p>${w ? `<div class="card" style="box-shadow:none;margin-top:10px"><div class="kicker">Работа ученика · ${w.status === "sent" ? "ждёт проверки" : "проверено"}</div><div style="white-space:pre-line;margin-top:6px">${esc(w.body || "")}</div>${(w.photos || []).map(u => `<img src="${esc(u)}" alt="Фото работы" style="max-height:260px;border-radius:10px;margin-top:8px">`).join("")}</div>` : `<p class="small muted">Ученик ещё не прислал работу.</p>`}`;
   }
-  if (tab === "mats") return (l.materials || []).length ? (l.materials || []).map(m => `<div class="mat"><span class="ic">${{link:"🔗", file:"📎", text:"📝", tasks:"✏️"}[m.kind] || "•"}</span><div style="min-width:0;flex:1">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || m.url)}</a>` : `<b>${esc(m.title || "Материал")}</b>`}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body)}</div>` : ""}</div></div>`).join("") : `<p class="muted">Своих материалов к уроку нет.</p>`;
+  if (tab === "mats") return (l.materials || []).length ? (l.materials || []).map(m => m.data?.kind === "game" ? `<div class="mat"><span class="ic">🎮</span><div style="min-width:0;flex:1"><b>${esc(m.title || "Игра")}</b> <button class="btn ghost sm" data-act="game-play" data-mid="${m.id}">▶ Посмотреть</button><p class="small muted">Ученик видит игру во вкладке «Материалы».</p></div></div>` : `<div class="mat"><span class="ic">${{link:"🔗", file:"📎", text:"📝", tasks:"✏️"}[m.kind] || "•"}</span><div style="min-width:0;flex:1">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || m.url)}</a>` : `<b>${esc(m.title || "Материал")}</b>`}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body)}</div>` : ""}</div></div>`).join("") : `<p class="muted">Своих материалов к уроку нет.</p>`;
   if (tab === "hw"){
     const h = (T.hw || []).find(x => x.student_id === who.id && x.lesson_id === l.id);
     return whoSeg + `<ol style="padding-left:20px">${l.hw ? `<li>${esc(l.hw)}</li>` : ""}${l.hwtest?.length ? `<li>ДЗ-тест: ${l.hwtest.length} вопросов.</li>` : ""}</ol>
@@ -681,7 +722,6 @@ function viewRoom(){
   </div>`;
 }
 function render(){
-  if (T.board){ T.board.destroy(); T.board = null; }
   const need = ["course","lesson","methodology"].includes(T.view) ? [curCourse()] : T.view === "student" ? [T.students.find(x => x.id === T.sel)?.course] : [];
   if (T.me?.base && need.some(k => k && window.CATALOG?.[k] && !T.loaded?.has(k))){ ensureCourses(need).then(ok => ok && render()); }
   const logged = !!(sb && T.session);
@@ -715,7 +755,118 @@ function render(){
   if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
     const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = bl === "free" ? FREE : c.lessons.find(x => x.id === bl) || FREE, owner = ownerOf(s);
-    T.board = Board.mount($("#board"), {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l)});
+    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l)});
+  }
+  if (!$("#board")){ Board.release(); T.board = null; }
+}
+
+/* ---------- редактор тестов: вопросы как тест, правка, добавление, догенерация ---------- */
+const TE_LIM = {q: 300, o: 120, e: 300, a: 80};
+const teDraft = (l, kind) => T.td && T.td.lid === l.id && T.td.kind === kind ? T.td : null;
+function teStart(l, kind){
+  if (!teDraft(l, kind)) T.td = {lid: l.id, kind, qs: JSON.parse(JSON.stringify((kind === "test" ? l.test : l.hwtest) || [])), edit: null};
+  return T.td;
+}
+function teOwnRow(cid, lid){ return T.mats.find(m => m.kind === "tasks" && m.data?.kind === "test-edit" && m.course === cid && m.lesson_id === lid && m.teacher_id === T.session?.user.id && !m.student_id); }
+function teCheck(q){
+  if (!q.q || !q.q.trim()) return "нет текста вопроса";
+  if (q.q.length > TE_LIM.q) return `вопрос длиннее ${TE_LIM.q} знаков`;
+  if (Array.isArray(q.o)){
+    const o = q.o.map(x => String(x).trim());
+    if (o.length < 2 || o.length > 6) return "нужно от 2 до 6 вариантов";
+    if (o.some(x => !x)) return "есть пустой вариант";
+    if (new Set(o.map(x => x.toLowerCase())).size !== o.length) return "варианты повторяются";
+    if (o.some(x => x.length > TE_LIM.o)) return `вариант длиннее ${TE_LIM.o} знаков`;
+    if (!(q.a >= 0 && q.a < o.length)) return "не отмечен верный ответ";
+  } else if (!String(q.a || "").trim()) return "нет правильного ответа";
+  if ((q.e || "").length > TE_LIM.e) return `пояснение длиннее ${TE_LIM.e} знаков`;
+  return "";
+}
+function teQHTML(q, i, d){
+  const kindName = Array.isArray(q.o) ? (q.tf ? "Верно / неверно" : "Выбор ответа") : "Ввод ответа";
+  if (d && d.edit === i){
+    return `<li class="te-q editing"><div class="kicker">${kindName}</div>
+      <label class="small" for="te-q">Вопрос (до ${TE_LIM.q} знаков)</label><textarea id="te-q" maxlength="${TE_LIM.q}" rows="2">${esc(q.q || "")}</textarea>
+      ${Array.isArray(q.o) ? `<div class="small muted" style="margin-top:6px">Варианты: отметьте кружком верный (2–6 вариантов)</div>
+        ${q.o.map((o, k) => `<div class="row te-opt" style="gap:6px;margin-top:4px"><input type="radio" name="te-a" value="${k}" ${k === q.a ? "checked" : ""} aria-label="Верный ответ" style="width:auto">
+          <input class="te-o" value="${esc(o)}" maxlength="${TE_LIM.o}" ${q.tf ? "readonly" : ""} style="flex:1">${q.tf || q.o.length <= 2 ? "" : `<button class="iconbtn" data-act="te-odel" data-k="${k}" aria-label="Удалить вариант">✕</button>`}</div>`).join("")}
+        ${q.tf || q.o.length >= 6 ? "" : `<button class="btn ghost sm" data-act="te-oadd" style="margin-top:6px">+ вариант</button>`}`
+      : `<label class="small" for="te-ans" style="margin-top:6px">Правильный ответ (несколько вариантов – через «|», например: «росток|ростки»)</label><input id="te-ans" value="${esc(q.a || "")}" maxlength="${TE_LIM.a}">`}
+      <label class="small" for="te-e" style="margin-top:6px">Пояснение после ответа (правило)</label><textarea id="te-e" maxlength="${TE_LIM.e}" rows="2">${esc(q.e || "")}</textarea>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" data-act="te-ok">Готово</button><button class="btn ghost sm" data-act="te-cancel">Отмена</button><span class="small" id="te-err" style="color:var(--bad)"></span></div></li>`;
+  }
+  const err = d ? teCheck(q) : "";
+  return `<li class="te-q"><div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="flex:1">${esc(q.q)}</b>
+      <span class="row te-tools" style="gap:2px;flex:none"><button class="iconbtn" data-act="te-edit" data-i="${i}" title="Изменить" aria-label="Изменить">✎</button><button class="iconbtn" data-act="te-up" data-i="${i}" title="Выше" aria-label="Выше">↑</button><button class="iconbtn" data-act="te-down" data-i="${i}" title="Ниже" aria-label="Ниже">↓</button><button class="iconbtn" data-act="te-del" data-i="${i}" title="Удалить" aria-label="Удалить">🗑</button></span></div>
+    ${Array.isArray(q.o) ? `<div class="te-opts">${q.o.map((o, k) => `<span class="te-o-view ${k === q.a ? "ok" : ""}">${k === q.a ? "✓ " : ""}${esc(o)}</span>`).join("")}</div>` : `<div class="te-opts"><span class="te-o-view ok">✓ ${esc(String(q.a).split("|").join(" / "))}</span></div>`}
+    ${q.e ? `<p class="small muted" style="margin-top:4px">${esc(q.e)}</p>` : ""}${err ? `<p class="small" style="color:var(--bad)">⚠ ${esc(err)}</p>` : ""}</li>`;
+}
+function testEditor(cid, l, kind){
+  const d = teDraft(l, kind), qs = d ? d.qs : ((kind === "test" ? l.test : l.hwtest) || []), own = teOwnRow(cid, l.id);
+  const extra = kind === "test" ? U.lessonTests(l).test.slice((l.test || []).length) : [];
+  return `<div class="te">
+    <div class="row te-bar" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn ghost sm" data-act="te-add" data-qk="choice">+ Выбор ответа</button>
+      <button class="btn ghost sm" data-act="te-add" data-qk="input">+ Ввод ответа</button>
+      <button class="btn ghost sm" data-act="te-add" data-qk="tf">+ Верно / неверно</button>
+      <button class="btn ghost sm" data-act="te-ai" ${T.busy === "te-ai" ? "disabled" : ""}>${T.busy === "te-ai" ? "Нейросеть пишет…" : "✨ Догенерировать 5 вопросов"}</button>
+      ${d ? `<button class="btn sm" data-act="te-save">Сохранить тест (${qs.length})</button><button class="btn ghost sm" data-act="te-drop">Не сохранять</button>` : ""}
+      ${!d && (own?.data?.[kind]) ? `<button class="btn ghost sm" data-act="te-reset">Вернуть исходный тест</button>` : ""}
+    </div>
+    <p class="small muted" style="margin-bottom:8px">${d ? "Есть несохранённые изменения. " : l.edited && own?.data?.[kind] ? "Тест изменён вами – ученики видят вашу версию. " : ""}Формат платформы: вопрос до ${TE_LIM.q} знаков; выбор ответа – 2–6 вариантов, один верный; ввод ответа – слово или фраза (варианты через «|»); пояснение – правило, до ${TE_LIM.e} знаков.${T.me?.role === "developer" ? " Режим разработчика: правка сохраняется во встроенную базу для всех учителей." : ""}</p>
+    ${qs.length ? `<ol class="te-list">${qs.map((q, i) => teQHTML(q, i, d)).join("")}</ol>` : `<p class="muted">Вопросов пока нет – добавьте первый.</p>`}
+    ${extra.length ? `<p class="small muted" style="margin-top:10px">Ещё ${extra.length} вопр. добавлены из ваших наборов заданий (вкладка «Свои материалы»).</p>` : ""}
+  </div>`;
+}
+function teReadForm(){
+  const d = T.td; if (!d || d.edit == null) return;
+  const q = d.qs[d.edit]; if (!q) return;
+  const val = id => document.getElementById(id)?.value ?? "";
+  q.q = val("te-q").trim(); q.e = val("te-e").trim();
+  if (Array.isArray(q.o)){ q.o = [...document.querySelectorAll(".te-o")].map(x => x.value.trim()); const r = document.querySelector('input[name="te-a"]:checked'); q.a = r ? +r.value : -1; }
+  else q.a = val("te-ans").trim();
+}
+async function teAct(a, t){
+  const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open), kind = T.sub === "hwtest" ? "hwtest" : "test";
+  if (!l) return;
+  if (a === "te-add"){ const d = teStart(l, kind); teReadForm(); const qk = t.dataset.qk;
+    d.qs.push(qk === "input" ? {q: "", a: "", e: ""} : qk === "tf" ? {q: "", o: ["Верно", "Неверно"], a: 0, e: "", tf: true} : {q: "", o: ["", ""], a: 0, e: ""}); d.edit = d.qs.length - 1; d.isNew = true; render(); document.getElementById("te-q")?.focus(); return; }
+  if (a === "te-edit"){ const d = teStart(l, kind); teReadForm(); d.edit = +t.dataset.i; d.isNew = false; render(); document.getElementById("te-q")?.focus(); return; }
+  if (["te-up", "te-down", "te-del"].includes(a)){ const d = teStart(l, kind); teReadForm(); d.edit = null; const i = +t.dataset.i, j = a === "te-up" ? i - 1 : i + 1;
+    if (a === "te-del") d.qs.splice(i, 1); else if (j >= 0 && j < d.qs.length) [d.qs[i], d.qs[j]] = [d.qs[j], d.qs[i]]; render(); return; }
+  if (a === "te-oadd" || a === "te-odel"){ teReadForm(); const q = T.td.qs[T.td.edit]; if (a === "te-oadd") q.o.push(""); else { const k = +t.dataset.k; q.o.splice(k, 1); if (q.a === k) q.a = 0; else if (q.a > k) q.a--; } render(); return; }
+  if (a === "te-ok"){ teReadForm(); const q = T.td.qs[T.td.edit], err = teCheck(q); if (err){ const el = document.getElementById("te-err"); if (el) el.textContent = "Исправьте: " + err; return; } T.td.edit = null; T.td.isNew = false; render(); return; }
+  if (a === "te-cancel"){ const d = T.td; if (d.isNew) d.qs.splice(d.edit, 1); d.edit = null; d.isNew = false; render(); return; }
+  if (a === "te-drop"){ T.td = null; render(); return; }
+  if (a === "te-ai"){
+    const d = teStart(l, kind); teReadForm(); d.edit = null; T.busy = "te-ai"; render();
+    const c = COURSES[cid] || {};
+    const r = await ai({action: "generate_tasks", topic: l.title, count: 5, grade: c.grade, exam: c.goal === "ОГЭ" || c.goal === "ЕГЭ" ? c.goal : "",
+      notes: `Только вопросы теста по теме урока «${l.title}». Формат: 4 варианта, один верный, короткое пояснение-правило. Не повторять: ${d.qs.slice(0, 12).map(q => q.q).join(" | ").slice(0, 900)}`});
+    T.busy = false;
+    if (r?.error){ toast(r.error); render(); return; }
+    const add = (r?.test || []).filter(q => q.q && Array.isArray(q.o) && !teCheck({...q, q: String(q.q).slice(0, TE_LIM.q)})).map(q => ({q: String(q.q).slice(0, TE_LIM.q), o: q.o.map(x => String(x).slice(0, TE_LIM.o)), a: q.a, e: String(q.e || "").slice(0, TE_LIM.e)}));
+    d.qs.push(...add); toast(add.length ? `Добавлено вопросов: ${add.length}. Проверьте и сохраните.` : "Нейросеть не вернула подходящих вопросов"); render(); return;
+  }
+  if (a === "te-save"){
+    const d = T.td; teReadForm(); if (d.edit != null){ const err = teCheck(d.qs[d.edit]); if (err){ toast("Вопрос " + (d.edit + 1) + ": " + err); return; } d.edit = null; }
+    const bad = d.qs.map((q, i) => [i, teCheck(q)]).find(x => x[1]); if (bad){ toast(`Вопрос ${bad[0] + 1}: ${bad[1]}`); render(); return; }
+    const qs = d.qs.map(q => Array.isArray(q.o) ? {q: q.q, o: q.o, a: q.a, e: q.e || "", ...(q.tf ? {tf: true} : {}), tag: q.tag || l.title} : {q: q.q, a: q.a, e: q.e || "", tag: q.tag || l.title});
+    const own = teOwnRow(cid, l.id), data = {...(own?.data || {kind: "test-edit"}), kind: "test-edit", [kind]: qs};
+    const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
+      : await sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "tasks", title: "Правка теста", shared: T.me?.role === "developer", data}).select().single();
+    if (res.error){ toast("Не сохранилось: " + res.error.message); return; }
+    if (own) Object.assign(own, res.data); else T.mats.push(res.data);
+    T.td = null; render(); cmd("all", "refresh", {msg: "Учитель обновил тест"}); toast("Тест сохранён – ученики увидят новую версию"); return;
+  }
+  if (a === "te-reset"){
+    const own = teOwnRow(cid, l.id); if (!own) return;
+    if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно вернуть исходный?"; return; }
+    const data = {...own.data}; delete data[kind];
+    const res = data.test || data.hwtest ? await sb.from("materials").update({data}).eq("id", own.id).select().single() : await sb.from("materials").delete().eq("id", own.id);
+    if (res.error){ toast("Не получилось: " + res.error.message); return; }
+    if (data.test || data.hwtest) own.data = data; else T.mats = T.mats.filter(m => m !== own);
+    render(); cmd("all", "refresh", {msg: "Учитель обновил тест"}); toast("Возвращён исходный тест"); return;
   }
 }
 
@@ -886,6 +1037,7 @@ document.addEventListener("change", async e => {
   if (e.target.id === "ns-subj"){ T.addSubj = e.target.value; const sel = $("#ns-grade"); sel.innerHTML = U.subj(T.addSubj).g.map(g => `<option value="${g}" ${g===9?"selected":""}>${U.gradeName(g)}</option>`).join(""); $("#ns-goal").innerHTML = goalOpts(T.addSubj, sel.value); return; }
   if (e.target.id === "ns-grade"){ $("#ns-goal").innerHTML = goalOpts($("#ns-subj").value, e.target.value); return; }
   if (e.target.id === "as-subj"){ const sel = $("#as-grade"); sel.innerHTML = U.subj(e.target.value).g.map(g => `<option value="${g}">${U.gradeName(g)}</option>`).join(""); const s = T.students.find(x => x.id === T.sel); if (s && U.subj(e.target.value).g.includes(s.grade)) sel.value = s.grade; return; }
+  if (e.target.id === "gm-kind"){ T.gform = gameRead(); render(); return; }
   if (e.target.id === "am-kind"){ document.querySelectorAll("#add-mat [data-k]").forEach(el => el.hidden = !el.dataset.k.split(" ").includes(e.target.value)); return; }
   if (e.target.dataset.date){
     const s = T.students.find(x => x.id === T.sel), dates = {...(s.dates || {}), [e.target.dataset.date]: e.target.value};
@@ -945,6 +1097,8 @@ document.addEventListener("click", async e => {
   if (t.dataset.review && !t.dataset.act){ T.review = T.review === t.dataset.review ? null : t.dataset.review; T.wreview = null; render(); return; }
   if (t.dataset.wreview && !t.dataset.act){ T.wreview = T.wreview === t.dataset.wreview ? null : t.dataset.wreview; T.review = null; render(); return; }
   const a = t.dataset.act;
+  if (a && a.startsWith("te-")){ await teAct(a, t); return; }
+  if (a && a.startsWith("game-")){ await gameAct(a, t); return; }
   if (a === "key-edit"){ T.editKey = +t.dataset.k; render(); $("#key-edit")?.focus(); return; }
   if (a === "key-cancel"){ T.editKey = null; render(); return; }
   if (a === "key-save"){
