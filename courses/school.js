@@ -28,3 +28,6 @@ window.BuiltinLoader = (() => {
   const has = key => !!(window.BUILTIN_COURSES && window.BUILTIN_COURSES[key]);
   return { ensure, subject, has, loaded, meta: () => window.BUILTIN_INDEX || {} };
 })();
+/* rus57:start */
+Object.assign(window.BUILTIN_INDEX = window.BUILTIN_INDEX || {}, {"oge-ru":{"subj":"ru57","lessons":46,"title":"Подготовка к ОГЭ. Русский язык","ver":2}});
+/* rus57:end */

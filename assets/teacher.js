@@ -721,7 +721,7 @@ function render(){
 
 /* ключи к заданиям: из базы + свои правки учителя */
 function keysFor(cid, l){
-  const base = [...((window.COURSE_KEYS?.[cid] || {})[l.id] || [])];
+  const base = [...((window.COURSE_KEYS?.[cid] || {})[l.id] || (l.practice || []).map(p => p.key))];
   const own = T.mats.find(m => m.kind === "keys" && m.course === cid && m.lesson_id === l.id && m.teacher_id === T.session?.user.id);
   Object.entries(own?.data || {}).forEach(([k, v]) => base[+k] = v);
   return base;
@@ -733,7 +733,10 @@ async function ensureCourses(keys){
   keys.forEach(k => T.loaded.add(k));
   const {data, error} = await sb.from("course_data").select("key,data,keys").in("key", keys);
   if (error){ keys.forEach(k => T.loaded.delete(k)); return false; }
-  U.loadBase(data); return true;
+  U.loadBase(data);
+  /* новые авторские курсы с сайта важнее старой копии в базе */
+  if (window.BuiltinLoader) for (const k of keys){ const row = (data || []).find(r => r.key === k); if (U.builtinNewer(k, row?.data)) await BuiltinLoader.ensure(k); }
+  return true;
 }
 /* установка на телефон */
 let installEvt = null;

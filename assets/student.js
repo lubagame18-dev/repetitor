@@ -55,7 +55,7 @@ async function load(){
     S.mats = data.materials || [];
     S.works = {}; (data.works || []).forEach(w => (S.works[w.lesson_id] = S.works[w.lesson_id] || {})[w.task] = w.data);
     S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
-    if (!S.base.length && window.BuiltinLoader && S.profile?.course) BuiltinLoader.ensure(S.profile.course).then(ok => { if (ok && window.BUILTIN_COURSES?.[S.profile.course]) { S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); recompute(); render(); } });
+    if ((!S.base.length || U.builtinNewer(S.profile?.course, data.course_data)) && window.BuiltinLoader && S.profile?.course) BuiltinLoader.ensure(S.profile.course).then(ok => { if (ok && window.BUILTIN_COURSES?.[S.profile.course]) { S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); recompute(); render(); } });
     U.loadBase(S.base);
     LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
   } else {
@@ -501,7 +501,7 @@ function viewFolder(){
     <li>${S.sub === "theory" || miniDone ? "✅" : "•"} <b>Теория</b> — прочитай микротемы</li>
     <li>${miniAll && miniDone === miniAll ? "✅" : "•"} <b>Отработка</b> — мини-практика после каждой микротемы (${miniDone}/${miniAll || 0})</li>
     <li>${r ? "✅" : "•"} <b>Тест по уроку</b> — проверь себя${r ? " (лучший: " + pct(r.best) + "%)" : ""}</li>
-    <li>${hr || h ? "✅" : "•"} <b>Домашка</b> — закрепи и сдай</li>
+    <li>${hr || S.hw[l.id]?.status ? "✅" : "•"} <b>Домашка</b> — закрепи и сдай</li>
   </ol>
   ${(() => {
     const next = !(S.sub === "theory" || miniDone) ? ["theory", "Начать с теории"] : (!miniAll || miniDone < miniAll) ? ["practice", "Перейти к отработке"] : (!r ? ["test", "Пройти тест"] : [null, null]);

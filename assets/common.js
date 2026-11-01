@@ -170,7 +170,11 @@ window.U = (() => {
   const subj = k => SUBJECTS.find(x => x.k === k) || SUBJECTS[0];
   const gradeName = g => +g === 0 ? "дошкольник" : g + " класс";
   /* предмет курса по его ключу: oge-rus, rus-7, math-5, ege-phys … */
-  const subjectOf = key => { const m = String(key || "").match(/^(?:oge|ege)-(\w+)$|^(\w+)-\d+$/); return m ? (m[1] || m[2]) : "rus"; };
+  const subjectOf = key => { const m = String(key || "").match(/^(?:oge|ege)-(\w+)$|^(?:vpr|olymp)-(\w+)-\d+$|^(\w+)-\d+$/); return m ? (m[1] || m[2] || m[3]) : "rus"; };
+  /* версия встроенного курса (новые авторские курсы – ver 2): если в базе Supabase лежит старая копия, берём файл с сайта */
+  const BALIAS = {"oge-rus": "oge-ru", "ege-rus": "ege-ru"};
+  const builtinVer = key => { const I = window.BUILTIN_INDEX || {}; return (I[key] || I[BALIAS[key]] || {}).ver || 0; };
+  const builtinNewer = (key, data) => builtinVer(key) > ((data && data.ver) || 0);
 
   /* план по предмету, классу и целям */
   const GOALS = ["ОГЭ","ЕГЭ","ВПР","Контрольные и домашние","Олимпиада"];
@@ -189,6 +193,9 @@ window.U = (() => {
     goals = goals || []; const S = subj(subject);
     if (S.exam && +grade === 9 && goals.includes("ОГЭ")) return "oge-" + S.k;
     if (S.exam && +grade >= 10 && goals.includes("ЕГЭ")) return "ege-" + S.k;
+    const C = window.CATALOG || {};
+    if (goals.includes("ВПР") && C[`vpr-${S.k}-${grade}`]) return `vpr-${S.k}-${grade}`;
+    if (goals.includes("Олимпиада") && !goals.includes("Контрольные и домашние") && C[`olymp-${S.k}-${grade}`]) return `olymp-${S.k}-${grade}`;
     return S.k + "-" + grade;
   }
   /* курс, которого нет во встроенной базе (например, «Физика, 8 класс»): пустой, уроки добавляет учитель */
@@ -212,7 +219,8 @@ window.U = (() => {
   /* все курсы предмета: встроенные и пустые по классам */
   function coursesOf(subject){
     const S = subj(subject), keys = [];
-    S.g.forEach(g => { if (subject === "rus" && g === 9) keys.push("oge-rus"); keys.push(S.k + "-" + g); if (S.exam && g === 9 && subject !== "rus") keys.push("oge-" + S.k); });
+    const C = window.CATALOG || {};
+    S.g.forEach(g => { if (subject === "rus" && g === 9) keys.push("oge-rus"); keys.push(S.k + "-" + g); if (C[`vpr-${S.k}-${g}`]) keys.push(`vpr-${S.k}-${g}`); if (C[`olymp-${S.k}-${g}`]) keys.push(`olymp-${S.k}-${g}`); if (S.exam && g === 9 && subject !== "rus") keys.push("oge-" + S.k); });
     if (S.exam) keys.push("ege-" + S.k);
     return [...new Set(keys)].filter(k => getCourse(k));
   }
@@ -302,5 +310,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();
