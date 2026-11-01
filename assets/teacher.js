@@ -656,7 +656,7 @@ function viewRoom(){
   if (!s){ T.view = "students"; return viewStudents(); }
   const c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = r.lesson === "free" ? FREE : c.lessons.find(x => x.id === r.lesson) || FREE;
   const pair = s.pair_id && T.students.find(x => x.id === s.pair_id);
-  const tabs = l.free ? [] : roomTabs(l), tab = tabs.some(t => t[0] === r.tab) ? r.tab : tabs[0]?.[0];
+  const tabs = l.free ? [] : roomTabs(l), tab = tabs.some(t => t[0] === r.tab) ? r.tab : tabs[0]?.[0]; r.shown = tab || null;
   const where = T.online[s.id];
   return `<div class="roombar glass">
       <div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок: ${esc(s.name)}${pair ? " и " + esc(pair.name) : ""}</b><span data-online="${s.id}"></span></div>
@@ -989,7 +989,7 @@ document.addEventListener("click", async e => {
   if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); return; }
   if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
   if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.since = Date.now(); T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
-  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = r.tab || null; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab}));
+  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = r.shown || r.tab || null; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab}));
     roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён сюда" : "Ученик не в сети – откроется здесь, когда зайдёт"); return; }
   if (a === "call-start"){ const s = T.students.find(x => x.id === T.room?.sid); if (s) startCallT(s); render(); return; }
   if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }

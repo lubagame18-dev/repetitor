@@ -321,6 +321,15 @@ function noCourse(){
     ${er || !entryTest() ? "" : `<div><button class="btn" data-go="entry">Пройти входной тест</button></div>`}</div>`;
 }
 
+/* в день урока – напоминание: одна кнопка запускает урок с видеозвонком */
+function todayLesson(){ return S.course?.lessons.find(l => daysTo(l.date) === 0) || null; }
+function todayCard(){
+  const l = todayLesson(); if (!l || S.room) return "";
+  return `<div class="card accent today-card" role="region" aria-label="Сегодня занятие"><div class="kicker"><span class="live-dot" aria-hidden="true"></span> Сегодня у вас занятие</div>
+    <h2 style="margin-top:6px">${esc(l.title)}</h2>
+    <p class="small" style="margin:6px 0 12px"><span class="dot" style="background:${blockOf(l).color}"></span> ${esc(l.oge || "")}. Когда придёт время урока, нажми кнопку – откроются доска, материалы урока и видеозвонок с учителем.</p>
+    <div class="row"><button class="btn" data-act="start-today" data-l="${l.id}">▶ Начать урок</button><button class="btn ghost" data-open="${l.id}">Открыть папку</button></div></div>`;
+}
 function viewHome(){
   const p = S.profile, er = entryRes(), et = entryTest();
   const cards = [];
@@ -331,8 +340,9 @@ function viewHome(){
       <p class="small" style="margin:6px 0 12px">${et.q.length} вопросов по материалу прошлого года. По результатам учитель выстроит план.</p>
       <button class="btn" data-go="entry">Начать</button></div>`);
   if (S.course){
+    const tc = todayCard(); if (tc) cards.unshift(tc);
     const nx = nextLesson(), due = nx ? S.course.lessons[S.course.lessons.indexOf(nx)-1] : null, lp = lastPast(), isToday = nx && daysTo(nx.date) === 0;
-    if (nx) cards.push(`<div class="card ${er ? "accent" : ""}"><div class="kicker">${isToday ? "Урок сегодня" : "Следующий урок"}</div>
+    if (nx && !tc) cards.push(`<div class="card ${er ? "accent" : ""}"><div class="kicker">${isToday ? "Урок сегодня" : "Следующий урок"}</div>
       <h2 style="margin-top:6px">${fmt(nx.date,{weekday:"long",day:"numeric",month:"long"})}</h2>
       <p style="margin:6px 0 12px"><span class="dot" style="background:${blockOf(nx).color}"></span> ${esc(nx.oge)} · <b>${esc(nx.title)}</b></p>
       <div class="row">${isOpen(nx) ? `<button class="btn" data-open="${nx.id}">Открыть папку</button><button class="btn ghost" data-open="${nx.id}" data-sub="board">На доску</button>` : `<span class="chip">${I.lock.replace('<svg','<svg width="14" height="14"')} откроется в день урока</span><span class="chip tnum">через ${daysTo(nx.date)} дн.</span>`}</div></div>`);
@@ -381,7 +391,7 @@ function viewLessons(){
   if (!S.course.lessons.length) return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2></div>
     <div class="card"><p>Учитель ещё не добавил уроки. Как только добавит – здесь появятся папки.</p></div>`;
   return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2><span class="chip">${esc(S.course.tag || "")}</span><span class="chip">${S.course.lessons.length} уроков</span></div>
-    <p class="small muted">Папка открывается в день урока. Пройденные уроки остаются открытыми.</p>
+    <p class="small muted">Папка открывается в день урока. Пройденные уроки остаются открытыми.</p>${todayCard()}
     ${(() => { const cm = S.mats.filter(m => m.course === S.profile.course && m.lesson_id === "_course"); return cm.length ? `<div class="card" style="margin:12px 0"><div class="kicker">Материалы курса</div>${cm.map(m => `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝"}[m.kind] || "•"}</span><div style="flex:1;min-width:0">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || "Материал")}</a>` : `<b>${esc(m.title || "Материал")}</b>`}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body)}</div>` : ""}</div></div>`).join("")}</div>` : ""; })()}
     <div class="legend" style="margin:10px 0 4px">${Object.values(S.course.blocks).filter(b => S.course.lessons.some(l => blockOf(l) === b)).map(b => `<span><i class="dot" style="background:${b.color}"></i>${esc(b.name)}</span>`).join("")}</div>
     <div class="folders">${out}</div>`;
@@ -905,6 +915,12 @@ document.addEventListener("click", async e => {
   if (a === "call-start"){ S.joinHow = S.joinHow === "board" ? "both" : (S.joinHow || "both"); startCall(); render(); return; }
   if (a === "test-close"){ if (S.test && S.test.i < S.test.qs.length) testLive({quit: true}); S.test = null; S.testInRoom = false; render(); liveTrack(); return; }
   if (a === "room-leave"){ S.test = null; S.testInRoom = false; S.view = S.room?.lesson && S.room.lesson !== "free" ? "folder" : "home"; if (S.view === "folder") S.open = S.room.lesson; render(); return; }
+  if (a === "start-today"){
+    const id = t.dataset.l, how = LS.get("join-how", null); S.forced.add(id);
+    invite({lesson: id, url: S.profile.call_url || "", at: Date.now()}, true);
+    if (document.getElementById("joinbox")) applyJoin(how && JOIN[how] ? how : "both", false);
+    return;
+  }
   if (a === "start-room"){ invite({lesson: S.open, url: S.profile.call_url || "", at: Date.now()}, true); return; }
   if (a === "resend"){
     const email = S.signupDone || S.lastEmail || $("#tl-email")?.value.trim(); if (!email || !sb) return;
