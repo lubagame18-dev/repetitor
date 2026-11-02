@@ -1,12 +1,11 @@
 # Последнее обновление Supabase
 
-Время: 2026-11-02 07:10 UTC · коммит 6f58843
+Время: 2026-11-02 07:11 UTC · коммит e217d11
 
 ## База (schema.sql)
 ```
-psql: error: connection to server at "aws-0-eu-west-1.pooler.supabase.com" (108.128.216.176), port 5432 failed: FATAL:  password authentication failed for user "postgres"
-connection to server at "aws-0-eu-west-1.pooler.supabase.com" (108.128.216.176), port 5432 failed: FATAL:  password authentication failed for user "postgres"
-ОШИБКА (изменения отменены)
+[]
+ok (201)
 ```
 
 ## Функция ai
