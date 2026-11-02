@@ -1,4 +1,4 @@
-# Диагностика 2026-11-02 11:55 UTC
+# Диагностика 2026-11-02 12:00 UTC
 ```json
 [
   {
@@ -24,12 +24,13 @@
         {
           "t": "31d99ed3",
           "role": "developer",
-          "students": 4,
-          "registered": 2,
+          "students": 5,
+          "registered": 3,
           "courses": [
             "oge-rus / rus",
             "rus-7 / rus",
             "rus-8 / rus",
+            "vpr-rus-7 / rus",
             "vpr-rus-8 / rus"
           ]
         }
@@ -50,7 +51,7 @@
           "cmd": "ALL",
           "roles": "{authenticated}",
           "permissive": "PERMISSIVE",
-          "using": "(teacher_id = auth.uid())"
+          "using": "my_team(teacher_id)"
         },
         {
           "table": "teachers",
