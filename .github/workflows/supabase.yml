@@ -35,7 +35,7 @@ jobs:
         continue-on-error: true
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then echo "нет секрета SUPABASE_ACCESS_TOKEN" > fn.log; exit 1; fi
-          supabase functions deploy ai --project-ref "$PROJECT_REF" --use-api > fn.log 2>&1 && echo "ok" >> fn.log || { echo "ОШИБКА" >> fn.log; exit 1; }
+          supabase functions deploy ai --project-ref "$PROJECT_REF" --use-api --yes > fn.log 2>&1 && echo "ok" >> fn.log || { echo "ОШИБКА" >> fn.log; exit 1; }
       - name: Отчёт
         if: always()
         run: |
