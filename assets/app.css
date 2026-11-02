@@ -586,3 +586,18 @@ body.play-open{overflow:hidden}
 .bd-sheet.bd-live{min-height:900px;font-size:17px;line-height:1.55}
 .bd-sheet.bd-live .task{font-size:17px}
 .bd-sheet.bd-live .btn{font-size:15px}
+/* выбор галочками в виде «таблеток»: дни недели, курсы */
+.picks{display:flex;flex-wrap:wrap;gap:6px}
+.pick{position:relative;display:inline-flex;align-items:center;border:1px solid var(--line);background:var(--field);border-radius:999px;padding:7px 14px;font-weight:700;font-size:.92rem;cursor:pointer;user-select:none;transition:background .15s,border-color .15s}
+.pick input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.pick:has(input:checked),.pick.on:not(:has(input:not(:checked))){background:linear-gradient(135deg,var(--violet),var(--pink));color:#fff;border-color:transparent}
+.pick:has(input:focus-visible){outline:2px solid var(--violet);outline-offset:2px}
+.pick:has(input:disabled){opacity:.45;cursor:not-allowed}
+.picks.wd .pick{min-width:48px;justify-content:center}
+.sched-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.sched-row label{font-weight:700;font-size:.9rem}
+.tinput{width:auto;border:1px solid var(--line);background:var(--field);color:inherit;border-radius:12px;padding:8px 12px;font:inherit;font-weight:700;font-variant-numeric:tabular-nums}
+.tinput:focus{outline:2px solid var(--violet);outline-offset:1px}
+.tinput::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer}
+.dt-cell{display:flex;flex-direction:column;gap:4px;min-width:150px}
+.dt-cell .tinput{padding:6px 10px;font-size:.92rem}

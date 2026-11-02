@@ -117,11 +117,7 @@ Deno.serve(async (req) => {
     const own = async (sid: string) => {
       const { data } = await admin.from("students").select("*").eq("id", sid).single();
       if (!data) throw new Error("Это не ваш ученик");
-      if (data.teacher_id !== uid) {
-        // кабинеты разработчика – одна команда: ученик виден из любого из них
-        const { data: owner } = await admin.from("teachers").select("role").eq("id", data.teacher_id).single();
-        if (!(me.role === "developer" && owner?.role === "developer")) throw new Error("Это не ваш ученик");
-      }
+      if (data.teacher_id !== uid) throw new Error("Это не ваш ученик");
       return data;
     };
 

@@ -305,12 +305,11 @@ function viewStudent(){
       <p><b>Зарегистрирован:</b> ${s.registered_at ? new Date(s.registered_at).toLocaleDateString("ru-RU") : "нет"}</p>
       <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="new-invite">${pending(s) ? "Новая ссылка" : "Сбросить пароль (новая ссылка)"}</button></div></div>
     <form class="card stack" id="plan-form" style="gap:8px"><div class="kicker">План работы</div>
-      <label for="pl-course">Курс</label>
-      <select id="pl-course"><option value="">– не выбран –</option>${(() => { const all = courseOptions(s.grade ?? 9, subjOfS(s)), o = ([k,n,ok]) => `<option value="${k}" ${k===s.course?"selected":""} ${ok?"":"disabled"}>${esc(n)}</option>`;
-        return `<optgroup label="${esc(U.gradeName(s.grade ?? 9))}">${all.filter(x => x[3]).map(o).join("")}</optgroup><optgroup label="Другие классы">${all.filter(x => !x[3]).map(o).join("")}</optgroup>`; })()}</select>
-      <p class="small muted">Подсказка по целям ученика: ${esc(U.getCourse(U.planFor(subjOfS(s), s.grade ?? 9, s.goals || []))?.course || "–")}.</p>
-      <label for="pl-start">Дата первого урока (дальше – раз в неделю)</label><input type="date" id="pl-start" value="${esc(s.start_date || "")}">
-      <p class="small muted">Дату любого урока можно поменять отдельно – в таблице уроков ниже.</p>
+      <p class="small muted">Отметьте курсы, по которым занимается ученик, – можно несколько (например, программа класса и ВПР). Каждый курс – своя папка уроков у ученика, вход тот же.</p>
+      ${(() => { const all = courseOptions(s.grade ?? 9, subjOfS(s)), have = new Set(siblings(s).filter(o => subjOfS(o) === subjOfS(s)).map(o => o.course));
+        const box = ([k, n, ok]) => `<label class="pick ${have.has(k) ? "on" : ""}"><input type="checkbox" class="pl-c" value="${k}" ${have.has(k) ? "checked" : ""} ${ok ? "" : "disabled"}><span>${esc(n)}</span></label>`;
+        return `<div class="picks">${all.filter(x => x[3]).map(box).join("")}</div><details><summary class="small">Курсы других классов</summary><div class="picks" style="margin-top:6px">${all.filter(x => !x[3]).map(box).join("")}</div></details>`; })()}
+      <p class="small muted">Подсказка по целям ученика: ${esc(U.getCourse(U.planFor(subjOfS(s), s.grade ?? 9, s.goals || []))?.course || "–")}. Даты и время уроков – в карточке «Расписание».</p>
       <div><button class="btn sm" type="submit">Сохранить план</button></div></form>
     <div class="card stack" style="gap:8px"><div class="kicker">Предметы ученика</div>
       <div class="stack" style="gap:6px">${siblings(s).map(o => `<button class="subj" ${o.id === s.id ? 'aria-pressed="true"' : `data-student="${o.id}"`}><span class="emo">${U.subj(subjOfS(o)).e}</span><span>${esc(U.subj(subjOfS(o)).n)}<small>${o.grade != null ? U.gradeName(o.grade) : ""}${U.getCourse(o.course) ? " · " + esc(U.getCourse(o.course).course) : ""}</small></span></button>`).join("")}</div>
@@ -320,9 +319,9 @@ function viewStudent(){
       <div><button class="btn sm" data-act="add-subject">Добавить предмет</button></div>`}</div>
     ${c && !pending(s) || c ? `<div class="card stack" style="gap:8px"><div class="kicker">Расписание</div>
       <p class="small muted">Отметьте дни и время – даты будущих уроков расставятся сами (можно каждый день). Любую дату и время потом можно поправить в таблице уроков.</p>
-      <div class="row" style="gap:6px;flex-wrap:wrap" role="group" aria-label="Дни недели">${["Пн","Вт","Ср","Чт","Пт","Сб","Вс"].map((d, k) => `<label class="chip" style="cursor:pointer"><input type="checkbox" class="sched-wd" value="${(k + 1) % 7}" style="width:auto" ${(s.dates?._days || []).includes((k + 1) % 7) ? "checked" : ""}> ${d}</label>`).join("")}</div>
-      <div class="row" style="gap:8px;flex-wrap:wrap"><label class="small" for="sched-time">Время</label><input type="time" id="sched-time" value="${esc(s.dates?._time || "")}" style="width:120px">
-        <label class="small" for="sched-from">с</label><input type="date" id="sched-from" value="${esc(U.iso(new Date()))}" style="width:160px"></div>
+      <div class="picks wd" role="group" aria-label="Дни недели">${["Пн","Вт","Ср","Чт","Пт","Сб","Вс"].map((d, k) => `<label class="pick ${(s.dates?._days || []).includes((k + 1) % 7) ? "on" : ""}"><input type="checkbox" class="sched-wd" value="${(k + 1) % 7}" ${(s.dates?._days || []).includes((k + 1) % 7) ? "checked" : ""}><span>${d}</span></label>`).join("")}</div>
+      <div class="sched-row"><label for="sched-time">Время</label><input type="time" id="sched-time" class="tinput" value="${esc(s.dates?._time || "")}">
+        <label for="sched-from">начиная с</label><input type="date" id="sched-from" class="tinput" value="${esc(U.iso(new Date()))}"></div>
       <div><button class="btn sm" data-act="sched-apply">Расставить даты</button></div></div>` : ""}
     <div class="card stack" style="gap:8px"><div class="kicker">Занятие онлайн</div>
       <p class="small muted">Ссылка на созвон: Яндекс Телемост, VK Звонки, Сферум или любая другая – своя для каждого ученика. «Начать занятие» сразу открывает звонок, общую доску и задания текущего урока, а ученику приходит приглашение: он выбирает доску, звонок или то и другое (можно с разных устройств).</p>
@@ -354,7 +353,7 @@ function viewStudent(){
   ${c.lessons.map((l,i) => { const r = x.results[l.id], hr = x.hwres[l.id], h = x.hw[l.id], w = x.writings[l.id], hs = U.hwState(c, l.id, x.hw), dn = x.done(l);
     const byDate = d(l.date) <= today(), early = unlocked.includes(l.id);
     const wcell = !w ? "–" : w.status === "sent" ? `<span class="chip mid">ждёт</span>` : w.max ? `<span class="chip ${lvl(Math.round(w.total/w.max*100))}">${w.total}/${w.max}</span>` : `<span class="chip">${w.status === "redo" ? "доработка" : "проверено"}</span>`;
-    return `<tr><td class="tnum">${i+1}</td><td><input type="date" value="${esc(l.date)}" data-date="${l.id}" style="width:150px;padding:6px 8px" aria-label="Дата урока ${i+1}"><input type="time" value="${esc(U.lessonTime(s, l))}" data-ltime="${l.id}" style="width:110px;padding:6px 8px;margin-top:4px" aria-label="Время урока ${i+1}">${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
+    return `<tr><td class="tnum">${i+1}</td><td><div class="dt-cell"><input type="date" class="tinput" value="${esc(l.date)}" data-date="${l.id}" aria-label="Дата урока ${i+1}"><input type="time" class="tinput" value="${esc(U.lessonTime(s, l))}" data-ltime="${l.id}" aria-label="Время урока ${i+1}"></div>${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
       <td><i class="dot" style="background:${blockOf(c, l).color}"></i> ${esc(l.title)}${l.writing ? `<div class="small muted">${esc(U.KIND_NAME[l.writing.type])}</div>` : ""}${l.custom ? (T.mats.find(m => m.id === l.mid)?.student_id ? `<div class="small muted">из курса «${esc(l.oge)}» <button class="linkbtn" data-act="del-copy" data-mid="${l.mid}">убрать</button></div>` : '<div class="small muted">свой урок</div>') : ""}</td>
       <td>${byDate ? '<span class="chip good">открыт</span>' : early ? `<button class="btn ghost sm" data-unlock="${l.id}" data-on="0">Закрыть</button>` : `<button class="btn ghost sm" data-unlock="${l.id}" data-on="1">${I.lock} Открыть сейчас</button>`}</td>
       <td class="tnum">${mins(x.time[l.id])}</td>
@@ -744,6 +743,14 @@ function startCallT(s){
     onConnected: (id, name) => { toast(`${name || "Ученик"} подключился к видеозвонку`); if (T.room && T.view !== "room"){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); } }});
 }
 /* присоединиться к уже идущему уроку (с другого устройства или после выхода): ничего не сбрасываем, ученику ничего не шлём, звонок – по кнопке */
+/* выбор урока на занятии: сначала курс (любой курс предмета, любой класс), потом тема */
+function roomPicker(s, c, r){
+  const own = s.course, cids = [...new Set([own, ...U.coursesOf(subjOfS(s))])].filter(Boolean), cid = r.pickCourse && cids.includes(r.pickCourse) ? r.pickCourse : own;
+  if (cid !== own){ const cc = teacherCourse(cid); if (cc?.locked && T.me?.base && window.CATALOG?.[cid] && !T.loaded?.has(cid)) ensureCourses([cid]).then(ok => ok && render()); }
+  const L = cid === own ? c.lessons : (() => { const cc = teacherCourse(cid); return !cc ? [] : access(cid) ? cc.lessons : cc.lessons.filter(l => l.custom); })();
+  return `<select id="room-course" aria-label="Курс" style="width:auto;max-width:260px">${cids.map(k => `<option value="${k}" ${k === cid ? "selected" : ""}>${esc(U.getCourse(k)?.course || k)}${k === own ? " · план ученика" : access(k) ? "" : " 🔒"}</option>`).join("")}</select>
+    <select id="room-lesson" aria-label="Тема" style="width:auto;max-width:320px"><option value="free" ${r.lesson === "free" ? "selected" : ""}>Свободная доска</option>${L.map((x, i) => `<option value="${x.id}" ${cid === own && x.id === r.lesson ? "selected" : ""}>№ ${i + 1} · ${esc(x.title)}${cid === own && x.id === r.planned ? " · по плану" : ""}${cid === own && (r.covered.has(x.id) || s.covered?.[x.id]) ? " · пройден" : ""}</option>`).join("")}${cid !== own ? `<option value="" selected disabled>– выберите тему –</option>` : ""}</select>`;
+}
 function joinRoom(s, rm){
   const c = U.courseFor(s, T.mats), planned = c?.lessons.length ? lessonNow(c) : null, to = rm.to?.length ? rm.to : [s.id, s.pair_id].filter(Boolean);
   T.room = {sid: s.id, to, lesson: rm.lesson || planned || "free", planned, keepPlan: true, since: Date.now(), covered: new Set(),
@@ -830,10 +837,9 @@ function viewRoom(){
   return `<div class="roombar glass">
       <div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок: ${esc(s.name)}${pair ? " и " + esc(pair.name) : ""}</b><span data-online="${s.id}"></span></div>
       <div class="row" style="gap:8px">
-        <select id="room-lesson" aria-label="Урок"><option value="free" ${r.lesson === "free" ? "selected" : ""}>Свободная доска</option>${c.lessons.map((x, i) => `<option value="${x.id}" ${x.id === r.lesson ? "selected" : ""}>№ ${i + 1} · ${esc(x.title)}${x.id === r.planned ? " · по плану" : ""}${r.covered.has(x.id) || s.covered?.[x.id] ? " · пройден" : ""}</option>`).join("")}</select>
+        ${roomPicker(s, c, r)}
         ${window.Call && !Call.active() ? `<button class="btn sm" data-act="call-start">🎥 Видеозвонок</button>` : ""}
         ${r.url ? `<a class="btn ghost sm" href="${esc(r.url)}" target="_blank" rel="noopener" title="Если видеозвонок не соединяется">Звонок по ссылке</a>` : ""}
-        <button class="btn ghost sm" data-act="room-take" aria-pressed="${!!r.take}">+ Из другого класса</button>
         <button class="btn ghost sm" data-act="room-invite" title="Ученик сразу окажется на уроке, чем бы он ни занимался">Позвать</button>
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
       ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : ""}</div>
@@ -1284,7 +1290,16 @@ document.addEventListener("submit", async e => {
     T.students.push(data); T.justInvited = data; render(); toast("Ссылка создана – скопируйте и отправьте ученику");
   }
   if (id === "plan-form"){
-    if (await upd(T.sel, {course: $("#pl-course").value, start_date: $("#pl-start").value || null})){ render(); cmd(T.sel, "refresh", {msg:"Учитель обновил твой план"}); toast("План сохранён – ученик увидит уроки по этим датам"); }
+    const s = T.students.find(x => x.id === T.sel), picked = [...document.querySelectorAll(".pl-c:checked")].map(x => x.value);
+    if (!picked.length){ toast("Отметьте хотя бы один курс"); return; }
+    const sib = siblings(s).filter(o => subjOfS(o) === subjOfS(s)), have = new Set(sib.map(o => o.course));
+    if (!picked.includes(s.course)){ if (!(await upd(s.id, {course: picked.find(k => !have.has(k)) || picked[0]}))) return; have.add(s.course); }
+    let added = 0;
+    for (const k of picked.filter(k => !have.has(k))){
+      const {error} = await sb.rpc("teacher_add_subject", {p_student: s.id, p_subject: subjOfS(s), p_grade: U.getCourse(k)?.grade || s.grade || 9, p_course: k});
+      if (error){ toast("Не добавился курс: " + (U.getCourse(k)?.course || k)); } else added++;
+    }
+    await loadAll(); cmd(s.id, "refresh", {msg:"Учитель обновил твой план"}); toast(added ? `План сохранён, добавлено курсов: ${added}` : "План сохранён");
   }
   if (id === "own-lesson"){
     const cid = curCourse(), lid = "c" + U.randHex(4);
@@ -1328,7 +1343,17 @@ document.addEventListener("change", async e => {
   if (e.target.id === "call-url" || e.target.id === "room-url"){ const s = T.students.find(x => x.id === (e.target.id === "room-url" ? T.room?.sid : T.sel)); if (s && await saveCall(s, e.target.value)) render(); return; }
   if (e.target.id === "tk-subj"){ T.take = {subj: e.target.value}; render(); return; }
   if (e.target.id === "tk-course"){ T.take = {...(T.take || {}), course: e.target.value}; render(); return; }
-  if (e.target.id === "room-lesson" && T.room){ roomSetLesson(e.target.value); return; }
+  if (e.target.id === "room-course" && T.room){ T.room.pickCourse = e.target.value; render(); return; }
+  if (e.target.id === "room-lesson" && T.room){
+    const r = T.room, s = T.students.find(x => x.id === r.sid), cid = r.pickCourse || s.course, lid = e.target.value;
+    if (!lid) return;
+    if (lid === "free" || cid === s.course){ roomSetLesson(lid); return; }
+    // тема из другого курса: копируется ученику на сегодняшнее занятие и сразу открывается у него
+    e.target.disabled = true;
+    const P = isoToday(), nid = await insertLesson(s, cid, lid, P, false); if (!nid){ e.target.disabled = false; return; }
+    r.to.forEach(id => r.base[id] = {...(T.students.find(x => x.id === id)?.dates || {})});
+    r.pickCourse = null; await roomSetLesson(nid); toast("Тема открыта у ученика"); return;
+  }
   if (e.target.id === "course-pick"){ T.courseId = e.target.value; render(); return; }
   if (e.target.id === "ns-subj"){ T.addSubj = e.target.value; const sel = $("#ns-grade"); sel.innerHTML = U.subj(T.addSubj).g.map(g => `<option value="${g}" ${g===9?"selected":""}>${U.gradeName(g)}</option>`).join(""); $("#ns-goal").innerHTML = goalOpts(T.addSubj, sel.value); return; }
   if (e.target.id === "ns-grade"){ $("#ns-goal").innerHTML = goalOpts($("#ns-subj").value, e.target.value); return; }

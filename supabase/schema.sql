@@ -232,10 +232,10 @@ create or replace function public.is_dev()
 returns boolean language sql security definer set search_path = public stable as $$
   select exists (select 1 from teachers where id = auth.uid() and role = 'developer');
 $$;
--- «команда»: свой кабинет, а у разработчика – все кабинеты разработчика (ученики видны из любого своего кабинета)
+-- доступ к ученику и его данным – только у кабинета, за которым он закреплён
 create or replace function public.my_team(t uuid)
 returns boolean language sql security definer set search_path = public stable as $$
-  select t = auth.uid() or (public.is_dev() and exists (select 1 from teachers where id = t and role = 'developer'));
+  select t = auth.uid();   -- ученики видны только своему кабинету
 $$;
 
 -- действующий тариф: разработчик – full; иначе тариф, если оплачен (или идёт пробный период); null – подписки нет
@@ -329,8 +329,7 @@ begin
   return json_build_object('join_code', r.join_code, 'id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url,
     'plan', r.plan, 'paid_until', r.paid_until, 'trial', r.trial, 'active', plan_active(r.id), 'base', can_read_base(r.id),
     'prices', (select value from app_settings where key = 'prices'),
-    'room', (select t.room from teachers t where t.room is not null and (t.id = uid or (r.role = 'developer' and t.role = 'developer'))
-             order by (t.room->>'at')::bigint desc nulls last limit 1));
+    'room', r.room);
 end $$;
 
 create or replace function public.teacher_set_theme(p_theme text)
@@ -366,7 +365,7 @@ create or replace function public.teacher_set_room(p_room jsonb)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if p_room is null then
-    update teachers set room = null where id = auth.uid() or (public.is_dev() and role = 'developer');
+    update teachers set room = null where id = auth.uid();
   else
     if length(p_room::text) > 4000 then raise exception 'too big'; end if;
     update teachers set room = p_room where id = auth.uid();
@@ -386,7 +385,8 @@ declare r students; nid uuid; c text;
 begin
   select * into r from students where id = p_student and public.my_team(teacher_id);
   if r.id is null then raise exception 'not your student'; end if;
-  if exists (select 1 from students where coalesce(person_id, id) = coalesce(r.person_id, r.id) and subject = p_subject) then raise exception 'subject exists'; end if;
+  -- тот же предмет можно добавить ещё раз с другим курсом (например, школьная программа + ВПР)
+  if exists (select 1 from students where coalesce(person_id, id) = coalesce(r.person_id, r.id) and subject = p_subject and coalesce(course, '') = coalesce(p_course, '')) then raise exception 'subject exists'; end if;
   loop c := upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 7)); exit when not exists (select 1 from students where code = c); end loop;
   update students set person_id = coalesce(person_id, id) where id = r.id;
   insert into students(teacher_id, name, course, code, grade, goal, goals, contact, password_hash, registered_at, start_date, subject, theme, mascot, person_id)
@@ -739,15 +739,3 @@ do $$ declare f text; begin
   begin execute 'grant execute on function public.plan_active(uuid) to service_role'; exception when undefined_object then null; end;
 end $$;
 
--- Официальный кабинет учителя: ученики всех кабинетов разработчика собираются в нём (кабинет найден по хешу почты, сама почта здесь не хранится)
-do $$ declare off uuid; begin
-  select u.id into off from auth.users u join teachers t on t.id = u.id
-   where encode(extensions.digest(lower(u.email), 'sha256'), 'hex') = 'a1130f92712dae28b23f72b1ca0baeaa75b0a83d5ce8016c88df81d47730ed63' limit 1;
-  -- запасной вариант: единственный кабинет разработчика на mail.ru (официальный)
-  if off is null and (select count(*) from auth.users u join teachers t on t.id = u.id where u.email ilike '%@mail.ru' and t.role = 'developer') = 1 then
-    select u.id into off from auth.users u join teachers t on t.id = u.id where u.email ilike '%@mail.ru' and t.role = 'developer';
-  end if;
-  if off is null then return; end if;
-  update teachers set role = 'developer' where id = off and role <> 'developer';
-  update students set teacher_id = off where teacher_id <> off and teacher_id in (select id from teachers where role = 'developer');
-end $$;
