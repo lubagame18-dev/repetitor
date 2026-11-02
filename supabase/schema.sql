@@ -46,6 +46,8 @@ alter table public.students add column if not exists mascot        text;
 alter table public.students add column if not exists person_id     uuid;   -- один ученик в нескольких предметах: у всех его строк общий person_id
 alter table public.students add column if not exists call_url      text;   -- ссылка на созвон (Телемост и т. п.) для этого ученика
 alter table public.students add column if not exists covered       jsonb not null default '{}'::jsonb;  -- пройдено на уроке онлайн: {урок: дата}
+alter table public.students add column if not exists school        text;   -- школа (ученик пишет сам в профиле)
+alter table public.students add column if not exists avatar        text;   -- фото профиля
 alter table public.teachers add column if not exists call_url      text;   -- ссылка на созвон по умолчанию
 alter table public.teachers add column if not exists room          jsonb;  -- идущий урок: ученик, урок, вкладка (чтобы вернуться с любого устройства)
 -- подписка: basic – 100 ₽ (свои материалы), materials – 300 ₽ (+ наша база, анализ и план), full – 500 ₽ (+ вся нейросеть)
@@ -472,6 +474,7 @@ create or replace function public.student_profile_json(sid uuid)
 returns json language sql security definer set search_path = public stable as $$
   select json_build_object('id', s.id, 'name', s.name, 'grade', s.grade, 'goal', s.goal, 'goals', s.goals, 'course', s.course, 'login', s.code,
                            'start_date', s.start_date, 'dates', s.dates, 'unlocked', s.unlocked, 'theme', s.theme, 'mascot', s.mascot, 'teacher', s.teacher_id, 'subject', s.subject,
+                           'school', s.school, 'avatar', s.avatar,
                            'call_url', coalesce(nullif(s.call_url, ''), (select t.call_url from teachers t where t.id = s.teacher_id)),
                            'subjects', (select json_agg(json_build_object('id', o.id, 'subject', o.subject, 'course', o.course, 'grade', o.grade) order by o.created_at)
                                           from students o where coalesce(o.person_id, o.id) = coalesce(s.person_id, s.id) and o.registered_at is not null),
@@ -639,6 +642,18 @@ begin
   on conflict (student_id, lesson_id, task) do update set data = excluded.data, updated_at = now();
 end $$;
 
+-- профиль ученика: школа и фото – общие для всех его предметов
+create or replace function public.student_set_profile(p_code text, p_school text, p_avatar text)
+returns void language plpgsql security definer set search_path = public as $$
+declare sid uuid := student_id_by_code(p_code); pid uuid;
+begin
+  if sid is null then raise exception 'unknown code'; end if;
+  select coalesce(person_id, id) into pid from students where id = sid;
+  update students set school = nullif(left(trim(coalesce(p_school, '')), 160), ''),
+                      avatar = case when p_avatar ~ '^https://' then left(p_avatar, 500) when p_avatar = '' then null else avatar end
+  where coalesce(person_id, id) = pid;
+end $$;
+
 create or replace function public.student_set_mascot(p_code text, p_mascot text)
 returns void language sql security definer set search_path = public as $$
   update students set mascot = left(p_mascot, 20) where id = student_id_by_code(p_code);
@@ -707,7 +722,7 @@ do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
     'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
-    'public.student_set_theme(text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
+    'public.student_set_theme(text, text)', 'public.student_set_profile(text, text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
     execute 'revoke all on function ' || f || ' from public';
@@ -720,4 +735,13 @@ do $$ declare f text; begin
   end loop;
   execute 'revoke all on function public.board_owner(uuid) from public, anon, authenticated';
   begin execute 'grant execute on function public.plan_active(uuid) to service_role'; exception when undefined_object then null; end;
+end $$;
+
+-- Официальный кабинет учителя: ученики всех кабинетов разработчика собираются в нём (кабинет найден по хешу почты, сама почта здесь не хранится)
+do $$ declare off uuid; begin
+  select u.id into off from auth.users u join teachers t on t.id = u.id
+   where encode(extensions.digest(lower(u.email), 'sha256'), 'hex') = 'a1130f92712dae28b23f72b1ca0baeaa75b0a83d5ce8016c88df81d47730ed63' limit 1;
+  if off is null then return; end if;
+  update teachers set role = 'developer' where id = off and role <> 'developer';
+  update students set teacher_id = off where teacher_id <> off and teacher_id in (select id from teachers where role = 'developer');
 end $$;
