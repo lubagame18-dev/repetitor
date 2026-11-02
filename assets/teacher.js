@@ -139,6 +139,7 @@ function viewStudents(){
     <div class="grid2">${list.map(s => { const x = sData(s), avg = x.c ? U.avgAll(x.c, x.results) : null, p = s.pair_id && nameOf(s.pair_id);
       return `<button class="card" data-student="${s.id}" style="text-align:left">
         <div class="row between"><h2>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h2>${x.waiting ? `<span class="chip mid">проверить: ${x.waiting}</span>` : ""}</div>
+        ${!pending(s) ? `<div class="row" style="gap:8px;margin:6px 0"><span class="btn sm" role="button" tabindex="0" data-act="start-lesson" data-id="${s.id}">▶ Начать занятие</span>${(() => { const nx = x.c?.lessons.find(l => l.date >= U.iso(new Date()) && !s.covered?.[l.id]); return nx ? `<span class="small muted">следующий: ${U.fmt(nx.date, {day: "numeric", month: "short"})}${U.lessonTime(s, nx) ? " в " + esc(U.lessonTime(s, nx)) : ""}</span>` : ""; })()}</div>` : ""}
         <div data-online="${s.id}"></div>
         <p class="small" style="margin-top:4px"><b>${U.subj(subjOfS(s)).e} ${esc(U.subj(subjOfS(s)).n)}</b></p>
         <p class="small muted">${s.grade != null ? U.gradeName(s.grade) : "класс не указан"}${s.goal ? " · " + esc(U.goalLabel(s.goal)) : ""}${s.school ? " · " + esc(s.school) : ""} · логин ${esc(s.code)}</p>
@@ -295,6 +296,7 @@ function viewStudent(){
   const unlocked = s.unlocked || [], others = T.students.filter(o => o.id !== s.id && !pending(o));
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="students">← Все ученики</button><button class="btn ghost sm" data-act="reload">Обновить</button></div>
   <section class="hero glass" style="min-height:150px"><span class="mono muted">${s.grade ? s.grade + " класс" : "класс не указан"} · ${esc(c ? c.course : "план не выбран")}</span>
+    ${!pending(s) ? `<div class="row" style="gap:8px;margin:8px 0"><button class="btn" data-act="start-lesson">▶ Начать занятие</button>${T.room?.sid === s.id || T.me?.room?.sid === s.id ? `<button class="btn ghost" data-act="room-back">↩ Вернуться к идущему уроку</button>` : ""}</div>` : ""}
     <h1 style="display:flex;gap:12px;align-items:center">${s.avatar ? `<img src="${esc(s.avatar)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : ""}${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h1><p>${s.goal ? esc(U.goalLabel(s.goal)) + " · " : ""}${s.school ? esc(s.school) + " · " : ""}логин ${esc(s.code)}</p><div data-online="${s.id}" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   ${inviteBox(s)}
   <div class="grid2" style="margin-top:16px">
@@ -316,6 +318,12 @@ function viewStudent(){
       <select id="as-subj">${U.SUBJECTS.filter(x => !siblings(s).some(o => subjOfS(o) === x.k)).map(x => `<option value="${x.k}">${x.e} ${esc(x.n)}</option>`).join("")}</select>
       <select id="as-grade" aria-label="Класс">${U.subj(U.SUBJECTS.find(x => !siblings(s).some(o => subjOfS(o) === x.k))?.k || "rus").g.map(g => `<option value="${g}" ${g === s.grade ? "selected" : ""}>${U.gradeName(g)}</option>`).join("")}</select>
       <div><button class="btn sm" data-act="add-subject">Добавить предмет</button></div>`}</div>
+    ${c && !pending(s) || c ? `<div class="card stack" style="gap:8px"><div class="kicker">Расписание</div>
+      <p class="small muted">Отметьте дни и время – даты будущих уроков расставятся сами (можно каждый день). Любую дату и время потом можно поправить в таблице уроков.</p>
+      <div class="row" style="gap:6px;flex-wrap:wrap" role="group" aria-label="Дни недели">${["Пн","Вт","Ср","Чт","Пт","Сб","Вс"].map((d, k) => `<label class="chip" style="cursor:pointer"><input type="checkbox" class="sched-wd" value="${(k + 1) % 7}" style="width:auto" ${(s.dates?._days || []).includes((k + 1) % 7) ? "checked" : ""}> ${d}</label>`).join("")}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><label class="small" for="sched-time">Время</label><input type="time" id="sched-time" value="${esc(s.dates?._time || "")}" style="width:120px">
+        <label class="small" for="sched-from">с</label><input type="date" id="sched-from" value="${esc(U.iso(new Date()))}" style="width:160px"></div>
+      <div><button class="btn sm" data-act="sched-apply">Расставить даты</button></div></div>` : ""}
     <div class="card stack" style="gap:8px"><div class="kicker">Занятие онлайн</div>
       <p class="small muted">Ссылка на созвон: Яндекс Телемост, VK Звонки, Сферум или любая другая – своя для каждого ученика. «Начать занятие» сразу открывает звонок, общую доску и задания текущего урока, а ученику приходит приглашение: он выбирает доску, звонок или то и другое (можно с разных устройств).</p>
       <div class="linkbox"><input type="url" id="call-url" value="${esc(s.call_url || "")}" placeholder="${esc(T.me?.call_url || "https://telemost.yandex.ru/j/…")}"><button class="btn ghost sm" data-act="save-call">Сохранить</button></div>
@@ -346,7 +354,7 @@ function viewStudent(){
   ${c.lessons.map((l,i) => { const r = x.results[l.id], hr = x.hwres[l.id], h = x.hw[l.id], w = x.writings[l.id], hs = U.hwState(c, l.id, x.hw), dn = x.done(l);
     const byDate = d(l.date) <= today(), early = unlocked.includes(l.id);
     const wcell = !w ? "–" : w.status === "sent" ? `<span class="chip mid">ждёт</span>` : w.max ? `<span class="chip ${lvl(Math.round(w.total/w.max*100))}">${w.total}/${w.max}</span>` : `<span class="chip">${w.status === "redo" ? "доработка" : "проверено"}</span>`;
-    return `<tr><td class="tnum">${i+1}</td><td><input type="date" value="${esc(l.date)}" data-date="${l.id}" style="width:150px;padding:6px 8px" aria-label="Дата урока ${i+1}">${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
+    return `<tr><td class="tnum">${i+1}</td><td><input type="date" value="${esc(l.date)}" data-date="${l.id}" style="width:150px;padding:6px 8px" aria-label="Дата урока ${i+1}"><input type="time" value="${esc(U.lessonTime(s, l))}" data-ltime="${l.id}" style="width:110px;padding:6px 8px;margin-top:4px" aria-label="Время урока ${i+1}">${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
       <td><i class="dot" style="background:${blockOf(c, l).color}"></i> ${esc(l.title)}${l.writing ? `<div class="small muted">${esc(U.KIND_NAME[l.writing.type])}</div>` : ""}${l.custom ? (T.mats.find(m => m.id === l.mid)?.student_id ? `<div class="small muted">из курса «${esc(l.oge)}» <button class="linkbtn" data-act="del-copy" data-mid="${l.mid}">убрать</button></div>` : '<div class="small muted">свой урок</div>') : ""}</td>
       <td>${byDate ? '<span class="chip good">открыт</span>' : early ? `<button class="btn ghost sm" data-unlock="${l.id}" data-on="0">Закрыть</button>` : `<button class="btn ghost sm" data-unlock="${l.id}" data-on="1">${I.lock} Открыть сейчас</button>`}</td>
       <td class="tnum">${mins(x.time[l.id])}</td>
@@ -734,6 +742,14 @@ function startCallT(s){
   if (!window.Call || !T.session) return;
   Call.join({sb, room: `${s.teacher_id || T.session.user.id}-${ownerOf(s)}`, me: "t-" + T.session.user.id, name: T.me?.name || CFG.TEACHER_NAME || "Учитель",
     onConnected: (id, name) => { toast(`${name || "Ученик"} подключился к видеозвонку`); if (T.room && T.view !== "room"){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); } }});
+}
+/* присоединиться к уже идущему уроку (с другого устройства или после выхода): ничего не сбрасываем, ученику ничего не шлём, звонок – по кнопке */
+function joinRoom(s, rm){
+  const c = U.courseFor(s, T.mats), planned = c?.lessons.length ? lessonNow(c) : null, to = rm.to?.length ? rm.to : [s.id, s.pair_id].filter(Boolean);
+  T.room = {sid: s.id, to, lesson: rm.lesson || planned || "free", planned, keepPlan: true, since: Date.now(), covered: new Set(),
+    base: Object.fromEntries(to.map(id => [id, {...(T.students.find(x => x.id === id)?.dates || {})}])), url: callOf(s), at: rm.at || Date.now(), tab: rm.tab || null, shown: rm.tab || null, who: s.id, joined: true};
+  T.sel = s.id; T.view = "room"; T.drawer = false; render(); scrollTo(0, 0);
+  toast("Вы на идущем уроке. Видеозвонок – кнопкой «🎥 Видеозвонок», если нужен на этом устройстве");
 }
 function startRoom(s, lesson, keepPlan){
   let url = callOf(s); if (url && url !== s.call_url) saveCall(s, url, true);
@@ -1319,6 +1335,12 @@ document.addEventListener("change", async e => {
   if (e.target.id === "as-subj"){ const sel = $("#as-grade"); sel.innerHTML = U.subj(e.target.value).g.map(g => `<option value="${g}">${U.gradeName(g)}</option>`).join(""); const s = T.students.find(x => x.id === T.sel); if (s && U.subj(e.target.value).g.includes(s.grade)) sel.value = s.grade; return; }
   if (e.target.id === "gm-kind"){ T.gform = gameRead(); render(); return; }
   if (e.target.id === "am-kind"){ document.querySelectorAll("#add-mat [data-k]").forEach(el => el.hidden = !el.dataset.k.split(" ").includes(e.target.value)); return; }
+  if (e.target.dataset.ltime){
+    const s = T.students.find(x => x.id === T.sel), dates = {...(s.dates || {})}, k = "t:" + e.target.dataset.ltime;
+    if (e.target.value && e.target.value !== dates._time) dates[k] = e.target.value; else delete dates[k];
+    if (await upd(s.id, {dates})){ render(); cmd(s.id, "refresh", {msg:"Учитель изменил время урока"}); toast("Время урока изменено"); }
+    return;
+  }
   if (e.target.dataset.date){
     const s = T.students.find(x => x.id === T.sel), dates = {...(s.dates || {}), [e.target.dataset.date]: e.target.value};
     if (!e.target.value) delete dates[e.target.dataset.date];
@@ -1422,11 +1444,28 @@ document.addEventListener("click", async e => {
     }
     return;
   }
-  if (a === "start-lesson"){ const s = T.students.find(x => x.id === (t.dataset.id || T.sel)); if (s) startRoom(s, t.dataset.rl); return; }
+  if (a === "sched-apply"){
+    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats); if (!s || !c) return;
+    const days = [...document.querySelectorAll(".sched-wd:checked")].map(x => +x.value), time = $("#sched-time").value, from = $("#sched-from").value || U.iso(new Date());
+    if (!days.length){ toast("Отметьте хотя бы один день недели"); return; }
+    const L = c.lessons.filter(l => !s.covered?.[l.id] && l.date >= from);
+    const first = c.lessons.find(l => !s.covered?.[l.id] && l.date >= from);
+    const todo = first ? c.lessons.slice(c.lessons.indexOf(first)).filter(l => !s.covered?.[l.id]) : L;
+    const dates = {...(s.dates || {}), _days: days, _time: time || undefined};
+    if (!time) delete dates._time;
+    let dt = new Date(from + "T00:00:00"); let k = 0, guard = 0;
+    while (k < todo.length && guard++ < 2000){ if (days.includes(dt.getDay())){ dates[todo[k].id] = U.iso(dt); k++; } dt = new Date(dt.getTime() + 864e5); }
+    if (await upd(s.id, {dates})){ render(); cmd(s.id, "refresh", {msg: "Учитель обновил расписание"}); toast(`Даты расставлены: ${todo.length} уроков с ${U.fmt(from)}`); }
+    return;
+  }
+  if (a === "start-lesson"){ const s = T.students.find(x => x.id === (t.dataset.id || T.sel)); if (!s) return;
+    if (T.room?.sid === s.id && !t.dataset.rl){ T.sel = s.id; T.view = "room"; render(); scrollTo(0, 0); return; }
+    const rm = T.me?.room; if (!T.room && rm?.sid === s.id && Date.now() - (rm.at || 0) < 5 * 3600e3 && !t.dataset.rl){ joinRoom(s, rm); return; }
+    startRoom(s, t.dataset.rl); return; }
   if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); roomPersist(); return; }
   if (a === "room-back"){ if (T.room){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); return; }
     const rm = T.me?.room, st = rm && T.students.find(x => x.id === rm.sid); if (!st){ toast("Урок уже завершён"); T.me.room = null; render(); return; }
-    startRoom(st, rm.lesson, true); if (rm.tab && T.room){ T.room.tab = rm.tab; render(); } return; }
+    joinRoom(st, rm); return; }
   if (a === "room-forget"){ if (T.me) T.me.room = null; if (!T.room) sb.rpc("teacher_set_room", {p_room: null}).then(() => {}, () => {}); render(); return; }
   if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
   if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.since = Date.now(); T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
@@ -1632,7 +1671,7 @@ document.addEventListener("click", async e => {
   if (T.session) await loadAll(); else render();
   if (rt && T.session){
     const st = rt.room && T.students.find(x => x.id === rt.room.sid);
-    if (rt.view === "room" && st) startRoom(st, rt.room.lesson, true);
+    if (rt.view === "room" && st) joinRoom(st, {...(T.me?.room?.sid === st.id ? T.me.room : {}), lesson: rt.room.lesson, sid: st.id});
     else if (["student","board","work"].includes(T.view) && !T.students.find(x => x.id === T.sel)){ T.view = "students"; render(); }
     if (rt.y && T.view !== "room") requestAnimationFrame(() => scrollTo(0, rt.y));
   }

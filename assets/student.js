@@ -390,7 +390,7 @@ function folderHTML(l){
     <span class="back"></span><span class="papers"><i></i><i></i></span>
     <span class="front">
       ${open ? "" : `<span class="lockico">${I.lock}</span>`}
-      <span class="num">№ ${String(i+1).padStart(2,"0")} · ${fmt(l.date,{day:"numeric",month:"short"}).toUpperCase()}</span>
+      <span class="num">№ ${String(i+1).padStart(2,"0")} · ${fmt(l.date,{day:"numeric",month:"short"}).toUpperCase()}${U.lessonTime(S.profile, l) ? " · " + esc(U.lessonTime(S.profile, l)) : ""}</span>
       <span class="ttl">${esc(l.title)}</span>
       <span class="meta">${open ? `${(G => `${G.lesson ? `<span class="pill">урок: ${G.lesson.g}</span>` : ""}${G.home ? `<span class="pill">ДЗ: ${G.home.g}</span>` : ""}`)(U.lessonGrades(l, S.results, S.hwres, S.hw, S.writings))}${w?.max ? `<span class="pill">✍ ${w.total}/${w.max}</span>` : ""}${hs.c==="bad" ? '<span class="pill">ДЗ!</span>' : ""}<span class="arrow">→</span>`
         : `<span class="pill">откроется ${fmt(l.date,{day:"numeric",month:"short"})}</span>`}</span>
@@ -410,7 +410,7 @@ function noCourse(){
 function todayLesson(){ return S.course?.lessons.find(l => daysTo(l.date) === 0) || null; }
 function todayCard(){
   const l = todayLesson(); if (!l || S.room) return "";
-  return `<div class="card accent today-card" role="region" aria-label="Сегодня занятие"><div class="kicker"><span class="live-dot" aria-hidden="true"></span> Сегодня у вас занятие</div>
+  return `<div class="card accent today-card" role="region" aria-label="Сегодня занятие"><div class="kicker"><span class="live-dot" aria-hidden="true"></span> Сегодня у вас занятие${U.lessonTime(S.profile, l) ? " в " + esc(U.lessonTime(S.profile, l)) : ""}</div>
     <h2 style="margin-top:6px">${esc(l.title)}</h2>
     <p class="small" style="margin:6px 0 12px"><span class="dot" style="background:${blockOf(l).color}"></span> ${esc(l.oge || "")}. Когда придёт время урока, нажми кнопку – откроются доска, материалы урока и видеозвонок с учителем.</p>
     <div class="row"><button class="btn" data-act="start-today" data-l="${l.id}">▶ Начать урок</button><button class="btn ghost" data-open="${l.id}">Открыть папку</button></div></div>`;

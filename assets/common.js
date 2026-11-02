@@ -195,6 +195,8 @@ window.U = (() => {
     sel = sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i];
     box.dataset.sel = sel.join(","); g.classList.toggle("on", sel.includes(i)); g.textContent = sel.includes(i) ? "," : "";
   });
+  /* время урока: своё у урока или общее время из расписания ученика (хранится в dates: «t:урок» и «_time») */
+  const lessonTime = (p, l) => p?.dates?.["t:" + l.id] || p?.dates?._time || "";
   const findLesson = (c, id) => c?.lessons?.find(x => x.id === id) || c?.labLessons?.find(x => x.id === id) || null;
   function critFor(course, kind){ return kind === "izl" ? course.criteria.izl : ["13.1","13.2","13.3"].includes(kind) ? course.criteria.essay : null; }
   function writingResultHTML(course, w){
@@ -410,5 +412,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {pnParse, pnSel, pnOk, pnText, pnHTML, findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {lessonTime, pnParse, pnSel, pnOk, pnText, pnHTML, findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

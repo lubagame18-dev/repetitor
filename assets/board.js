@@ -34,6 +34,7 @@ window.Board = (() => {
           <button data-act="embed" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…">🌐</button>
           <button data-act="camera" title="Фото с камеры">📷</button>
           <button data-act="undo" title="Отменить своё последнее">↶</button>
+          <button data-act="snap" title="Снимок листа: картинка с заданиями и всеми пометками">📸</button>
           ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">🧹</button>` : ""}
         </div></div>
       <div class="bd-stage"><div class="bd-wrap">
@@ -278,6 +279,16 @@ window.Board = (() => {
     }
     cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end); cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") end(e); });
 
+    /* снимок листа: всё, что на нём – задания, ответы, пометки ручкой */
+    async function snapshot(){
+      try {
+        if (!window.html2canvas) await new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+        U.toast("Делаю снимок…");
+        const shot = await window.html2canvas(wrap, {backgroundColor: "#fff", scale: Math.min(2, window.devicePixelRatio || 1), useCORS: true, logging: false});
+        const label = (pagesArr.find(p => p.key === page)?.label || "лист").replace(/[\\/:*?"<>|]/g, "");
+        const a = document.createElement("a"); a.href = shot.toDataURL("image/png"); a.download = `Доска – ${label} – ${new Date().toLocaleString("ru-RU").replace(/[:,]/g, "-")}.png`; a.click();
+      } catch(_) { U.toast("Не получилось сделать снимок. Можно сделать снимок экрана: Win + Shift + S."); }
+    }
     /* ---------- быстрая панель: правая кнопка мыши, кнопка стилуса или долгое нажатие ---------- */
     const menu = root.querySelector(".bd-menu");
     function openMenu(x, y){
@@ -322,6 +333,7 @@ window.Board = (() => {
       if (b.dataset.tool) setTool(b.dataset.tool);
       if (b.dataset.color){ setColor(b.dataset.color); if (tool !== "pen" && tool !== "text") setTool("pen"); }
       if (b.dataset.act === "undo"){ const id = mine.pop(); if (id) removeIds([id]); }
+      if (b.dataset.act === "snap") snapshot();
       if (b.dataset.act === "clear"){
         if (b.dataset.sure){ await o.api.clear(page); items.clear(); redraw(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
         else { b.dataset.sure = "1"; b.textContent = "✔?"; b.title = "Нажмите ещё раз, чтобы очистить лист"; setTimeout(() => { b.textContent = "🧹"; delete b.dataset.sure; }, 3000); }
