@@ -10,7 +10,7 @@ const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null,
            online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false};
 const $ = s => document.querySelector(s);
 const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
-const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered";
+const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered,school,avatar";
 const inviteLink = tok => `${location.origin}${location.pathname.replace(/teacher\.html$/, "")}?invite=${tok}`;
 const blockOf = (c, l) => c.blocks[l.block] || {name:"Свои уроки", color:U.ownColor()};
 const I = {
@@ -141,7 +141,7 @@ function viewStudents(){
         <div class="row between"><h2>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h2>${x.waiting ? `<span class="chip mid">проверить: ${x.waiting}</span>` : ""}</div>
         <div data-online="${s.id}"></div>
         <p class="small" style="margin-top:4px"><b>${U.subj(subjOfS(s)).e} ${esc(U.subj(subjOfS(s)).n)}</b></p>
-        <p class="small muted">${s.grade != null ? U.gradeName(s.grade) : "класс не указан"}${s.goal ? " · " + esc(s.goal) : ""} · логин ${esc(s.code)}</p>
+        <p class="small muted">${s.grade != null ? U.gradeName(s.grade) : "класс не указан"}${s.goal ? " · " + esc(U.goalLabel(s.goal)) : ""}${s.school ? " · " + esc(s.school) : ""} · логин ${esc(s.code)}</p>
         ${p ? `<p class="small" style="margin-top:4px">👥 в паре с ${esc(p.name)}</p>` : ""}
         <div class="row" style="margin-top:10px;gap:20px">
           <div><div class="big tnum" style="font-size:1.5rem;color:${x.entry ? lvlColor(pct(x.entry.last)) : "inherit"}">${x.entry ? pct(x.entry.last) + "%" : "–"}</div><div class="small muted">входной тест</div></div>
@@ -295,11 +295,11 @@ function viewStudent(){
   const unlocked = s.unlocked || [], others = T.students.filter(o => o.id !== s.id && !pending(o));
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="students">← Все ученики</button><button class="btn ghost sm" data-act="reload">Обновить</button></div>
   <section class="hero glass" style="min-height:150px"><span class="mono muted">${s.grade ? s.grade + " класс" : "класс не указан"} · ${esc(c ? c.course : "план не выбран")}</span>
-    <h1>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h1><p>${s.goal ? esc(s.goal) + " · " : ""}логин ${esc(s.code)}</p><div data-online="${s.id}" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
+    <h1 style="display:flex;gap:12px;align-items:center">${s.avatar ? `<img src="${esc(s.avatar)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : ""}${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h1><p>${s.goal ? esc(U.goalLabel(s.goal)) + " · " : ""}${s.school ? esc(s.school) + " · " : ""}логин ${esc(s.code)}</p><div data-online="${s.id}" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   ${inviteBox(s)}
   <div class="grid2" style="margin-top:16px">
     <div class="card stack" style="gap:6px"><div class="kicker">Анкета</div>
-      <p><b>Класс:</b> ${s.grade || "–"}</p><p><b>Цели:</b> ${esc((s.goals || []).join(", ") || s.goal || "–")}</p><p><b>Контакт:</b> ${esc(s.contact || "–")}</p>
+      <p><b>Класс:</b> ${s.grade || "–"}</p><p><b>Цели:</b> ${esc((s.goals || []).map(U.goalLabel).join(", ") || s.goal || "–")}</p><p><b>Школа:</b> ${esc(s.school || "–")}</p><p><b>Контакт:</b> ${esc(s.contact || "–")}</p>
       <p><b>Зарегистрирован:</b> ${s.registered_at ? new Date(s.registered_at).toLocaleDateString("ru-RU") : "нет"}</p>
       <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="new-invite">${pending(s) ? "Новая ссылка" : "Сбросить пароль (новая ссылка)"}</button></div></div>
     <form class="card stack" id="plan-form" style="gap:8px"><div class="kicker">План работы</div>
@@ -334,6 +334,8 @@ function viewStudent(){
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
   ${T.liveTest?.[s.id] && !T.liveTest[s.id].done && !T.liveTest[s.id].quit ? `<div class="section-title"><h2>Сейчас проходит тест</h2></div><div class="card" data-livetest="${s.id}">${liveTestHTML(T.liveTest[s.id])}</div>` : ""}
+  ${(() => { const L = T.rows.filter(r => r.student_id === s.id && (r.kind === "lesson" || r.kind === "hw") && r.answers?.length).slice(-4).reverse(); if (!L.length) return "";
+    return `<div class="section-title"><h2>Последние тесты – ответы</h2></div><div class="card">${L.map(r => { const l = U.findLesson(c, r.lesson_id); return `<div style="margin-bottom:10px"><b>${r.kind === "hw" ? "ДЗ-тест" : "Тест"}: ${esc(l?.title || r.lesson_id)}</b> <span class="chip ${U.lvl(Math.round(r.score / r.total * 100))}">${r.score}/${r.total}</span> <span class="small muted">${new Date(r.created_at).toLocaleString("ru-RU", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"})}</span>${answersHTML(r.answers, false)}</div>`; }).join("")}</div>`; })()}
   ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
   ${!pending(s) && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
   ${!pending(s) && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
@@ -750,11 +752,16 @@ function roomTabs(l){
   return [l.lab === "izl" && ["lab"], ["theory"], U.hasMnemo(l) && ["mnemo"], l.practice?.length && ["practice"], l.writing && ["writing"], ((l.materials || []).length || l.stub) && ["mats"], (l.hw || l.hwtest?.length) && ["hw"], U.lessonTests(l).test.length && ["test"]]
     .filter(Boolean).map(([k]) => [k, ROOM_TABS[k]]);
 }
+/* ответы ученика: что выбрал, что верно */
+function answersHTML(list, open){
+  const L = (list || []).filter(Boolean); if (!L.length) return "";
+  return `<details class="small" ${open ? "open" : ""} style="margin-top:8px"><summary><b>Ответы ученика (${L.filter(x => x.ok).length} из ${L.length} верно)</b></summary><ol class="ans-list">${L.map(x => `<li class="${x.ok ? "ok" : "bad"}"><b>${esc(x.q)}</b><br>${x.ok ? "✓" : "✗"} ответ ученика: <b>${esc(x.given || "–")}</b>${x.ok ? "" : ` · верно: <b>${esc(x.right)}</b>`}</li>`).join("")}</ol></details>`;
+}
 function liveTestHTML(m){
   if (!m) return `<p class="small muted">Когда ученик начнёт тест, здесь будет видно каждый его ответ.</p>`;
   const kind = m.kind === "hw" ? "ДЗ-тест" : "Тест";
-  if (m.quit) return `<p class="small muted">${kind}: ученик вышел из теста на вопросе ${m.i + 1} из ${m.n}.</p>`;
-  if (m.done) return `<div class="row"><span class="chip ${U.lvl(Math.round(m.score / m.n * 100))}">${kind} завершён: ${m.score} из ${m.n}</span></div>`;
+  if (m.quit) return `<p class="small muted">${kind}: ученик вышел из теста на вопросе ${m.i + 1} из ${m.n}.</p>${answersHTML(m.log, true)}`;
+  if (m.done) return `<div class="row"><span class="chip ${U.lvl(Math.round(m.score / m.n * 100))}">${kind} завершён: ${m.score} из ${m.n}</span></div>${answersHTML(m.log, true)}`;
   const q = m.q; if (!q) return "";
   const answered = m.picked != null;
   return `<div class="kicker"><span class="live-dot" aria-hidden="true"></span> ${kind} идёт · вопрос ${m.i + 1} из ${m.n} · верно ${m.score}</div>
@@ -762,7 +769,7 @@ function liveTestHTML(m){
     ${q.pn ? `<div class="small">Ключ:</div>${U.pnHTML(q.pn, q.pn.a, {ro: true})}${answered ? `<div class="small">Ответ ученика – ${m.ok ? "верно" : "неверно"}:</div>${U.pnHTML(q.pn, m.sel || [], {ro: true, key: true})}` : ""}`
       : q.o ? `<ul class="lt-opts">${q.o.map((o, k) => `<li class="${k === q.a ? "ok" : ""} ${answered && k === m.picked ? (k === q.a ? "pick good" : "pick bad") : ""}">${esc(o)}${k === q.a ? " ✓" : ""}${answered && k === m.picked ? " ← ответ ученика" : ""}</li>`).join("")}</ul>`
       : `<p class="small">Ответ ученика: <b>${answered ? esc(m.typed) : "…"}</b>${answered ? (m.ok ? " – верно" : " – неверно") : ""} · ключ: ${esc(String(q.a).split("|")[0])}</p>`}
-    ${answered ? "" : `<p class="small muted">Ученик думает…</p>`}`;
+    ${answered ? "" : `<p class="small muted">Ученик думает…</p>`}${answersHTML(m.log, false)}`;
 }
 function roomPane(s, c, l, tab){
   const who = T.students.find(x => x.id === T.room.who) || s, pair = s.pair_id && T.students.find(x => x.id === s.pair_id);
@@ -792,7 +799,7 @@ function roomPane(s, c, l, tab){
   if (tab === "test"){
     const qs = U.lessonTests(l).test, rs = (T.rows || []).filter(x => x.student_id === who.id && x.lesson_id === l.id && x.kind === "lesson");
     return whoSeg + `<div class="card" style="box-shadow:none;margin-bottom:12px" id="live-test">${liveTestHTML(T.liveTest?.[who.id]?.lesson === l.id && T.liveTest[who.id].kind !== "hw" ? T.liveTest[who.id] : null)}</div>
-      ${rs.length ? `<p class="small">Попытки: ${rs.map(x => `<span class="chip">${x.score}/${x.total}</span>`).join(" ")}</p>` : ""}
+      ${rs.length ? `<p class="small">Попытки: ${rs.map(x => `<span class="chip">${x.score}/${x.total}</span>`).join(" ")}</p>${rs.at(-1)?.answers ? answersHTML(rs.at(-1).answers, false).replace("Ответы ученика", "Ответы последней попытки") : ""}` : ""}
       <details><summary class="small">Все вопросы с ответами (${qs.length})</summary><ol style="padding-left:20px">${qs.map(q => `<li style="margin:8px 0"><b>${esc(q.q)}</b>${q.pn ? U.pnHTML(q.pn, q.pn.a, {ro: true}) : q.o ? `<ul>${q.o.map((o, k) => `<li ${k === q.a ? 'style="color:var(--good);font-weight:800"' : ""}>${esc(o)}${k === q.a ? " ✓" : ""}</li>`).join("")}</ul>` : `<div class="small">Ответ: ${esc(String(q.a).split("|")[0])}</div>`}</li>`).join("")}</ol></details>`;
   }
   return "";
@@ -811,19 +818,16 @@ function viewRoom(){
         ${window.Call && !Call.active() ? `<button class="btn sm" data-act="call-start">🎥 Видеозвонок</button>` : ""}
         ${r.url ? `<a class="btn ghost sm" href="${esc(r.url)}" target="_blank" rel="noopener" title="Если видеозвонок не соединяется">Звонок по ссылке</a>` : ""}
         <button class="btn ghost sm" data-act="room-take" aria-pressed="${!!r.take}">+ Из другого класса</button>
-        <button class="btn ghost sm" data-act="room-invite" title="Ещё раз отправить приглашение">Позвать</button>
+        <button class="btn ghost sm" data-act="room-invite" title="Ученик сразу окажется на уроке, чем бы он ни занимался">Позвать</button>
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
       ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : ""}</div>
   ${r.take ? `<div class="card" style="margin-bottom:14px"><div class="kicker">Сегодня – урок из другого класса или предмета</div><p class="small muted">Урок встанет на сегодняшнее занятие, папки по плану сдвинутся на следующие.</p>${takePick(s, "room")}</div>` : ""}
-  <div class="room">
-    <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head"><h1 style="font-size:1.25rem">${esc(l.title)}</h1></div>
+  <div class="room room-one">
+    <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head row between" style="gap:8px;flex-wrap:wrap"><h1 style="font-size:1.25rem">${esc(l.title)}</h1>
+      <span class="row" style="gap:8px;align-items:center"><span class="small muted" data-where="${s.id}">${where ? `Ученик сейчас: ${esc(where.where || "")}` : "Ученик пока не на уроке"}</span>
+      <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок и этот лист">➜ Перенести ученика сюда</button></span></div>
+      <p class="small muted room-hint">Урок прямо на доске: листы вверху – теория, задания, тест, письмо. 👆 – работать с листом (нажимать, вписывать), ✎ – писать поверх. Ученик видит тот же лист.</p>
       <div class="pane"><div class="board glass" id="board"></div></div></article>
-    <article class="window glass room-side">
-      ${tabs.length ? `<div class="tabs" role="group" aria-label="Разделы урока">${tabs.map(([k, n]) => `<button data-act="room-tab" data-tab="${k}" aria-pressed="${tab === k}">${n}</button>`).join("")}</div>` : ""}
-      <div class="pane">
-        <div class="row between" style="gap:8px;margin-bottom:12px"><span class="small muted" data-where="${s.id}">${where ? `Ученик сейчас: ${esc(where.where || "")}` : "Ученик пока не на уроке"}</span>
-          <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок и эту вкладку">➜ Перенести ученика сюда</button></div>
-        <div class="room-pane">${l.free ? `<p class="muted">Свободная доска: листы в клетку, в линейку и пустые. Чтобы дать задания, выберите урок вверху.</p>` : roomPane(s, c, l, tab)}</div></div></article>
   </div>`;
 }
 function render(){
@@ -860,9 +864,10 @@ function render(){
   if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
     const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = bl === "free" ? FREE : c.lessons.find(x => x.id === bl) || FREE, owner = ownerOf(s);
+    const {pages, live} = roomBoardPages(s, c, l);
     const menu = () => !s || l === FREE ? [] : [{label: "✨ Добавить тему или объяснение", run: () => ceModal(s, l, "theory")}, {label: "🧩 Сгенерировать задания", run: () => ceModal(s, l, "practice")},
       {label: "🎯 Отработать слабую зону", run: () => ceModal(s, l, "practice", weakReq(s, l))}];
-    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l), menu});
+    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages, live, page: T.view === "room" ? T.room?.shown || pages[0]?.key : undefined, onPage: p => { if (T.view === "room" && T.room){ T.room.tab = T.room.shown = p; roomPersist(); } }, menu});
   }
   if (!$("#board")){ Board.release(); T.board = null; }
   if (T.session && !T.loading && T.routeReady) try { sessionStorage.setItem("t-route", JSON.stringify({view: T.view, sel: T.sel, open: T.open, sub: T.sub, courseId: T.courseId, matSubject: T.matSubject, boardLesson: T.boardLesson, workLesson: T.workLesson, room: T.room ? {sid: T.room.sid, lesson: T.room.lesson} : null, y: scrollY})); } catch(_) {}
@@ -872,6 +877,14 @@ function render(){
     const l = ceLesson(T.ce.ctx);
     if (l){ const box = document.createElement("div"); box.className = "ce-modal-back"; box.innerHTML = `<div class="ce-modal glass" role="dialog" aria-modal="true" aria-label="Нейросеть на уроке"><div class="row between" style="margin-bottom:8px"><b>${T.ce.kind === "theory" ? "Новая тема или объяснение" : "Новые задания"} · ${esc(l.title)}</b><button class="iconbtn" data-act="ce-close" aria-label="Закрыть">✕</button></div>${ceEditor(T.ce.ctx, l, T.ce.kind)}</div>`; document.body.appendChild(box); }
   }
+}
+/* листы доски на уроке: разделы урока – «живые» (как у учителя справа раньше), плюс чистые листы и материалы */
+function roomBoardPages(s, c, l){
+  if (T.view !== "room" || l === FREE || l.free) return {pages: Board.pages(c, l), live: {}};
+  const tabs = roomTabs(l), live = {};
+  tabs.forEach(([k]) => live[k] = el => { el.innerHTML = `<div class="bd-sheet bd-live">${roomPane(s, c, l, k)}</div>`; });
+  const extra = Board.pages(c, l).filter(p => !["practice", "test", "theory", "text"].includes(p.key));
+  return {pages: [...tabs.map(([k, n]) => ({key: k, label: n, html: ""})), ...extra], live};
 }
 function weakReq(s, l){
   const rows = T.rows.filter(r => r.student_id === s.id && (r.lesson_id === l.id || r.lesson_id.endsWith(":" + l.id)) && r.wrong?.length).slice(-4);
@@ -1417,7 +1430,7 @@ document.addEventListener("click", async e => {
   if (a === "room-forget"){ if (T.me) T.me.room = null; if (!T.room) sb.rpc("teacher_set_room", {p_room: null}).then(() => {}, () => {}); render(); return; }
   if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
   if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.since = Date.now(); T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
-  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = r.shown || r.tab || null; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab}));
+  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = Board.keptPage() || r.shown || r.tab || null; r.shown = tab; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab}));
     roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён сюда" : "Ученик не в сети – откроется здесь, когда зайдёт"); return; }
   if (a === "call-start"){ const s = T.students.find(x => x.id === T.room?.sid); if (s) startCallT(s); render(); return; }
   if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }
@@ -1448,7 +1461,7 @@ document.addEventListener("click", async e => {
     const d0 = nextLessonDate(s), nid = await insertLesson(s, curCourse(), T.open, d0, true);
     if (nid) toast(`Урок добавлен в план: ${s.name}, ${fmt(d0, {day: "numeric", month: "long"})}. Следующие уроки сдвинулись.`); return;
   }
-  if (a === "room-invite"){ roomSend("lesson"); toast("Приглашение отправлено ещё раз"); return; }
+  if (a === "room-invite"){ const r = T.room; r.to.forEach(id => cmd(id, "room-pull", {lesson: r.lesson, url: r.url, tab: r.shown || r.tab || null})); roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён на урок" : "Ученик не в сети – перенесётся, как только откроет приложение"); return; }
   if (a === "room-url"){ const u = $("#room-url").value.trim(); if (!/^https?:\/\//.test(u)){ toast("Вставьте ссылку, которая начинается с https://"); return; }
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
     await saveCall(s, u, true);

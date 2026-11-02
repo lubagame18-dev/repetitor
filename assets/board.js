@@ -26,7 +26,7 @@ window.Board = (() => {
           <button data-tool="pen" title="Ручка">✎</button>
           <button data-tool="hl" title="Маркер">▮</button>
           <button data-tool="text" title="Текст">T</button>
-          <button data-tool="erase" title="Ластик">⌫</button>
+          <button data-tool="erase" title="Ластик: стирает только то, по чему провести" aria-label="Ластик"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg></button>
           <button data-tool="hand" title="Листать">✋</button>
           ${COLORS.map(c => `<button class="bd-color" data-color="${c}" style="--bc:${c}" aria-label="Цвет"></button>`).join("")}
           <button data-tool="touch" title="Работать с сайтом или презентацией (нажимать внутри)">👆</button>
@@ -65,9 +65,13 @@ window.Board = (() => {
       ctx.save();
       ctx.lineCap = "round"; ctx.lineJoin = "round";
       ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.globalAlpha = s.h ? 0.35 : 1;
-      ctx.beginPath(); ctx.moveTo(s.p[0][0], s.p[0][1]);
-      if (s.p.length === 1) ctx.lineTo(s.p[0][0] + 0.1, s.p[0][1]);
-      for (let i = 1; i < s.p.length; i++) ctx.lineTo(s.p[i][0], s.p[i][1]);
+      const P = s.p; ctx.beginPath(); ctx.moveTo(P[0][0], P[0][1]);
+      if (P.length === 1) ctx.lineTo(P[0][0] + 0.1, P[0][1]);
+      else if (P.length === 2) ctx.lineTo(P[1][0], P[1][1]);
+      else {   // плавная линия: кривые через середины соседних точек
+        for (let i = 1; i < P.length - 1; i++) ctx.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
+        ctx.lineTo(P[P.length - 1][0], P[P.length - 1][1]);
+      }
       ctx.stroke(); ctx.restore();
     }
     function drawText(t){
@@ -81,10 +85,12 @@ window.Board = (() => {
       if (!cached){ const im = new Image(); im.onload = () => { imgCache.set(it.src, im); redraw(); }; im.src = it.src; imgCache.set(it.src, im); }
       ctx.save(); ctx.fillStyle = "#f1eefb"; ctx.fillRect(it.x, it.y, w, h); ctx.restore();
     }
+    /* живой кусок линии: от середины прошлого отрезка до середины нового, через последнюю точку – без углов */
     function drawSeg(a, b, s){
-      ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
-      ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.globalAlpha = s.h ? 0.35 : 1;
-      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.restore();
+      const P = s.p, n = P.length; if (n < 3){ ctx.save(); ctx.lineCap = "round"; ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.globalAlpha = s.h ? 0.35 : 1; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2); ctx.stroke(); ctx.restore(); return; }
+      const p0 = P[n - 3], p1 = P[n - 2], p2 = P[n - 1];
+      ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.globalAlpha = s.h ? 0.35 : 1;
+      ctx.beginPath(); ctx.moveTo((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2); ctx.quadraticCurveTo(p1[0], p1[1], (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2); ctx.stroke(); ctx.restore();
     }
     function redraw(){
       ctx.clearRect(0, 0, W, height + 50);
@@ -92,7 +98,7 @@ window.Board = (() => {
       drafts.forEach(drawStroke);
       if (drawing && !drawing.erase) drawStroke(drawing);
     }
-    function pos(e){ const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scale), Math.round((e.clientY - r.top) / scale)]; }
+    function pos(e){ const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / scale * 10) / 10, Math.round((e.clientY - r.top) / scale * 10) / 10]; }
 
     /* ---------- лист ---------- */
     function stepPage(dir){
@@ -121,11 +127,20 @@ window.Board = (() => {
       const box = root.querySelector(".bd-pages"); if (!box) return;
       box.innerHTML = pagesArr.map(p => `<button data-bpage="${p.key}" aria-pressed="${p.key === page}">${esc(p.label)}</button>`).join("");
     }
+    /* «живые» листы: урок прямо на доске (теория, задания, тест, письмо) – отвечать можно в самом листе, рисовать – поверх */
+    let live = o.live || {};
+    function paintLive(force){
+      const fn = live[page]; if (!fn) return false;
+      if (!force && bg.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return true;
+      const y = scrollY; try { fn(bg); } catch(e) { console.warn(e); } if (scrollY !== y) scrollTo(0, y); return true;
+    }
     async function openPage(key){
       if (!pagesArr.some(p => p.key === key)) key = pagesArr[0].key;
+      if (page && page !== key) pageCache.set(page, [...items.entries()].filter(([id]) => !id.startsWith("tmp") && !id.startsWith("er")).map(([id, item]) => ({id, item})));
       page = key;
       renderPageButtons();
-      bg.innerHTML = (pagesArr.find(p => p.key === key) || pagesArr[0]).html;
+      if (!paintLive(true)) bg.innerHTML = (pagesArr.find(p => p.key === key) || pagesArr[0]).html;
+      if (live[key]) setTool("touch");
       items = new Map(); mine = []; drafts.clear();
       const cached = pageCache.get(key);
       if (cached) { cached.forEach(r => items.set(String(r.id), r.item)); }
@@ -163,7 +178,7 @@ window.Board = (() => {
     }
 
     /* ---------- рисование ---------- */
-    function setTool(t){ tool = t; root.querySelectorAll("[data-tool]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t)); cv.style.touchAction = t === "hand" ? "pan-y" : "none"; cv.style.cursor = t === "hand" ? "grab" : t === "text" ? "text" : "crosshair"; cv.style.pointerEvents = t === "touch" ? "none" : ""; bg.style.pointerEvents = t === "touch" ? "auto" : ""; }
+    function setTool(t){ tool = t; root.querySelectorAll("[data-tool]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tool === t)); cv.style.touchAction = t === "hand" ? "pan-y" : "none"; cv.style.cursor = t === "hand" ? "grab" : t === "text" ? "text" : t === "erase" ? `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\'><circle cx=\'16\' cy=\'16\' r=\'12\' fill=\'rgba(255,255,255,.6)\' stroke=\'%23555\' stroke-width=\'1.5\'/></svg>').replace(/%2523/g, "%23")}") 16 16, cell` : "crosshair"; cv.style.pointerEvents = t === "touch" ? "none" : ""; bg.style.pointerEvents = t === "touch" ? "auto" : ""; }
     function setColor(c){ color = c; root.querySelectorAll("[data-color]").forEach(b => b.setAttribute("aria-pressed", b.dataset.color === c)); }
     function hitTest(pt){
       let found = null;
@@ -205,7 +220,7 @@ window.Board = (() => {
       if (e.pointerType !== "mouse"){ const x = e.clientX, y = e.clientY; lp = {x, y, timer: setTimeout(() => { lp = null; cancelStroke(); openMenu(x, y); }, 550)}; }
       if (tool === "text"){ lpClear(); placeText(p); return; }
       try { cv.setPointerCapture(e.pointerId); } catch(_) {}
-      if (tool === "erase"){ const id = hitTest(p); if (id) removeIds([id]); drawing = {erase:true, pid:e.pointerId}; return; }
+      if (tool === "erase"){ drawing = {erase:true, pid:e.pointerId, gone:new Set(), made:new Map()}; eraseAt(p); return; }
       drawing = {t:"s", c: tool === "hl" ? "#ffd23f" : color, w: tool === "hl" ? 18 : 3, h: tool === "hl", p:[p], pid:e.pointerId, sid: Math.random().toString(36).slice(2, 8)};
       draftBuf = [p];
     });
@@ -214,8 +229,11 @@ window.Board = (() => {
       if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 8) lpClear();
       if (now - lastCursor > 45 && (!drawing || drawing.pid === e.pointerId)){ lastCursor = now; send("cursor", {x:p[0], y:p[1]}); }
       if (!drawing || drawing.pid !== e.pointerId) return;
-      if (drawing.erase){ const id = hitTest(p); if (id) removeIds([id]); return; }
-      const pts = (e.getCoalescedEvents ? e.getCoalescedEvents() : []).map(pos); if (!pts.length) pts.push(p);
+      if (drawing.erase){ (e.getCoalescedEvents ? e.getCoalescedEvents() : [e]).forEach(ev => eraseAt(pos(ev))); return; }
+      let pts = (e.getCoalescedEvents ? e.getCoalescedEvents() : []).map(pos); if (!pts.length) pts.push(p);
+      if (e.pointerType === "mouse"){   // мышь и тачпад: сглаживаем дрожание руки
+        let prev = drawing.p[drawing.p.length - 1]; pts = pts.map(q => (prev = [Math.round((prev[0] + (q[0] - prev[0]) * 0.55) * 10) / 10, Math.round((prev[1] + (q[1] - prev[1]) * 0.55) * 10) / 10]));
+      }
       for (const q of pts){
         const last = drawing.p[drawing.p.length - 1];
         if (Math.hypot(q[0] - last[0], q[1] - last[1]) < 1.5) continue;
@@ -225,13 +243,35 @@ window.Board = (() => {
       if (drawing.p.length > 1500) drawing.p = drawing.p.filter((_, i2) => i2 % 2 === 0 || i2 === drawing.p.length - 1);
       if (now - lastDraft > 50 && draftBuf.length > 1){ lastDraft = now; send("draft", {sid:drawing.sid, c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf}); draftBuf = [draftBuf[draftBuf.length - 1]]; }
     });
+    /* ластик стирает только то, по чему провели: линия делится на куски, стёртое пропадает */
+    const ER = 12;
+    function eraseAt(pt){
+      const d = drawing; if (!d?.erase) return; let changed = false;
+      const drop = id => { items.delete(id); if (id.startsWith("er")) d.made.delete(id); else d.gone.add(id); changed = true; };
+      [...items.entries()].forEach(([id, it]) => {
+        if (it.t !== "s") return;
+        const r2 = (ER + it.w / 2) ** 2; if (!it.p.some(q => (q[0] - pt[0]) ** 2 + (q[1] - pt[1]) ** 2 < r2)) return;
+        const runs = []; let cur = [];
+        it.p.forEach(q => { if ((q[0] - pt[0]) ** 2 + (q[1] - pt[1]) ** 2 < r2){ if (cur.length) runs.push(cur); cur = []; } else cur.push(q); }); if (cur.length) runs.push(cur);
+        drop(id);
+        runs.filter(x => x.length > 1).forEach(pp => { const nid = "er" + Math.random().toString(36).slice(2, 9), ni = {...it, p: pp}; items.set(nid, ni); d.made.set(nid, ni); });
+      });
+      const other = hitTest(pt); if (other && items.get(other)?.t !== "s") drop(other);   // надпись или картинка – целиком
+      if (changed) redraw();
+    }
+    async function eraseCommit(d){
+      if (!d.gone.size && !d.made.size) return;
+      const gone = [...d.gone]; if (gone.length) removeIds(gone);
+      for (const [nid, it] of d.made){ items.delete(nid); await addItem(it); }
+      redraw();
+    }
     function cancelStroke(){ if (drawing && !drawing.erase) send("draft", {sid:drawing.sid, p:[], end:true, drop:true}); drawing = null; redraw(); }
     function end(e){
       if (e && drawing && drawing.pid !== e.pointerId) return;
       lpClear();
       if (!drawing) return;
       const d = drawing; drawing = null;
-      if (d.erase) return;
+      if (d.erase){ eraseCommit(d); return; }
       send("draft", {sid:d.sid, c:d.c, w:d.w, h:d.h, p:draftBuf, end:true});
       delete d.pid; delete d.sid;
       if (d.p.length) addItem(d);
@@ -242,7 +282,7 @@ window.Board = (() => {
     const menu = root.querySelector(".bd-menu");
     function openMenu(x, y){
       const extra = typeof o.menu === "function" ? (o.menu() || []) : [];
-      menu.innerHTML = `<div class="bd-mrow">${["pen","hl","text","erase","hand"].map(t => `<button data-mtool="${t}" aria-pressed="${tool === t}" title="${{pen:"Ручка", hl:"Маркер", text:"Текст", erase:"Ластик", hand:"Листать"}[t]}">${{pen:"✎", hl:"▮", text:"T", erase:"⌫", hand:"✋"}[t]}</button>`).join("")}</div>
+      menu.innerHTML = `<div class="bd-mrow">${["pen","hl","text","erase","hand"].map(t => `<button data-mtool="${t}" aria-pressed="${tool === t}" title="${{pen:"Ручка", hl:"Маркер", text:"Текст", erase:"Ластик", hand:"Листать"}[t]}">${{pen:"✎", hl:"▮", text:"T", erase:'<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg>', hand:"✋"}[t]}</button>`).join("")}</div>
         <div class="bd-mrow">${COLORS.map(c => `<button class="bd-color" data-mcolor="${c}" style="--bc:${c}" aria-pressed="${color === c}" aria-label="Цвет"></button>`).join("")}</div>
         <div class="bd-mlist"><button data-mact="undo">↶ Отменить</button><button data-mact="blank">📄 Чистый лист</button>${extra.map((m, i) => `<button data-mext="${i}">${esc(m.label)}</button>`).join("")}</div>`;
       if (menu.parentElement !== document.body) document.body.appendChild(menu);   // над всеми окнами (у «стеклянных» окон свой слой)
@@ -280,7 +320,7 @@ window.Board = (() => {
       if (b.dataset.pstep){ stepPage(+b.dataset.pstep); return; }
       if (b.dataset.bpage){ openPage(b.dataset.bpage); if (o.role === "teacher") send("page", {page:b.dataset.bpage}); }
       if (b.dataset.tool) setTool(b.dataset.tool);
-      if (b.dataset.color){ setColor(b.dataset.color); if (tool === "hl" || tool === "erase" || tool === "hand") setTool("pen"); }
+      if (b.dataset.color){ setColor(b.dataset.color); if (tool !== "pen" && tool !== "text") setTool("pen"); }
       if (b.dataset.act === "undo"){ const id = mine.pop(); if (id) removeIds([id]); }
       if (b.dataset.act === "clear"){
         if (b.dataset.sure){ await o.api.clear(page); items.clear(); redraw(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
@@ -501,7 +541,7 @@ window.Board = (() => {
     }
     renderWho();
 
-    const ro = new ResizeObserver(() => layout()); ro.observe(stage);
+    let roT = 0; const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(layout, 30); }); ro.observe(stage); ro.observe(bg);
     setTool("pen"); setColor(COLORS[0]); openPage(page);
     /* сохранённые листы (презентации, встроенные сайты) – общие для учителя и ученика */
     (async () => {
@@ -512,7 +552,10 @@ window.Board = (() => {
         if (added){ renderPageButtons(); if (!pagesArr.some(x => x.key === page) || o.page === page) openPage(o.page && pagesArr.some(x => x.key === o.page) ? o.page : page); }
       } catch(_) {}
     })();
-    return { setMenu(fn){ o.menu = fn; }, destroy(){ ro.disconnect(); menu?.remove(); document.removeEventListener("pointerdown", onDocDown, true); document.removeEventListener("keydown", onKey); document.removeEventListener("paste", onPaste); if (channel) o.sb.removeChannel(channel); }, relayout(){ layout(); }, page: () => page };
+    return { setMenu(fn){ o.menu = fn; },
+      setLive(map, pagesNew){ live = map || {}; if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.splice(pagesNew.indexOf(p), 0, p); }); renderPageButtons(); } },
+      refresh(){ paintLive(false); },
+      open(key){ if (key && key !== page && pagesArr.some(p => p.key === key)) openPage(key); }, destroy(){ ro.disconnect(); menu?.remove(); document.removeEventListener("pointerdown", onDocDown, true); document.removeEventListener("keydown", onKey); document.removeEventListener("paste", onPaste); if (channel) o.sb.removeChannel(channel); }, relayout(){ layout(); }, page: () => page };
   }
 
   /* хранилище: Supabase (ученик – через функции, учитель – напрямую) или браузер */
@@ -566,7 +609,7 @@ window.Board = (() => {
   let kept = null;
   function keep(container, key, opts){
     if (!container) return null;
-    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); container.replaceChildren(kept.holder); requestAnimationFrame(() => kept && kept.inst.relayout()); return kept.inst; }
+    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); if (opts?.live) kept.inst.setLive(opts.live, opts.pages); kept.inst.refresh(); container.replaceChildren(kept.holder); requestAnimationFrame(() => kept && kept.inst.relayout()); return kept.inst; }
     release();
     const holder = document.createElement("div"); holder.className = "bd-holder"; container.replaceChildren(holder);
     const inst = mount(holder, opts); kept = {key, holder, inst}; return inst;

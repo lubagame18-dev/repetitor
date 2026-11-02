@@ -88,6 +88,7 @@ create table if not exists public.results (
 );
 alter table public.results add column if not exists kind text not null default 'lesson';
 alter table public.results add column if not exists duration_sec int;
+alter table public.results add column if not exists answers jsonb;   -- ответы ученика в тесте: [{q, given, right, ok}] – видит учитель
 create index if not exists results_student_idx on public.results(student_id);
 
 -- Время в папке урока (по дням): так учитель видит, сколько ученик реально занимался.
@@ -593,6 +594,7 @@ returns json language sql security definer set search_path = public stable as $$
 $$;
 
 drop function if exists public.student_submit_result(text, text, int, int, jsonb, text);
+drop function if exists public.student_submit_result(text, text, int, int, jsonb, text, int);
 
 -- успеваемость по всем предметам ученика (тесты на уроках, ДЗ-тесты, проверенные письменные работы) – для графика по предметам
 create or replace function public.student_progress(p_code text)
@@ -606,15 +608,15 @@ returns json language sql security definer set search_path = public stable as $$
                           from writings w where w.student_id = sib.id and w.max > 0), '[]'::json))), '[]'::json)
   from sib;
 $$;
-create or replace function public.student_submit_result(p_code text, p_lesson text, p_score int, p_total int, p_wrong jsonb, p_kind text default 'lesson', p_duration int default null)
+create or replace function public.student_submit_result(p_code text, p_lesson text, p_score int, p_total int, p_wrong jsonb, p_kind text default 'lesson', p_duration int default null, p_answers jsonb default null)
 returns void language plpgsql security definer set search_path = public as $$
 declare sid uuid := student_id_by_code(p_code);
 begin
   if sid is null then raise exception 'unknown code'; end if;
   if p_score < 0 or p_total <= 0 or p_score > p_total or p_total > 100 then raise exception 'bad score'; end if;
-  insert into results(student_id, lesson_id, kind, score, total, wrong, duration_sec)
+  insert into results(student_id, lesson_id, kind, score, total, wrong, duration_sec, answers)
   values (sid, left(p_lesson, 40), case when p_kind in ('hw','entry','mini','self','oge') then p_kind else 'lesson' end, p_score, p_total, coalesce(p_wrong, '[]'::jsonb),
-          case when p_duration between 0 and 86400 then p_duration end);
+          case when p_duration between 0 and 86400 then p_duration end, case when length(coalesce(p_answers::text, '')) < 30000 then p_answers end);
 end $$;
 
 -- «я на уроке»: раз в минуту, пока папка открыта
@@ -721,7 +723,7 @@ drop function if exists public.student_login(text);
 do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
-    'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
+    'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int, jsonb)', 'public.student_ping(text, text, int)',
     'public.student_set_theme(text, text)', 'public.student_set_profile(text, text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop

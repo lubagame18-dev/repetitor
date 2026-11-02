@@ -573,3 +573,16 @@ body.play-open{overflow:hidden}
 .pn-gap.need{background:color-mix(in srgb,var(--good) 22%,transparent)}
 .pn-gap.on:not(.need).keyed{background:color-mix(in srgb,var(--bad) 22%,transparent)}
 .opt.chosen{border-color:var(--violet);background:color-mix(in srgb,var(--violet) 12%,var(--glass-2))}
+.avatar.big{width:84px;height:84px;font-size:1.6rem}
+.avatar.sm{width:34px;height:34px;font-size:.8rem}
+.me-btn{border:0;background:none;font:inherit;color:inherit;cursor:pointer;width:100%;text-align:left}
+.me-btn:hover{background:var(--chip)}
+.ans-list{padding-left:20px;margin:6px 0 0;display:grid;gap:6px}
+.ans-list li.ok{color:inherit}
+.ans-list li.bad{color:var(--bad)}
+/* урок на доске: одна рабочая поверхность во всю ширину */
+.room.room-one{grid-template-columns:1fr!important}
+.room-hint{margin:0 16px 8px}
+.bd-sheet.bd-live{min-height:900px;font-size:17px;line-height:1.55}
+.bd-sheet.bd-live .task{font-size:17px}
+.bd-sheet.bd-live .btn{font-size:15px}
