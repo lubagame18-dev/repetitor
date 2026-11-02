@@ -260,7 +260,8 @@ window.U = (() => {
     const S = subj(subject), g = +grade;
     return GOALS.filter(x => x === "ОГЭ" ? S.exam && g >= 8 && g <= 9 : x === "ЕГЭ" ? S.exam && g >= 10 : x === "ВПР" ? (g >= 4 && g <= 8) || g >= 10 : x === "Олимпиада" ? g >= 4 : true);
   }
-  const goalLabel = x => ["ОГЭ","ЕГЭ","ВПР"].includes(x) ? "Подготовка к " + x : x;
+  /* «Контрольные и домашние» в базе остаётся тем же значением, ученику показываем понятнее */
+  const goalLabel = x => ["ОГЭ","ЕГЭ","ВПР"].includes(x) ? "Подготовка к " + x : x === "Контрольные и домашние" ? "Повышение успеваемости" : x;
   function goalsHTML(subject, grade, name, checked){
     const list = goalsFor(subject, grade), def = checked?.length ? checked : [list.includes("ОГЭ") && +grade === 9 ? "ОГЭ" : list.includes("ЕГЭ") && +grade === 11 ? "ЕГЭ" : "Контрольные и домашние"];
     return list.map(x => `<label><input type="checkbox" name="${name}" value="${esc(x)}" ${def.includes(x) ? "checked" : ""}> ${esc(goalLabel(x))}</label>`).join("");
@@ -271,6 +272,8 @@ window.U = (() => {
     if (S.exam && +grade === 9 && goals.includes("ОГЭ")) return "oge-" + S.k;
     if (S.exam && +grade >= 10 && goals.includes("ЕГЭ")) return "ege-" + S.k;
     const C = window.CATALOG || {};
+    /* ВПР и олимпиада идут параллельно: основной план – школьная программа по темам (если такой курс есть) */
+    if (C[`${S.k}-${grade}`] || window.BUILTIN_COURSES?.[`${S.k}-${grade}`]) return S.k + "-" + grade;
     if (goals.includes("ВПР") && C[`vpr-${S.k}-${grade}`]) return `vpr-${S.k}-${grade}`;
     if (goals.includes("Олимпиада") && !goals.includes("Контрольные и домашние") && C[`olymp-${S.k}-${grade}`]) return `olymp-${S.k}-${grade}`;
     return S.k + "-" + grade;
