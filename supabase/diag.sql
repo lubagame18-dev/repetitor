@@ -1,7 +1,11 @@
--- Диагностика без личных данных: есть ли официальный кабинет (по хешу почты)
+-- Диагностика без личных данных: только количества и настройки доступа
 select json_build_object(
-  'users_with_hash', (select count(*) from auth.users u where encode(extensions.digest(lower(u.email), 'sha256'), 'hex') = 'a1130f92712dae28b23f72b1ca0baeaa75b0a83d5ce8016c88df81d47730ed63'),
-  'teacher_with_hash', (select left(t.id::text, 8) from auth.users u join teachers t on t.id = u.id where encode(extensions.digest(lower(u.email), 'sha256'), 'hex') = 'a1130f92712dae28b23f72b1ca0baeaa75b0a83d5ce8016c88df81d47730ed63'),
-  'users_total', (select count(*) from auth.users),
-  'mailru_users', (select count(*) from auth.users where email ilike '%@mail.ru')
+  'teachers', (select json_agg(json_build_object('t', left(t.id::text, 8), 'role', t.role, 'students', (select count(*) from students s where s.teacher_id = t.id),
+     'registered', (select count(*) from students s where s.teacher_id = t.id and s.registered_at is not null),
+     'courses', (select json_agg(distinct coalesce(s.course, '-') || ' / ' || coalesce(s.subject, '-')) from students s where s.teacher_id = t.id))) from teachers t),
+  'students_without_teacher', (select count(*) from students s where not exists (select 1 from teachers t where t.id = s.teacher_id)),
+  'policies', (select json_agg(json_build_object('table', tablename, 'name', policyname, 'cmd', cmd, 'roles', roles::text, 'permissive', permissive, 'using', left(qual, 200))) from pg_policies where schemaname = 'public' and tablename in ('students', 'teachers')),
+  'rls', (select json_agg(json_build_object('table', relname, 'rls', relrowsecurity)) from pg_class where relname in ('students', 'teachers', 'results') and relnamespace = 'public'::regnamespace),
+  'me_fn', (select count(*) from pg_proc where proname = 'me'),
+  'plan_fn', (select count(*) from pg_proc where proname = 'plan_active')
 ) as diag;

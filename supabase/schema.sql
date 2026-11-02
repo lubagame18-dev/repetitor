@@ -741,6 +741,10 @@ end $$;
 do $$ declare off uuid; begin
   select u.id into off from auth.users u join teachers t on t.id = u.id
    where encode(extensions.digest(lower(u.email), 'sha256'), 'hex') = 'a1130f92712dae28b23f72b1ca0baeaa75b0a83d5ce8016c88df81d47730ed63' limit 1;
+  -- запасной вариант: единственный кабинет разработчика на mail.ru (официальный)
+  if off is null and (select count(*) from auth.users u join teachers t on t.id = u.id where u.email ilike '%@mail.ru' and t.role = 'developer') = 1 then
+    select u.id into off from auth.users u join teachers t on t.id = u.id where u.email ilike '%@mail.ru' and t.role = 'developer';
+  end if;
   if off is null then return; end if;
   update teachers set role = 'developer' where id = off and role <> 'developer';
   update students set teacher_id = off where teacher_id <> off and teacher_id in (select id from teachers where role = 'developer');
