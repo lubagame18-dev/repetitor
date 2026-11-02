@@ -1,6 +1,6 @@
 # Последнее обновление Supabase
 
-Время: 2026-11-02 16:55 UTC · коммит a3aaac2
+Время: 2026-11-02 16:56 UTC · коммит 8bf062d
 
 ## База (schema.sql)
 ```
@@ -12,7 +12,9 @@ ok (201)
 ```
 Warning: --project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead
 Target: project affncgnhqfvdbtyujfvz
-Confirmation required: Deploy 1 Function (target: project affncgnhqfvdbtyujfvz). This run can't ask because stdout is not a terminal. Nothing was changed.
-Re-run with --yes to confirm.
-ОШИБКА
+Confirmed by --yes: Deploy 1 Function on project affncgnhqfvdbtyujfvz
+Uploading asset (ai): supabase/functions/ai/index.ts
+Deployed Functions on project affncgnhqfvdbtyujfvz: ai
+You can inspect your deployment in the Dashboard: https://supabase.com/dashboard/project/affncgnhqfvdbtyujfvz/functions
+ok
 ```
