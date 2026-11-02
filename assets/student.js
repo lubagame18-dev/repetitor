@@ -109,6 +109,18 @@ function uploadPhoto(lessonId){
 /* ---------- живая связь с учителем: где ученик сейчас, мгновенные обновления ---------- */
 let live = null, liveT = 0;
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || (S.view === "folder" && S.sub === "board") || S.view === "room";
+/* урок, который открыл учитель, может быть другого предмета (другая запись ученика) или только что добавлен – переключаемся и подгружаем */
+async function ensureLesson(m){
+  const has = () => !m.lesson || m.lesson === "free" || !!S.course?.lessons.find(x => x.id === m.lesson);
+  if (has()) return;
+  if (sb && m.to && m.to !== "all" && m.to !== S.profile.id && (S.profile.subjects || []).some(x => x.id === m.to)){
+    const {data} = await sb.rpc("student_switch", {p_code: S.token, p_target: m.to});
+    if (data){ const was = S.profile.teacher; S.token = data.token; S.profile = data.profile; S.forced = new Set(); saveSession(); toast(`Учитель открыл урок по предмету «${subjName()}»`);
+      if (data.profile.teacher !== was && live){ sb.removeChannel(live); live = null; setTimeout(liveStart, 50); } }
+  }
+  await load();
+  if (!has()){ await new Promise(r => setTimeout(r, 1200)); await load(); }
+}
 function liveStart(){
   if (!sb || !S.profile?.teacher || live) return;
   live = sb.channel(`live-${S.profile.teacher}`, {config:{presence:{key:"s-" + S.profile.id}, broadcast:{self:false}}});
@@ -117,8 +129,9 @@ function liveStart(){
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
     if (m.type === "izlpick"){ S.labPick = m.key; LS.set("labPick", m.key); if (S.view === "folder" && S.course?.lessons.find(x => x.id === S.open)?.lab === "izl") S.sub = "lab"; render(); toast("Учитель выбрал текст для изложения: " + (m.title || "")); return; }
     if (m.type === "refresh"){ await load(); if (!typing()) render(); toast(m.msg || "Учитель обновил твои материалы"); }
-    if (m.type === "lesson"){ invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()}); return; }
+    if (m.type === "lesson"){ await ensureLesson(m); invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()}); return; }
     if (m.type === "room-goto"){
+      await ensureLesson(m);
       if (!S.room) S.room = {lesson: m.lesson, at: Date.now()};
       if (S.joinHow === "call") return;
       if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
