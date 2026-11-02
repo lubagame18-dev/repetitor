@@ -128,7 +128,7 @@ function liveStart(){
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
     if (m.type === "izlpick"){ S.labPick = m.key; LS.set("labPick", m.key); if (S.view === "folder" && S.course?.lessons.find(x => x.id === S.open)?.lab === "izl") S.sub = "lab"; render(); toast("Учитель выбрал текст для изложения: " + (m.title || "")); return; }
-    if (m.type === "refresh"){ await load(); if (!typing()) render(); toast(m.msg || "Учитель обновил твои материалы"); }
+    if (m.type === "refresh"){ await load(); if (!typing() || (S.view === "room" && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || ""))) render(); toast(m.msg || "Учитель обновил твои материалы"); }
     if (m.type === "lesson"){ await ensureLesson(m); invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()}); return; }
     if (m.type === "room-goto"){
       await ensureLesson(m);
@@ -140,7 +140,7 @@ function liveStart(){
       const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
       toast(`Учитель перенёс тебя: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`); liveTrack(); return;
     }
-    if (m.type === "endlesson"){ if (window.Call) Call.leave(true); S.joinHow = null; S.room = null; S.roomEnded = Date.now(); document.getElementById("callbar").hidden = true; closeJoin(); if (S.view === "room"){ S.view = "home"; render(); } toast("Учитель завершил урок. Молодец!"); return; }
+    if (m.type === "endlesson"){ try { sessionStorage.removeItem(JK); } catch(_) {} if (window.Call) Call.leave(true); S.joinHow = null; S.room = null; S.roomEnded = Date.now(); document.getElementById("callbar").hidden = true; closeJoin(); if (S.view === "room"){ S.view = "home"; render(); } toast("Учитель завершил урок. Молодец!"); return; }
     if (m.type === "call"){
       if (m.url) S.profile.call_url = m.url;
       const bar = document.getElementById("callbar");
@@ -787,11 +787,18 @@ function startCall(){
   if (S.joinHow === "call") Call.setSize("large");
 }
 /* приглашение учителя (или ученик сам начал урок – self) */
+/* ученик уже подключился к уроку (в том числе до перезагрузки страницы) – смена урока и материалов не требует подключаться заново */
+const JK = "joined-room";
+const joinedNow = () => { try { const j = JSON.parse(sessionStorage.getItem(JK) || "null"); return j && j.teacher === S.profile?.teacher && Date.now() - j.t < 4 * 3600e3 && (!S.roomEnded || S.roomEnded < j.t) ? j : null; } catch(_) { return null; } };
 function invite(r, self){
   const same = S.room && S.room.lesson === r.lesson;
-  S.room = {...r, url: r.url || S.profile.call_url || "", self};
+  S.room = {...(S.room || {}), ...r, url: r.url || S.room?.url || S.profile.call_url || "", self};
   if (r.lesson && r.lesson !== "free") S.forced.add(r.lesson);
-  if (S.view === "room" || (S.joinHow && Call.active())){ if (S.view === "room" && !same){ S.open = r.lesson; S.test = null; render(); toast(`Учитель открыл урок «${roomLesson().title}»`); } return; }
+  if (S.view === "room" || (S.joinHow && (Call.active() || S.joinHow === "board"))){
+    if (!same){ if (S.joinHow !== "call"){ S.open = r.lesson; S.test = null; S.testInRoom = false; S.view = "room"; } closeJoin(); render(); toast(`Учитель открыл урок «${roomLesson().title}»`); }
+    return; }
+  const j = joinedNow();
+  if (j && !self){ applyJoin(j.how || "board", true); return; }
   const how = LS.get("join-how", null);
   if (how && JOIN[how] && !self){ applyJoin(how, true); return; }
   joinBox(self);
@@ -812,6 +819,7 @@ function joinBox(self){
 }
 function applyJoin(how, auto){
   closeJoin(); const l = roomLesson(); S.joinHow = how;
+  try { sessionStorage.setItem(JK, JSON.stringify({teacher: S.profile.teacher, how, t: Date.now()})); } catch(_) {}
   if (S.room?.self) liveAct2({room: true, lesson: S.room.lesson, title: l.title}, `начинает урок «${l.title}» (${JOIN[how].toLowerCase()})`);
   if (how !== "board") startCall();
   if (how === "call"){ toast(auto ? "Видеозвонок – на этом устройстве (так ты выбрал раньше)" : "Видеозвонок включён"); liveTrack(); return; }
