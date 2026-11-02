@@ -179,6 +179,7 @@ window.U = (() => {
     const t = course.texts[w.text], k = ["thesis","example"].includes(w.type) ? "13.3" : (w.type === "choice" ? (kind || "13.3") : w.type);
     return {title: t.title, topic: t.topics[k], kind: k, html: `<p>${esc(t.text)}</p>`};
   }
+  const findLesson = (c, id) => c?.lessons?.find(x => x.id === id) || c?.labLessons?.find(x => x.id === id) || null;
   function critFor(course, kind){ return kind === "izl" ? course.criteria.izl : ["13.1","13.2","13.3"].includes(kind) ? course.criteria.essay : null; }
   function writingResultHTML(course, w){
     if (!w) return "";
@@ -308,12 +309,22 @@ window.U = (() => {
     /* правка теории и практики: data.kind = "content-edit" (общая → своя → для конкретного ученика) */
     const cedits = mats.filter(m => m.kind === "tasks" && m.data?.kind === "content-edit").sort((a, b) => (a.shared ? 0 : 1) - (b.shared ? 0 : 1) || (a.student_id ? 1 : 0) - (b.student_id ? 1 : 0) || a.id - b.id);
     const cOf = (id, k) => cedits.length ? cedits.filter(m => m.lesson_id === id && m.data?.[k]).pop() : null;
-    const SYS = m => m.kind === "tasks" && (m.data?.kind === "test-edit" || m.data?.kind === "content-edit");
+    const SYS = m => m.kind === "tasks" && ["test-edit", "content-edit", "izl-text"].includes(m.data?.kind);
     lessons = [...lessons, ...own].map(l => { const ed = editOf(l.id), th = cOf(l.id, "theory"), pr = cOf(l.id, "practice");
       return {...l, ...(ed?.data?.test ? {test: ed.data.test} : {}), ...(ed?.data?.hwtest ? {hwtest: ed.data.hwtest} : {}), ...(th ? {theory: th.data.theory} : {}), ...(pr ? {practice: pr.data.practice, pEdited: true} : {}),
         edited: !!ed, cEdited: !!(th || pr), date: ov[l.id] || l.date, materials: (by.get(l.id) || []).filter(m => m.kind !== "lesson" && !SYS(m))}; })
       .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-    return {...base, events: start ? (base.events || []).filter(e => e.kind === "exam") : base.events, lessons};
+    /* тренажёр изложений: каждый текст (встроенный или с записью от учителя) – отдельная «папка» со своим письмом */
+    let izl = base.izl || {}, labLessons = [];
+    if (lessons.some(l => l.lab === "izl")){
+      izl = {...izl};
+      mats.filter(m => m.kind === "tasks" && m.data?.kind === "izl-text").sort((a, b) => a.id - b.id).forEach(m => {
+        const d = m.data; izl["m" + m.id] = {title: d.title || m.title || "Текст", author: d.author || "", src: d.src || "", audio: d.audio || "", paras: d.paras || [], micro: d.micro || [], mid: m.id, mine: !!m.teacher_id};
+      });
+      labLessons = Object.entries(izl).map(([k, t]) => ({id: "izl:" + k, title: t.title, lab: "item", labKey: k, author: t.author || "Авторский текст курса", audio: t.audio || "", oge: "Тренажёр изложения", learn: [], theory: [], practice: [], test: [], hwtest: [], materials: [], hw: "",
+        writing: {type: "izl", text: k, classwork: "Слушаем текст два раза, между чтениями – план и ключевые слова.", task: "Напиши сжатое изложение (не менее 70 слов) и отправь – текстом или фото.", step: {h: "Как писать изложение", list: ["Первое чтение – ключевые слова каждого абзаца.", "Пауза – план из трёх микротем и опорные слова.", "Второе чтение – дописываем пропущенное.", "Набросок по плану, потом сжатие: исключение, обобщение, упрощение.", "Не меньше 70 слов, три абзаца, проверка грамотности."]}}}));
+    }
+    return {...base, izl, labLessons, events: start ? (base.events || []).filter(e => e.kind === "exam") : base.events, lessons};
   }
   function emptyLesson(){ return {block: "own", oge: "Свой урок", title: "Новый урок", learn: [], theory: [], practice: [], test: [], hwtest: [], hw: "", writing: null, stub: true}; }
 
@@ -380,5 +391,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

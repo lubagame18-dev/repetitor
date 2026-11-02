@@ -40,7 +40,7 @@ const entryRes = () => U.aggregate(S.rows, "entry")["entry-" + grade()];
 
 /* ---------- данные ---------- */
 document.addEventListener("builtin-loaded", function(){ try { recompute(); render(); } catch (e) { } });
-function recompute(){ S.results = U.aggregate(S.rows, "lesson"); S.hwres = U.aggregate(S.rows, "hw"); S.minis = U.aggregate(S.rows, "mini"); S.course = U.courseFor(S.profile, S.mats); U.applyTheme(LS.get("theme", null) || S.profile?.theme); U.setMascot(LS.get("mascot", null) || S.profile?.mascot); }
+function recompute(){ if (S.labPick == null) S.labPick = LS.get("labPick", null); S.results = U.aggregate(S.rows, "lesson"); S.hwres = U.aggregate(S.rows, "hw"); S.minis = U.aggregate(S.rows, "mini"); S.course = U.courseFor(S.profile, S.mats); U.applyTheme(LS.get("theme", null) || S.profile?.theme); U.setMascot(LS.get("mascot", null) || S.profile?.mascot); }
 function saveSession(){ LS.set("session", {token:S.token, profile:S.profile}); }
 async function load(){
   if (sb){
@@ -115,6 +115,7 @@ function liveStart(){
   live.on("broadcast", {event:"cmd"}, async ({payload:m}) => {
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
+    if (m.type === "izlpick"){ S.labPick = m.key; LS.set("labPick", m.key); if (S.view === "folder" && S.course?.lessons.find(x => x.id === S.open)?.lab === "izl") S.sub = "lab"; render(); toast("Учитель выбрал текст для изложения: " + (m.title || "")); return; }
     if (m.type === "refresh"){ await load(); if (!typing()) render(); toast(m.msg || "Учитель обновил твои материалы"); }
     if (m.type === "lesson"){ invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()}); return; }
     if (m.type === "room-goto"){
@@ -399,6 +400,26 @@ function viewLessons(){
 
 const toBoard = page => `<div class="toboard"><button class="btn ghost sm" data-sub="board" data-bpage="${page}">${I.board.replace('<svg','<svg width="16" height="16"')} Открыть на доске</button></div>`;
 
+/* тренажёр изложений: библиотека текстов, выбранный учителем текст, статус каждого */
+const listens = id => S.rows.filter(r => r.lesson_id === id + ":l").length;
+function izlPlayer(l, t){
+  if (!t) return "";
+  if (t.audio) return `<div class="izl-player card" style="box-shadow:none"><div class="kicker">Запись текста${t.author ? " · " + esc(t.author) : ""}</div>
+    <p class="small muted" style="margin:4px 0 8px">Слушаем два раза. Между чтениями – 5 минут: план и ключевые слова. ${listens(l.id) ? `Прослушано раз: <b>${listens(l.id)}</b>.` : ""}</p>
+    <audio controls preload="none" src="${esc(t.audio)}" data-listen="${l.id}" style="width:100%"></audio>
+    <div class="row" style="gap:6px;margin-top:6px"><button class="btn ghost sm" data-act="izl-pause">⏱ Пауза 5 минут</button><span class="small izl-st" aria-live="polite"></span></div></div>`;
+  return window.Izl ? Izl.html(t.paras, l.id) : "";
+}
+function labHTML(l){
+  const L = S.course.labLessons || [];
+  if (!L.length) return `<p class="muted">Тексты появятся, когда учитель их добавит.</p>`;
+  const cur = L.find(x => x.id === S.labPick);
+  const st = x => { const w = S.writings[x.id], n = listens(x.id);
+    return `${n ? `<span class="chip">🎧 ${n}</span>` : ""}${w ? (w.max ? `<span class="chip ${U.lvl(Math.round(w.total / w.max * 100))}">✍ ${w.total}/${w.max}</span>` : `<span class="chip mid">✍ ${w.status === "redo" ? "доработать" : "отправлено"}</span>`) : ""}`; };
+  return `<p class="small muted" style="margin-bottom:10px">Текст выбирает учитель на уроке или ты сам. 🎧 – сколько раз слушал, ✍ – изложение и баллы.</p>
+    <div class="lab-list">${L.map(x => `<button class="lab-item ${x.id === S.labPick ? "on" : ""}" data-lab="${x.id}"><span style="min-width:0"><b>${esc(x.title)}</b><span class="small muted"> · ${x.audio ? "🎙 запись" : "озвучка"}${x.author ? " · " + esc(x.author) : ""}</span></span><span class="row" style="gap:4px;flex:none">${st(x)}</span></button>`).join("")}</div>
+    ${cur ? `<div style="margin-top:16px"><div class="section-title" style="margin:0 0 8px"><h2 style="font-size:1.2rem">«${esc(cur.title)}»</h2></div>${writingBody(cur)}</div>` : ""}`;
+}
 function writingBody(l){
   const w = l.writing, mine = S.writings[l.id];
   const kind = w.type === "choice" ? (mine?.kind && mine.kind !== "izl" ? mine.kind : LS.get("etype", "13.3")) : w.type;
@@ -412,7 +433,10 @@ function writingBody(l){
       <div class="kicker" style="margin-top:10px">Домашнее письмо</div><p style="margin-top:4px"><b>${esc(w.task)}</b></p></div>
     ${w.type === "choice" ? `<div class="row" style="margin-top:14px" role="group" aria-label="Тип сочинения">${["13.1","13.2","13.3"].map(k => `<button class="btn ${k===kind?"":"ghost"} sm" data-etype="${k}" ${locked?"disabled":""}>${k}</button>`).join("")}</div>` : ""}
     <div style="margin-top:16px"><div class="kicker">Текст «${esc(src.title)}»</div>
-      ${w.type === "izl" ? `<details><summary class="small">Показать текст (если на уроке его не читали)</summary><div class="ttext" style="white-space:normal">${src.html}</div></details>` : `<div class="ttext" style="white-space:normal">${src.html}</div>`}
+      ${w.type === "izl" ? izlPlayer(l, S.course.izl?.[w.text]) : ""}
+      ${w.type === "izl" && !locked ? `<div class="stack" style="margin-top:10px;gap:6px"><label for="izl-draft" class="small"><b>Черновик</b> (видишь только ты): план и ключевые слова</label>
+        <textarea id="izl-draft" class="essay-area" style="min-height:150px" data-lesson="${l.id}" placeholder="1. Микротема: …\n   ключевые слова: …\n2. Микротема: …\n   ключевые слова: …\n3. Микротема: …\n   ключевые слова: …">${esc((() => { try { return localStorage.getItem("izl-draft-" + l.id) || ""; } catch(_) { return ""; } })())}</textarea></div>` : ""}
+      ${w.type === "izl" ? `<details style="margin-top:10px"><summary class="small">Показать текст (только если на уроке его не читали и озвучка не работает)</summary><div class="ttext" style="white-space:normal">${src.html}</div></details>` : `<div class="ttext" style="white-space:normal">${src.html}</div>`}
       <p style="margin-top:10px"><b>Тема:</b> ${esc(src.topic)}</p></div>
     ${toBoard("text")}
     <div class="stack" style="margin-top:14px;gap:8px">
@@ -449,7 +473,7 @@ function materialsHTML(l){
 /* вкладки папки урока – одни и те же в папке и на уроке онлайн */
 function lessonTabs(l){
   const sh = S.sheets[l.id] || {}, T = tests(l), M = l.materials || [];
-  return [["theory","Теория",I.book], U.hasMnemo(l) && ["mnemo","Запоминалки",I.book], (l.practice?.length || sh.url) && ["practice","Практика",I.pen], ["board","Доска",I.board],
+  return [l.lab === "izl" && ["lab","Тренажёр",I.pen], ["theory","Теория",I.book], U.hasMnemo(l) && ["mnemo","Запоминалки",I.book], (l.practice?.length || sh.url) && ["practice","Практика",I.pen], ["board","Доска",I.board],
     l.writing && ["writing","Письмо",I.pen], (M.length || l.stub) && ["mats","Материалы",I.folder], (l.hw || l.hwtest?.length) && ["hw","Домашка",I.home2],
     T.test.length && ["test","Тест",I.check]].filter(Boolean);
 }
@@ -470,6 +494,7 @@ function lessonPane(l, sub){
   if (S.sub === "board") pane = `<div class="board glass" id="board"></div><p class="small muted" style="margin-top:8px">Доска общая с учителем${S.profile.pair ? ` и с ${esc(S.profile.pair.name.split(" ")[0])}` : ""}: видно курсоры и всё, что рисуют. Чтобы листать на телефоне – выбери ✋, увеличить – двумя пальцами.</p>`;
   if (S.sub === "mnemo") pane = U.mnemoTabHTML(l);
   if (S.sub === "writing") pane = writingBody(l);
+  if (S.sub === "lab") pane = labHTML(l);
   if (S.sub === "mats") pane = materialsHTML(l);
   if (S.sub === "hw") pane = `<ol style="margin:0;padding-left:20px">
         ${l.hw ? `<li>${esc(l.hw)}</li>` : ""}${l.writing ? `<li>Письмо: ${esc(l.writing.task)} <a href="#" data-sub="writing">Открыть</a></li>` : ""}${l.hwtest?.length ? `<li>ДЗ-тест: ${l.hwtest.length} вопросов – проверь, как усвоил тему.</li>` : ""}</ol>
@@ -953,14 +978,16 @@ document.addEventListener("change", async e => {
   }
 });
 document.addEventListener("input", e => {
+  if (e.target.id === "izl-draft"){ try{ localStorage.setItem("izl-draft-" + e.target.dataset.lesson, e.target.value); }catch(_){} return; }
   if (e.target.id !== "essay") return;
   try{ localStorage.setItem("oge-draft-" + e.target.dataset.lesson, e.target.value); }catch(_){}
-  const l = S.course.lessons.find(x => x.id === e.target.dataset.lesson), minW = ["thesis","example"].includes(l.writing.type) ? 0 : 70, n = U.wordCount(e.target.value);
+  const l = U.findLesson(S.course, e.target.dataset.lesson), minW = ["thesis","example"].includes(l.writing.type) ? 0 : 70, n = U.wordCount(e.target.value);
   const wc = $("#wc"); wc.textContent = `${n} сл.${minW ? ` / нужно не меньше ${minW}` : ""}`; wc.className = "chip tnum " + (minW && n < minW ? "bad" : n ? "good" : "");
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  const t = e.target.closest("[data-lab],[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  if (t?.dataset.lab){ e.preventDefault(); S.labPick = t.dataset.lab; LS.set("labPick", S.labPick); render(); return; }
   if (t.dataset.ogeRate || t.dataset.ogeDrill != null || t.dataset.ogeMock != null){ e.preventDefault(); ogeAct(t); return; }
   if (t.dataset.role){ S.role = t.dataset.role; S.mode = "in"; S.authMsg = null; S.signupDone = null; render(); return; }
   if (t.dataset.authmode){ if (t.dataset.authmode !== "signup") S.signupDone = null; S.mode = t.dataset.authmode; S.authMsg = null; render(); return; }
@@ -1065,10 +1092,12 @@ document.addEventListener("click", async e => {
     const l = S.course.lessons.find(x => x.id === S.open);
     U.downloadDoc(`${l.title} – рабочий лист`, U.lessonDocHTML(l, false)); return;
   }
-  if (a === "photo"){ uploadPhoto(S.open); return; }
+  if (a === "photo"){ uploadPhoto($("#essay")?.dataset.lesson || S.open); return; }
+  if (a === "izl-pause"){ const box = t.closest(".izl-player"), stl = box?.querySelector(".izl-st"); let left = 300; clearInterval(S.izlT);
+    S.izlT = setInterval(() => { if (!stl?.isConnected || left < 0){ clearInterval(S.izlT); if (stl?.isConnected) stl.textContent = "Пауза закончилась – слушаем второй раз."; return; } stl.textContent = `Пауза ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} – план и ключевые слова`; left--; }, 1000); return; }
   if (a === "send-hw"){ await sendHw(S.open, $("#hw-note").value.trim()); render(); }
   if (a === "send-writing"){
-    const l = S.course.lessons.find(x => x.id === S.open), body = $("#essay").value.trim(), n = U.wordCount(body);
+    const l = U.findLesson(S.course, $("#essay")?.dataset.lesson || S.open), body = $("#essay").value.trim(), n = U.wordCount(body);
     const minW = ["thesis","example"].includes(l.writing.type) ? 0 : 70;
     const hasPhoto = (S.photos[l.id] || []).length;
     if (!body && !hasPhoto){ toast("Напиши текст или прикрепи фото работы."); return; }
@@ -1077,6 +1106,10 @@ document.addEventListener("click", async e => {
   }
   if (a === "logout") logout();
 });
+
+/* прослушивания текста изложения – учитель видит, сколько раз слушали */
+document.addEventListener("ended", e => { const id = e.target?.dataset?.listen; if (id){ sendResult(id + ":l", "self", 1, 1, []); render(); } }, true);
+document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (id && /^izl:|^oge-/.test(id)){ sendResult(id + ":l", "self", 1, 1, []); } });
 
 /* ---------- запуск ---------- */
 (async () => {

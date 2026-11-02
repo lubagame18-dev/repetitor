@@ -92,6 +92,21 @@ window.Call = (() => {
     if (!el){
       el = document.createElement("aside"); el.id = "calldock"; el.className = "calldock glass"; el.setAttribute("aria-label", "Видеозвонок");
       document.body.appendChild(el);
+      /* окошко можно перетащить в любой угол (за видео), место запоминается */
+      const place = () => { let p = null; try { p = JSON.parse(localStorage.getItem("calldock-pos") || "null"); } catch(_) {}
+        if (!p) { el.style.left = el.style.top = ""; return; }
+        const w = el.offsetWidth, h = el.offsetHeight;
+        el.style.left = Math.max(4, Math.min(innerWidth - w - 4, p.x * innerWidth)) + "px"; el.style.top = Math.max(4, Math.min(innerHeight - h - 4, p.y * innerHeight)) + "px";
+        el.style.right = "auto"; el.style.bottom = "auto"; };
+      el._place = place;
+      let drag = null;
+      el.addEventListener("pointerdown", e => { if (e.target.closest("button") || e.button !== 0) return; const r = el.getBoundingClientRect(); drag = {dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false}; el.setPointerCapture(e.pointerId); });
+      el.addEventListener("pointermove", e => { if (!drag) return; drag.moved = true; el.classList.add("dragging");
+        const w = el.offsetWidth, h = el.offsetHeight, x = Math.max(4, Math.min(innerWidth - w - 4, e.clientX - drag.dx)), y = Math.max(4, Math.min(innerHeight - h - 4, e.clientY - drag.dy));
+        el.style.left = x + "px"; el.style.top = y + "px"; el.style.right = "auto"; el.style.bottom = "auto"; });
+      el.addEventListener("pointerup", () => { if (!drag) return; const r = el.getBoundingClientRect(); el.classList.remove("dragging");
+        if (drag.moved) try { localStorage.setItem("calldock-pos", JSON.stringify({x: r.left / innerWidth, y: r.top / innerHeight})); } catch(_) {} drag = null; });
+      addEventListener("resize", () => el.isConnected && place());
       el.addEventListener("click", e => {
         const b = e.target.closest("[data-call]"); if (!b || !st) return;
         const a = b.dataset.call;
@@ -120,6 +135,7 @@ window.Call = (() => {
         <button data-call="cam" aria-pressed="${!st.cam}" title="${st.cam ? "Выключить камеру" : "Включить камеру"}" ${st.stream?.getVideoTracks().length ? "" : "disabled"}>${st.cam ? "📷" : "🚫"}</button>
         <button data-call="size" title="Размер окна">${st.size === "large" ? "▭" : st.size === "mini" ? "▢" : "⤢"}</button>
         <button data-call="leave" class="cd-end" title="Выйти из звонка">✕</button></div>`;
+    el._place?.();
     el.querySelectorAll("[data-tile]").forEach(f => {
       const v = f.querySelector("video"), id = f.dataset.tile, s = id === "me" ? st.stream : st.peers.get(id)?.stream;
       if (s && v.srcObject !== s){ v.srcObject = s; v.play?.().catch(() => {}); }

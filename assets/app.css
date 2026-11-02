@@ -428,6 +428,10 @@ html[data-mascot="photo"] .topnav img[data-m]{border-width:2px}
 .calldock{position:fixed;z-index:60;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));
   width:236px;padding:8px;border-radius:18px;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);background:var(--paper)}
 .calldock[data-size="large"]{width:min(560px,calc(100vw - 24px))}
+.calldock{touch-action:none;cursor:grab;width:200px}
+.calldock.dragging{cursor:grabbing;opacity:.92}
+.calldock .cd-bar button{cursor:pointer}
+body.in-call .room-side,body.in-call .main{padding-bottom:200px}
 .calldock[data-size="mini"]{width:auto}
 .calldock[data-size="mini"] .cd-tiles,.calldock[data-size="mini"] .cd-status{display:none}
 .cd-tiles{display:grid;grid-template-columns:1fr 1fr;gap:6px}
@@ -554,3 +558,9 @@ body.play-open{overflow:hidden}
 /* правка урока поверх доски */
 .ce-modal-back{position:fixed;inset:0;z-index:1001;background:rgba(20,12,40,.35);display:flex;justify-content:flex-end}
 .ce-modal{width:min(560px,100%);height:100%;overflow-y:auto;padding:16px;background:var(--base,#fff);border-left:1px solid var(--line);box-shadow:-12px 0 30px rgba(36,24,61,.18)}
+.lab-list{display:grid;gap:6px}
+.lab-item{display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;border:1px solid var(--line);background:var(--field);border-radius:14px;padding:10px 12px;color:inherit;font:inherit;cursor:pointer}
+.lab-item.on{border-color:var(--violet);box-shadow:0 0 0 2px color-mix(in srgb,var(--violet) 35%,transparent)}
+.lab-rows{padding-left:22px;display:grid;gap:8px}
+.lab-row{padding:8px 10px;border-radius:12px;border:1px solid var(--line)}
+.lab-row.on{border-color:var(--violet);background:color-mix(in srgb,var(--violet) 8%,transparent)}

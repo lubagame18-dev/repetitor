@@ -170,11 +170,60 @@ function viewStudents(){
     <div class="card">${(() => {
       const items = [...T.writings.filter(w => w.status === "sent").map(w => ({w, s:nameOf(w.student_id)})), ...T.hw.filter(h => h.status === "sent").map(h => ({h, s:nameOf(h.student_id)}))].filter(x => x.s);
       if (!items.length) return '<p class="muted">Всё проверено.</p>';
-      return `<ul style="margin:0;padding-left:20px">${items.map(x => { const c = U.courseFor(x.s, T.mats), lid = (x.w || x.h).lesson_id, l = c?.lessons.find(y => y.id === lid); if (!l) return "";
+      return `<ul style="margin:0;padding-left:20px">${items.map(x => { const c = U.courseFor(x.s, T.mats), lid = (x.w || x.h).lesson_id, l = U.findLesson(c, lid); if (!l) return "";
         return x.w ? `<li><a href="#" data-student="${x.s.id}" data-wreview="${l.id}">${esc(x.s.name)} – ${esc(U.KIND_NAME[x.w.kind] || "письмо")}: ${esc(l.title)}</a> <span class="small muted">${x.w.words || 0} сл.${x.w.photos?.length ? " · фото: " + x.w.photos.length : ""}</span></li>`
                    : `<li><a href="#" data-student="${x.s.id}" data-review="${l.id}">${esc(x.s.name)} – ДЗ: ${esc(l.title)}</a></li>`; }).join("")}</ul>`; })()}</div>`;
 }
 
+/* тренажёр изложений у учителя: тексты, что ученик слушал и написал, выбор текста на уроке, свои записи */
+function labPaneT(s, c, room){
+  const L = c.labLessons || [], x = sData(s), cur = T.labPick?.[s.id];
+  const n = id => T.rows.filter(r => r.student_id === s.id && r.lesson_id === id + ":l").length;
+  const row = l => { const w = x.writings[l.id], t = c.izl[l.labKey];
+    return `<li class="lab-row ${cur === l.id ? "on" : ""}"><div class="row between" style="gap:8px;flex-wrap:wrap"><span style="min-width:0"><b>${esc(l.title)}</b> <span class="small muted">${t.audio ? "🎙 запись" : "озвучка"}${t.author ? " · " + esc(t.author) : ""}</span></span>
+      <span class="row" style="gap:4px;flex-wrap:wrap">${n(l.id) ? `<span class="chip">🎧 ${n(l.id)}</span>` : ""}${w ? (w.max ? `<span class="chip ${U.lvl(Math.round(w.total / w.max * 100))}">✍ ${w.total}/${w.max}</span>` : `<span class="chip mid">✍ ${w.status === "redo" ? "на доработке" : "ждёт проверки"}</span>`) : ""}
+      ${room ? `<button class="btn ${cur === l.id ? "" : "ghost"} sm" data-act="lab-pick" data-id="${l.id}" data-sid="${s.id}">${cur === l.id ? "✓ Работаем" : "Работаем с этим"}</button>` : ""}
+      ${w ? `<button class="btn ghost sm" data-act="lab-review" data-id="${l.id}" data-sid="${s.id}">${T.wreview === l.id ? "Скрыть" : "Проверить"}</button>` : ""}
+      ${t.mid && t.mine ? `<button class="iconbtn" data-act="lab-del" data-mid="${t.mid}" aria-label="Удалить текст">🗑</button>` : ""}</span></div>
+      ${t.audio && room ? `<audio controls preload="none" src="${esc(t.audio)}" style="width:100%;margin-top:6px"></audio>` : ""}
+      ${T.wreview === l.id && T.sel === s.id ? writingReviewHTML(s, x, l) : ""}</li>`; };
+  return `<p class="small muted" style="margin-bottom:8px">${room ? "Нажмите «Работаем с этим» – текст сразу откроется у ученика. " : ""}🎧 – сколько раз ученик слушал текст, ✍ – изложение и баллы.</p>
+    <ol class="lab-rows">${L.map(row).join("")}</ol>
+    <details class="card" style="box-shadow:none;margin-top:12px"${T.labAddOpen ? " open" : ""}><summary><b>➕ Добавить текст с аудиозаписью</b></summary>
+      <div class="stack" style="gap:6px;margin-top:8px">
+        <p class="small muted">Например, запись из открытого банка ФИПИ: скачайте mp3 и загрузите сюда. Записи видят только ваши ученики.</p>
+        <label class="small" for="lb-title">Название</label><input id="lb-title" maxlength="120" placeholder="Например: «О дружбе» (банк ФИПИ)">
+        <label class="small" for="lb-author">Автор или источник</label><input id="lb-author" maxlength="160" placeholder="Например: открытый банк ФИПИ, автор текста">
+        <label class="small" for="lb-file">Аудиофайл (mp3, m4a)</label><input id="lb-file" type="file" accept="audio/*">
+        <label class="small" for="lb-url">…или ссылка на аудио</label><input id="lb-url" type="url" placeholder="https://…mp3">
+        <label class="small" for="lb-text">Текст (по желанию; абзацы – через пустую строку). Нужен нейросети для проверки, ученику не показывается</label><textarea id="lb-text" rows="5"></textarea>
+        <label class="small" for="lb-micro">Микротемы (каждая с новой строки, по желанию)</label><textarea id="lb-micro" rows="3"></textarea>
+        <div><button class="btn sm" data-act="lab-add" data-course="${esc(s.course)}" data-lid="${esc(c.lessons.find(l => l.lab === "izl")?.id || "")}" ${T.busy === "lab" ? "disabled" : ""}>${T.busy === "lab" ? "Загружаю…" : "Добавить текст"}</button></div></div></details>`;
+}
+async function labAct(a, t){
+  if (a === "lab-pick"){ const sid = t.dataset.sid, s = T.students.find(x => x.id === sid), c = U.courseFor(s, T.mats), l = c.labLessons.find(x => x.id === t.dataset.id);
+    (T.labPick = T.labPick || {})[sid] = l.id; [sid, s.pair_id].filter(Boolean).forEach(id => cmd(id, "izlpick", {key: l.id, title: l.title})); render(); toast(`У ученика открыт текст «${l.title}»`); return; }
+  if (a === "lab-review"){ T.sel = t.dataset.sid; T.wreview = T.wreview === t.dataset.id ? null : t.dataset.id; render(); return; }
+  if (a === "lab-del"){ if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "✔?"; return; }
+    const {error} = await sb.from("materials").delete().eq("id", +t.dataset.mid); if (error){ toast("Не удалилось: " + error.message); return; }
+    T.mats = T.mats.filter(m => m.id !== +t.dataset.mid); render(); cmd("all", "refresh", {msg: "Учитель обновил тексты для изложения"}); return; }
+  if (a === "lab-add"){
+    const title = $("#lb-title").value.trim(), author = $("#lb-author").value.trim(), f = $("#lb-file").files[0]; let audio = $("#lb-url").value.trim();
+    const paras = $("#lb-text").value.split(/\n\s*\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 8), micro = $("#lb-micro").value.split("\n").map(x => x.trim()).filter(Boolean).slice(0, 6);
+    if (!title){ toast("Напишите название текста"); return; }
+    if (!f && !/^https?:\/\//.test(audio)){ toast("Загрузите аудиофайл или вставьте ссылку на запись"); return; }
+    if (f && f.size > 40 * 1024 * 1024){ toast("Файл больше 40 МБ"); return; }
+    T.busy = "lab"; T.labAddOpen = true; render();
+    if (f){ const path = `${T.session.user.id}/izl-${Date.now()}.${(f.name.split(".").pop() || "mp3").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+      const up = await sb.storage.from("materials").upload(path, f, {contentType: f.type || "audio/mpeg"});
+      if (up.error){ T.busy = false; render(); toast("Файл не загрузился: " + up.error.message); return; }
+      audio = sb.storage.from("materials").getPublicUrl(path).data.publicUrl; }
+    const {data, error} = await sb.from("materials").insert({course: t.dataset.course, lesson_id: t.dataset.lid, kind: "tasks", title, shared: false, data: {kind: "izl-text", title, author, audio, paras, micro}}).select().single();
+    T.busy = false;
+    if (error){ render(); toast("Не сохранилось: " + error.message); return; }
+    T.mats.push(data); T.labAddOpen = false; render(); cmd("all", "refresh", {msg: "Учитель добавил текст для изложения"}); toast("Текст добавлен в тренажёр"); return;
+  }
+}
 function writingReviewHTML(s, x, l){
   const w = x.writings[l.id], c = x.c;
   if (!w) return `<p class="muted small">Ученик ещё не прислал работу.</p>`;
@@ -285,6 +334,7 @@ function viewStudent(){
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
   ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
+  ${!pending(s) && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
   ${!pending(s) && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
   <div style="margin-top:16px">${U.progressHTML(T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id) && !pending(o)).map(o => ({subject: o.subject || U.subjectOf(o.course), ...U.subjectNow(T.rows.filter(r => r.student_id === o.id), T.writings.filter(w => w.student_id === o.id))})))}</div>
   ${c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings, x.hw)}
@@ -678,9 +728,9 @@ function startRoom(s, lesson, keepPlan){
   roomSend("lesson"); if (T.room.lesson !== planned && !keepPlan) roomReplan();
   toast(T.online[s.id] ? "Ученику пришло приглашение на урок" : "Ученик пока не в сети – приглашение появится, как только он зайдёт");
 }
-const ROOM_TABS = {theory: "Теория", mnemo: "Запоминалки", practice: "Практика", writing: "Письмо", mats: "Материалы", hw: "Домашка", test: "Тест"};
+const ROOM_TABS = {lab: "Тренажёр", theory: "Теория", mnemo: "Запоминалки", practice: "Практика", writing: "Письмо", mats: "Материалы", hw: "Домашка", test: "Тест"};
 function roomTabs(l){
-  return [["theory"], U.hasMnemo(l) && ["mnemo"], l.practice?.length && ["practice"], l.writing && ["writing"], ((l.materials || []).length || l.stub) && ["mats"], (l.hw || l.hwtest?.length) && ["hw"], U.lessonTests(l).test.length && ["test"]]
+  return [l.lab === "izl" && ["lab"], ["theory"], U.hasMnemo(l) && ["mnemo"], l.practice?.length && ["practice"], l.writing && ["writing"], ((l.materials || []).length || l.stub) && ["mats"], (l.hw || l.hwtest?.length) && ["hw"], U.lessonTests(l).test.length && ["test"]]
     .filter(Boolean).map(([k]) => [k, ROOM_TABS[k]]);
 }
 function liveTestHTML(m){
@@ -708,9 +758,11 @@ function roomPane(s, c, l, tab){
     return ceBar(ctx, l, "practice") + whoSeg + `<p class="small muted">Тетрадь ${esc(who.name.split(" ")[0])} – обновляется вживую, рядом ключи.</p>`
       + `<div id="wk-view">${l.practice.map((p, i) => Work.task({...p, key: keys[i]}, i, st[i] || {}, true).replace('class="task wk"', 'class="task wk ro"')).join("")}</div>`;
   }
+  if (tab === "lab") return labPaneT(who, c, true);
   if (tab === "writing"){
     const w = (T.writings || []).find(x => x.student_id === who.id && x.lesson_id === l.id);
-    return whoSeg + `<p><b>Задание:</b> ${esc(l.writing.task || "")}</p>${w ? `<div class="card" style="box-shadow:none;margin-top:10px"><div class="kicker">Работа ученика · ${w.status === "sent" ? "ждёт проверки" : "проверено"}</div><div style="white-space:pre-line;margin-top:6px">${esc(w.body || "")}</div>${(w.photos || []).map(u => `<img src="${esc(u)}" alt="Фото работы" style="max-height:260px;border-radius:10px;margin-top:8px">`).join("")}</div>` : `<p class="small muted">Ученик ещё не прислал работу.</p>`}`;
+    const izl = l.writing?.type === "izl" && c.izl?.[l.writing.text];
+    return whoSeg + `<p><b>Задание:</b> ${esc(l.writing.task || "")}</p>${izl && window.Izl ? `<p class="small muted" style="margin-top:6px">Ученик может включить озвучку у себя во вкладке «Письмо». Или прочитайте сами: текст ниже (ученику он скрыт).</p>${Izl.html(izl.paras, "t" + l.id)}<details style="margin-top:8px"><summary class="small">Текст «${esc(izl.title)}» и микротемы</summary>${izl.paras.map((p, i) => `<p style="margin:6px 0"><b>${i + 1}.</b> ${esc(p)}</p>`).join("")}<p class="small"><b>Микротемы:</b> ${izl.micro.map(esc).join(" · ")}</p></details>` : ""}${w ? `<div class="card" style="box-shadow:none;margin-top:10px"><div class="kicker">Работа ученика · ${w.status === "sent" ? "ждёт проверки" : "проверено"}</div><div style="white-space:pre-line;margin-top:6px">${esc(w.body || "")}</div>${(w.photos || []).map(u => `<img src="${esc(u)}" alt="Фото работы" style="max-height:260px;border-radius:10px;margin-top:8px">`).join("")}</div>` : `<p class="small muted">Ученик ещё не прислал работу.</p>`}`;
   }
   if (tab === "mats") return (l.materials || []).length ? (l.materials || []).map(m => m.data?.kind === "game" ? `<div class="mat"><span class="ic">🎮</span><div style="min-width:0;flex:1"><b>${esc(m.title || "Игра")}</b> <button class="btn ghost sm" data-act="game-play" data-mid="${m.id}">▶ Посмотреть</button><p class="small muted">Ученик видит игру во вкладке «Материалы».</p></div></div>` : `<div class="mat"><span class="ic">${{link:"🔗", file:"📎", text:"📝", tasks:"✏️"}[m.kind] || "•"}</span><div style="min-width:0;flex:1">${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title || m.url)}</a>` : `<b>${esc(m.title || "Материал")}</b>`}${m.body ? `<div class="small" style="white-space:pre-line">${esc(m.body)}</div>` : ""}</div></div>`).join("") : `<p class="muted">Своих материалов к уроку нет.</p>`;
   if (tab === "hw"){
@@ -1272,6 +1324,7 @@ document.addEventListener("click", async e => {
   if (a && a.startsWith("te-")){ await teAct(a, t); return; }
   if (a && a.startsWith("game-")){ await gameAct(a, t); return; }
   if (a === "ce-reset"){ await ceReset(t); return; }
+  if (a && a.startsWith("lab-")){ await labAct(a, t); return; }
   if (a && a.startsWith("ce-")){ await ceAct(a, t); return; }
   if (a === "key-edit"){ T.editKey = +t.dataset.k; render(); $("#key-edit")?.focus(); return; }
   if (a === "key-cancel"){ T.editKey = null; render(); return; }
@@ -1387,7 +1440,7 @@ document.addEventListener("click", async e => {
     T.review = null; render(); cmd(T.sel, "refresh", {msg:"Учитель проверил ДЗ"}); toast(row.status === "accepted" ? "ДЗ принято" : "Отправлено на доработку");
   }
   if (a === "ai-check"){
-    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = c.lessons.find(x => x.id === T.wreview), w = T.writings.find(x => x.student_id === s.id && x.lesson_id === l.id);
+    const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), l = U.findLesson(c, T.wreview), w = T.writings.find(x => x.student_id === s.id && x.lesson_id === l.id);
     const src = l.writing ? U.writingSource(c, l, w.kind) : {};
     const srcText = l.writing ? (l.writing.type === "izl" ? c.izl[l.writing.text].paras.join("\n") : c.texts[l.writing.text].text) : "";
     T.busy = "check"; render();
