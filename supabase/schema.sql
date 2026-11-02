@@ -47,6 +47,7 @@ alter table public.students add column if not exists person_id     uuid;   -- о
 alter table public.students add column if not exists call_url      text;   -- ссылка на созвон (Телемост и т. п.) для этого ученика
 alter table public.students add column if not exists covered       jsonb not null default '{}'::jsonb;  -- пройдено на уроке онлайн: {урок: дата}
 alter table public.teachers add column if not exists call_url      text;   -- ссылка на созвон по умолчанию
+alter table public.teachers add column if not exists room          jsonb;  -- идущий урок: ученик, урок, вкладка (чтобы вернуться с любого устройства)
 -- подписка: basic – 100 ₽ (свои материалы), materials – 300 ₽ (+ наша база, анализ и план), full – 500 ₽ (+ вся нейросеть)
 alter table public.teachers add column if not exists plan          text not null default 'basic';
 alter table public.teachers add column if not exists paid_until    timestamptz;
@@ -324,7 +325,9 @@ begin
   select * into r from teachers where id = uid;
   return json_build_object('join_code', r.join_code, 'id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url,
     'plan', r.plan, 'paid_until', r.paid_until, 'trial', r.trial, 'active', plan_active(r.id), 'base', can_read_base(r.id),
-    'prices', (select value from app_settings where key = 'prices'));
+    'prices', (select value from app_settings where key = 'prices'),
+    'room', (select t.room from teachers t where t.room is not null and (t.id = uid or (r.role = 'developer' and t.role = 'developer'))
+             order by (t.room->>'at')::bigint desc nulls last limit 1));
 end $$;
 
 create or replace function public.teacher_set_theme(p_theme text)
@@ -352,6 +355,18 @@ begin
   if p_b is not null and p_b <> p_a then
     update students set pair_id = p_b where id = p_a;
     update students set pair_id = p_a where id = p_b;
+  end if;
+end $$;
+
+-- идущий урок учителя: запоминаем, чтобы вернуться к нему после случайного выхода или с другого устройства
+create or replace function public.teacher_set_room(p_room jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if p_room is null then
+    update teachers set room = null where id = auth.uid() or (public.is_dev() and role = 'developer');
+  else
+    if length(p_room::text) > 4000 then raise exception 'too big'; end if;
+    update teachers set room = p_room where id = auth.uid();
   end if;
 end $$;
 
@@ -698,7 +713,7 @@ do $$ declare f text; begin
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;
-  foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
+  foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_room(jsonb)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
     'public.dev_join(text)', 'public.dev_change_code(text)', 'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
     execute 'revoke all on function ' || f || ' from public, anon';
     execute 'grant execute on function ' || f || ' to authenticated';

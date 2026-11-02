@@ -124,6 +124,7 @@ async function ensureLesson(m){
 function liveStart(){
   if (!sb || !S.profile?.teacher || live) return;
   live = sb.channel(`live-${S.profile.teacher}`, {config:{presence:{key:"s-" + S.profile.id}, broadcast:{self:false}}});
+  live.on("broadcast", {event:"act"}, ({payload:m}) => onSync(m));
   live.on("broadcast", {event:"cmd"}, async ({payload:m}) => {
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
@@ -174,14 +175,43 @@ function liveTrack(now){
   }, now ? 0 : 250);
 }
 /* сообщить учителю о сделанном – у него всё обновится сразу */
-function liveAct(text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text}}).catch(() => {}); }
+function liveAct(text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, dev:DEV, id:S.profile.id, name:S.profile.name, text}}).catch(() => {}); }
+/* одно и то же у ученика на всех его устройствах: задания, черновики, результаты */
+const DEV = Math.random().toString(36).slice(2, 10);
+function syncSend(extra){ if (live) live.send({type:"broadcast", event:"act", payload:{sync:true, dev:DEV, id:S.profile.id, ...extra}}).catch(() => {}); }
+const draftT = {};
+function saveDraft(lid, task, text){
+  clearTimeout(draftT[lid + task]);
+  draftT[lid + task] = setTimeout(() => { (S.works[lid] = S.works[lid] || {})[task] = {a: text};
+    if (sb) sb.rpc("student_save_work", {p_code: S.token, p_lesson: lid, p_task: task, p_data: {a: text}}).then(() => {}, () => {});
+    syncSend({draft: true, lesson: lid, task, text}); }, 1200);
+}
+let syncT = 0;
+function onSync(m){
+  const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];
+  if (!m || m.dev === DEV || !mine.includes(m.id)) return;
+  if (m.work){
+    (S.works[m.lesson] = S.works[m.lesson] || {})[m.task] = m.data;
+    const el = document.querySelector(`#wk-root [data-task="${m.task}"]`), l = U.findLesson(S.course, m.lesson);
+    if (el && l?.practice?.[m.task] && (S.open === m.lesson) && !el.contains(document.activeElement)) el.outerHTML = Work.task(l.practice[m.task], m.task, m.data);
+    return;
+  }
+  if (m.draft){
+    (S.works[m.lesson] = S.works[m.lesson] || {})[m.task] = {a: m.text};
+    try { localStorage.setItem((m.task === 901 ? "izl-draft-" : "oge-draft-") + m.lesson, m.text); } catch(_) {}
+    const ta = document.querySelector(m.task === 901 ? `#izl-draft[data-lesson="${m.lesson}"]` : `#essay[data-lesson="${m.lesson}"]`);
+    if (ta && document.activeElement !== ta && !ta.readOnly) ta.value = m.text;
+    return;
+  }
+  if (m.act){ clearTimeout(syncT); syncT = setTimeout(async () => { await load(); if (!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") && !S.test) render(); }, 700); }
+}
 
 /* интерактивная тетрадь: сохраняем через секунду тишины, учителю – сразу */
 const workT = {}, workLive = {};
 function saveWork(lessonId, i, st){
   const k = lessonId + ":" + i;
   try{ const all = LS.get("works", {}); (all[lessonId] = all[lessonId] || {})[i] = st; LS.set("works", all); }catch(_){}
-  clearTimeout(workLive[k]); workLive[k] = setTimeout(() => { if (live) live.send({type:"broadcast", event:"act", payload:{act:true, work:true, id:S.profile.id, name:S.profile.name, lesson:lessonId, task:i, data:st, text:"работает в тетради"}}).catch(() => {}); }, 300);
+  clearTimeout(workLive[k]); workLive[k] = setTimeout(() => { if (live) live.send({type:"broadcast", event:"act", payload:{act:true, work:true, dev:DEV, id:S.profile.id, name:S.profile.name, lesson:lessonId, task:i, data:st, text:"работает в тетради"}}).catch(() => {}); }, 300);
   clearTimeout(workT[k]); workT[k] = setTimeout(() => { if (sb) sb.rpc("student_save_work", {p_code:S.token, p_lesson:lessonId, p_task:i, p_data:st}).then(() => {}, () => toast("Не сохранилось: нет связи. Отметки остались на устройстве.")); }, 1000);
 }
 
@@ -438,6 +468,7 @@ function writingBody(l){
   const kind = w.type === "choice" ? (mine?.kind && mine.kind !== "izl" ? mine.kind : LS.get("etype", "13.3")) : w.type;
   const src = U.writingSource(S.course, l, w.type === "choice" ? kind : null);
   let draft = ""; try{ draft = localStorage.getItem("oge-draft-" + l.id) || ""; }catch(_){}
+  if (!draft) draft = S.works?.[l.id]?.[900]?.a || "";
   const locked = mine && mine.status !== "redo";
   const body = locked ? mine.body : (draft || mine?.body || "");
   const minW = ["thesis","example"].includes(w.type) ? 0 : 70, words = U.wordCount(body);
@@ -448,7 +479,7 @@ function writingBody(l){
     <div style="margin-top:16px"><div class="kicker">Текст «${esc(src.title)}»</div>
       ${w.type === "izl" ? izlPlayer(l, S.course.izl?.[w.text]) : ""}
       ${w.type === "izl" && !locked ? `<div class="stack" style="margin-top:10px;gap:6px"><label for="izl-draft" class="small"><b>Черновик</b> (видишь только ты): план и ключевые слова</label>
-        <textarea id="izl-draft" class="essay-area" style="min-height:150px" data-lesson="${l.id}" placeholder="1. Микротема: …\n   ключевые слова: …\n2. Микротема: …\n   ключевые слова: …\n3. Микротема: …\n   ключевые слова: …">${esc((() => { try { return localStorage.getItem("izl-draft-" + l.id) || ""; } catch(_) { return ""; } })())}</textarea></div>` : ""}
+        <textarea id="izl-draft" class="essay-area" style="min-height:150px" data-lesson="${l.id}" placeholder="1. Микротема: …\n   ключевые слова: …\n2. Микротема: …\n   ключевые слова: …\n3. Микротема: …\n   ключевые слова: …">${esc((() => { try { return localStorage.getItem("izl-draft-" + l.id) || S.works?.[l.id]?.[901]?.a || ""; } catch(_) { return S.works?.[l.id]?.[901]?.a || ""; } })())}</textarea></div>` : ""}
       ${w.type === "izl" ? `<details style="margin-top:10px"><summary class="small">Показать текст (только если на уроке его не читали и озвучка не работает)</summary><div class="ttext" style="white-space:normal">${src.html}</div></details>` : `<div class="ttext" style="white-space:normal">${src.html}</div>`}
       <p style="margin-top:10px"><b>Тема:</b> ${esc(src.topic)}</p></div>
     ${toBoard("text")}
@@ -849,7 +880,7 @@ function testLive(extra){
   liveAct2({test: true, lesson: T.id, kind: T.kind, title: T.title, i: T.i, n: T.qs.length, score: T.score,
     q: q ? {q: q.q, o: q.o || null, a: q.a, pn: q.pn || null} : null, picked: T.picked, typed: T.typed || "", ...extra});
 }
-function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text, ...extra}}).catch(() => {}); }
+function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, dev:DEV, id:S.profile.id, name:S.profile.name, text, ...extra}}).catch(() => {}); }
 /* ---------- отрисовка ---------- */
 function render(){
   const app = $("#app");
@@ -1013,9 +1044,10 @@ document.addEventListener("change", async e => {
   }
 });
 document.addEventListener("input", e => {
-  if (e.target.id === "izl-draft"){ try{ localStorage.setItem("izl-draft-" + e.target.dataset.lesson, e.target.value); }catch(_){} return; }
+  if (e.target.id === "izl-draft"){ try{ localStorage.setItem("izl-draft-" + e.target.dataset.lesson, e.target.value); }catch(_){} saveDraft(e.target.dataset.lesson, 901, e.target.value); return; }
   if (e.target.id !== "essay") return;
   try{ localStorage.setItem("oge-draft-" + e.target.dataset.lesson, e.target.value); }catch(_){}
+  saveDraft(e.target.dataset.lesson, 900, e.target.value);
   const l = U.findLesson(S.course, e.target.dataset.lesson), minW = ["thesis","example"].includes(l.writing.type) ? 0 : 70, n = U.wordCount(e.target.value);
   const wc = $("#wc"); wc.textContent = `${n} сл.${minW ? ` / нужно не меньше ${minW}` : ""}`; wc.className = "chip tnum " + (minW && n < minW ? "bad" : n ? "good" : "");
 });

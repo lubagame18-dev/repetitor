@@ -668,7 +668,23 @@ function roomSend(type){
   r.to.forEach(id => cmd(id, type, {lesson: r.lesson, url: r.url, title: l?.title || ""}));
   roomTrack();
 }
-function roomTrack(){ if (T.live && T.liveOk) T.live.track({role:"teacher", room: T.room ? {to: T.room.to, lesson: T.room.lesson, url: T.room.url, at: T.room.at} : null}).catch(() => {}); }
+/* идущий урок хранится на сервере: после случайного выхода или с другого устройства к нему можно вернуться */
+let roomSaveT = 0;
+function roomBanner(){
+  if (!T.session || T.view === "room") return "";
+  const rm = T.room || (T.me?.room && Date.now() - (T.me.room.at || 0) < 5 * 3600e3 ? T.me.room : null); if (!rm) return "";
+  const st = T.students.find(x => x.id === rm.sid); if (!st) return "";
+  const l = U.courseFor(st, T.mats)?.lessons.find(x => x.id === rm.lesson);
+  return `<div class="card accent row between" style="gap:10px;flex-wrap:wrap;margin-bottom:14px"><div style="min-width:0"><div class="kicker"><span class="live-dot" aria-hidden="true"></span> Идёт урок</div>
+    <b>${esc(st.name)}</b>${l ? ` · ${esc(l.title)}` : ""}</div>
+    <div class="row" style="gap:8px"><button class="btn" data-act="room-back">↩ Вернуться к уроку</button>${T.room ? "" : `<button class="btn ghost sm" data-act="room-forget">Урок уже закончился</button>`}</div></div>`;
+}
+function roomPersist(){
+  clearTimeout(roomSaveT);
+  roomSaveT = setTimeout(() => { if (!sb || !T.session) return; const r = T.room;
+    sb.rpc("teacher_set_room", {p_room: r ? {sid: r.sid, lesson: r.lesson, tab: r.shown || r.tab || null, at: r.at || Date.now(), to: r.to} : null}).then(() => {}, () => {}); }, 400);
+}
+function roomTrack(){ roomPersist(); if (T.live && T.liveOk) T.live.track({role:"teacher", room: T.room ? {to: T.room.to, lesson: T.room.lesson, url: T.room.url, at: T.room.at} : null}).catch(() => {}); }
 /* учитель решил провести сегодня другой урок: он встаёт на дату урока по плану, а пропущенные папки сдвигаются на следующие занятия */
 function replanDates(s, base, planned, chosen){
   const c = U.courseFor({...s, dates: base}, T.mats), L = c?.lessons || [];
@@ -839,7 +855,7 @@ function render(){
     </nav>
     <div style="min-width:0">
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
-      <main class="main">${["students","course","student"].includes(T.view) && T.session ? subBanner() : ""}${html}</main></div></div>`;
+      <main class="main">${roomBanner()}${["students","course","student"].includes(T.view) && T.session ? subBanner() : ""}${html}</main></div></div>`;
   if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
   if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
     const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
@@ -1394,7 +1410,11 @@ document.addEventListener("click", async e => {
     return;
   }
   if (a === "start-lesson"){ const s = T.students.find(x => x.id === (t.dataset.id || T.sel)); if (s) startRoom(s, t.dataset.rl); return; }
-  if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); return; }
+  if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); roomPersist(); return; }
+  if (a === "room-back"){ if (T.room){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); return; }
+    const rm = T.me?.room, st = rm && T.students.find(x => x.id === rm.sid); if (!st){ toast("Урок уже завершён"); T.me.room = null; render(); return; }
+    startRoom(st, rm.lesson, true); if (rm.tab && T.room){ T.room.tab = rm.tab; render(); } return; }
+  if (a === "room-forget"){ if (T.me) T.me.room = null; if (!T.room) sb.rpc("teacher_set_room", {p_room: null}).then(() => {}, () => {}); render(); return; }
   if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
   if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.since = Date.now(); T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
   if (a === "room-move"){ const r = T.room, l = r.lesson, tab = r.shown || r.tab || null; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab}));
@@ -1433,7 +1453,7 @@ document.addEventListener("click", async e => {
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
     await saveCall(s, u, true);
     roomSend("lesson"); render(); return; }
-  if (a === "room-end"){ await roomCover(true); if (window.Call) Call.leave(true); const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
+  if (a === "room-end"){ if (T.me) T.me.room = null; await roomCover(true); if (window.Call) Call.leave(true); const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
   if (a === "open-drawer"){ T.drawer = true; render(); }
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();
