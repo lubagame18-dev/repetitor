@@ -1,0 +1,24 @@
+# Диагностика базы без личных данных (только количества и настройки доступа). Запуск – изменение файла .github/diag-run.
+name: Supabase – диагностика
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/diag-run", "supabase/diag.sql"]
+permissions:
+  contents: write
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Запрос
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          jq -Rs '{query: .}' supabase/diag.sql > q.json
+          curl -sS -X POST "https://api.supabase.com/v1/projects/affncgnhqfvdbtyujfvz/database/query" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" --data-binary @q.json > out.json || true
+          { echo "# Диагностика $(date -u '+%Y-%m-%d %H:%M UTC')"; echo '```json'; jq . out.json 2>/dev/null | head -c 12000 || head -c 4000 out.json; echo '```'; } > .github/supabase-diag.md
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add .github/supabase-diag.md; git commit -m "Диагностика Supabase [skip ci]" || exit 0
+          git pull --rebase -q && git push -q
