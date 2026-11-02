@@ -1,6 +1,6 @@
 # Последнее обновление Supabase
 
-Время: 2026-11-02 06:59 UTC · коммит f0651a6
+Время: 2026-11-02 07:10 UTC · коммит 6f58843
 
 ## База (schema.sql)
 ```
@@ -11,5 +11,8 @@ connection to server at "aws-0-eu-west-1.pooler.supabase.com" (108.128.216.176),
 
 ## Функция ai
 ```
-нет секрета SUPABASE_ACCESS_TOKEN
+Uploading asset (ai): supabase/functions/ai/index.ts
+Deployed Functions on project affncgnhqfvdbtyujfvz: ai
+You can inspect your deployment in the Dashboard: https://supabase.com/dashboard/project/affncgnhqfvdbtyujfvz/functions
+ok
 ```
