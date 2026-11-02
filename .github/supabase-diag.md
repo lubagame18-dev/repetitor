@@ -1,4 +1,4 @@
-# Диагностика 2026-11-02 16:21 UTC
+# Диагностика 2026-11-02 16:22 UTC
 ```json
 [
   {
@@ -14,19 +14,17 @@
         {
           "t": "8295d3c3",
           "role": "developer",
-          "students": 3,
-          "registered": 2,
-          "courses": [
-            " / rus",
-            "oge-rus / rus"
-          ]
+          "students": 0,
+          "registered": 0,
+          "courses": null
         },
         {
           "t": "31d99ed3",
           "role": "developer",
-          "students": 5,
-          "registered": 3,
+          "students": 8,
+          "registered": 5,
           "courses": [
+            " / rus",
             "oge-rus / rus",
             "rus-7 / rus",
             "rus-8 / rus",
