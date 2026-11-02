@@ -228,6 +228,11 @@ create or replace function public.is_dev()
 returns boolean language sql security definer set search_path = public stable as $$
   select exists (select 1 from teachers where id = auth.uid() and role = 'developer');
 $$;
+-- «команда»: свой кабинет, а у разработчика – все кабинеты разработчика (ученики видны из любого своего кабинета)
+create or replace function public.my_team(t uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select t = auth.uid() or (public.is_dev() and exists (select 1 from teachers where id = t and role = 'developer'));
+$$;
 
 -- действующий тариф: разработчик – full; иначе тариф, если оплачен (или идёт пробный период); null – подписки нет
 create or replace function public.plan_active(uid uuid)
@@ -254,7 +259,7 @@ create policy "dev_teachers" on public.teachers for update to authenticated usin
 
 drop policy if exists "teacher_students" on public.students;
 create policy "teacher_students" on public.students for all to authenticated
-  using (teacher_id = auth.uid()) with check (teacher_id = auth.uid());
+  using (public.my_team(teacher_id)) with check (public.my_team(teacher_id));
 -- новых учеников можно добавлять, только пока действует подписка (любой тариф)
 drop policy if exists "students_need_plan" on public.students;
 create policy "students_need_plan" on public.students as restrictive for insert to authenticated with check (public.plan_active(auth.uid()) is not null);
@@ -263,13 +268,13 @@ do $$ declare t text; begin
   foreach t in array array['results','activity','homework','writings','board_items','works'] loop
     execute format('drop policy if exists "teacher_%1$s" on public.%1$s', t);
     execute format('create policy "teacher_%1$s" on public.%1$s for all to authenticated
-      using (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))
-      with check (exists (select 1 from public.students s where s.id = student_id and s.teacher_id = auth.uid()))', t);
+      using (exists (select 1 from public.students s where s.id = student_id and public.my_team(s.teacher_id)))
+      with check (exists (select 1 from public.students s where s.id = student_id and public.my_team(s.teacher_id)))', t);
   end loop;
   foreach t in array array['sheets','materials','ai_reports'] loop
     execute format('drop policy if exists "teacher_%1$s" on public.%1$s', t);
     execute format('create policy "teacher_%1$s" on public.%1$s for all to authenticated
-      using (teacher_id = auth.uid()) with check (teacher_id = auth.uid())', t);
+      using (public.my_team(teacher_id)) with check (public.my_team(teacher_id))', t);
   end loop;
 end $$;
 -- старые имена политик из прошлой версии
@@ -332,7 +337,7 @@ create or replace function public.teacher_new_invite(p_student uuid)
 returns text language plpgsql security invoker set search_path = public, extensions as $$
 declare t text := encode(gen_random_bytes(18), 'hex');
 begin
-  update students set invite_token = t, access_token = null where id = p_student and teacher_id = auth.uid();
+  update students set invite_token = t, access_token = null where id = p_student and public.my_team(teacher_id);
   if not found then raise exception 'not your student'; end if;
   return t;
 end $$;
@@ -341,9 +346,9 @@ end $$;
 create or replace function public.teacher_set_pair(p_a uuid, p_b uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if not exists (select 1 from students where id = p_a and teacher_id = auth.uid()) then raise exception 'not your student'; end if;
-  if p_b is not null and not exists (select 1 from students where id = p_b and teacher_id = auth.uid()) then raise exception 'not your student'; end if;
-  update students set pair_id = null where teacher_id = auth.uid() and (pair_id = p_a or id = p_a or (p_b is not null and (pair_id = p_b or id = p_b)));
+  if not exists (select 1 from students where id = p_a and public.my_team(teacher_id)) then raise exception 'not your student'; end if;
+  if p_b is not null and not exists (select 1 from students where id = p_b and public.my_team(teacher_id)) then raise exception 'not your student'; end if;
+  update students set pair_id = null where public.my_team(teacher_id) and (pair_id = p_a or id = p_a or (p_b is not null and (pair_id = p_b or id = p_b)));
   if p_b is not null and p_b <> p_a then
     update students set pair_id = p_b where id = p_a;
     update students set pair_id = p_a where id = p_b;
@@ -361,7 +366,7 @@ create or replace function public.teacher_add_subject(p_student uuid, p_subject 
 returns uuid language plpgsql security definer set search_path = public, extensions as $$
 declare r students; nid uuid; c text;
 begin
-  select * into r from students where id = p_student and teacher_id = auth.uid();
+  select * into r from students where id = p_student and public.my_team(teacher_id);
   if r.id is null then raise exception 'not your student'; end if;
   if exists (select 1 from students where coalesce(person_id, id) = coalesce(r.person_id, r.id) and subject = p_subject) then raise exception 'subject exists'; end if;
   loop c := upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 7)); exit when not exists (select 1 from students where code = c); end loop;

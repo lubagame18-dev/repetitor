@@ -713,7 +713,7 @@ async function roomSetLesson(lid){
 }
 function startCallT(s){
   if (!window.Call || !T.session) return;
-  Call.join({sb, room: `${T.session.user.id}-${ownerOf(s)}`, me: "t-" + T.session.user.id, name: T.me?.name || CFG.TEACHER_NAME || "Учитель",
+  Call.join({sb, room: `${s.teacher_id || T.session.user.id}-${ownerOf(s)}`, me: "t-" + T.session.user.id, name: T.me?.name || CFG.TEACHER_NAME || "Учитель",
     onConnected: (id, name) => { toast(`${name || "Ученик"} подключился к видеозвонку`); if (T.room && T.view !== "room"){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); } }});
 }
 function startRoom(s, lesson, keepPlan){
@@ -1119,10 +1119,20 @@ window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); instal
 
 /* ---------- живая связь: кто из учеников сейчас на платформе и где; мгновенные обновления ---------- */
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || ["board","room"].includes(T.view);
+/* канал «онлайн и команды»: свой, а у разработчика – ещё каналы других его кабинетов (ученики могут быть закреплены за любым) */
 function liveStart(){
-  if (!sb || !T.session || T.live) return;
-  T.live = sb.channel(`live-${T.session.user.id}`, {config:{presence:{key:"t-" + T.session.user.id}, broadcast:{self:false}}});
-  T.live.on("presence", {event:"sync"}, () => {
+  if (!sb || !T.session) return;
+  if (!T.live) T.live = {chans: new Map(),
+    send(m){ return Promise.all([...this.chans.values()].map(c => c.send(m))); },
+    track(x){ return Promise.all([...this.chans.values()].map(c => c.track(x))); },
+    presenceState(){ return Object.assign({}, ...[...this.chans.values()].map(c => c.presenceState())); }};
+  const ids = new Set([T.session.user.id, ...T.students.map(s => s.teacher_id).filter(Boolean)]);
+  ids.forEach(id => { if (!T.live.chans.has(id)) liveChan(id); });
+}
+function liveChan(id){
+  const ch = sb.channel(`live-${id}`, {config:{presence:{key:"t-" + T.session.user.id}, broadcast:{self:false}}});
+  T.live.chans.set(id, ch);
+  ch.on("presence", {event:"sync"}, () => {
     T.online = {}; Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role === "student") T.online[p.id] = p; });
     paintOnline();
   }).on("broadcast", {event:"act"}, ({payload:m}) => {

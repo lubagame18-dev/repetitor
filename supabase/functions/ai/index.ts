@@ -115,8 +115,13 @@ Deno.serve(async (req) => {
     if (need[action] && !need[action].includes(plan as string))
       return json({ error: plan ? "Эта функция нейросети входит в тариф " + (need[action][0] === "full" ? "«Полный» (500 ₽ в месяц)" : "от 300 ₽ в месяц") + "." : "Подписка закончилась – продлите её в разделе «Подписка»." }, 402);
     const own = async (sid: string) => {
-      const { data } = await admin.from("students").select("*").eq("id", sid).eq("teacher_id", uid).single();
+      const { data } = await admin.from("students").select("*").eq("id", sid).single();
       if (!data) throw new Error("Это не ваш ученик");
+      if (data.teacher_id !== uid) {
+        // кабинеты разработчика – одна команда: ученик виден из любого из них
+        const { data: owner } = await admin.from("teachers").select("role").eq("id", data.teacher_id).single();
+        if (!(me.role === "developer" && owner?.role === "developer")) throw new Error("Это не ваш ученик");
+      }
       return data;
     };
 
