@@ -333,6 +333,7 @@ function viewStudent(){
   ${!pending(s) ? `<div class="section-title"><h2>Анализ и план</h2></div>${aiReportHTML(s, x)}` : ""}
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
+  ${T.liveTest?.[s.id] && !T.liveTest[s.id].done && !T.liveTest[s.id].quit ? `<div class="section-title"><h2>Сейчас проходит тест</h2></div><div class="card" data-livetest="${s.id}">${liveTestHTML(T.liveTest[s.id])}</div>` : ""}
   ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
   ${!pending(s) && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
   ${!pending(s) && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
@@ -506,7 +507,7 @@ function viewLesson(){
   const sh = sheetFor(cid, l.id), Tt = U.lessonTests(l);
   const tabs = [["method","Методика"],["theory","Теория"], U.hasMnemo(l) && ["mnemo","Запоминалки"], l.practice.length && ["practice","Практика"], l.writing && ["writing","Письмо"], ["test","Тест"], ["hwtest","ДЗ-тест"], ["mats","Свои материалы"], ["sheet","Лист и ДЗ"], l.custom && ["edit","Изменить урок"]].filter(Boolean);
   if (!tabs.some(t => t[0] === T.sub)) T.sub = "method";
-  const testList = qs => `<ol style="padding-left:20px">${qs.map(q => `<li style="margin-bottom:12px"><b>${esc(q.q)}</b><ul>${q.o.map((o,k) => `<li ${k===q.a?'style="color:var(--good);font-weight:800"':""}>${esc(o)}${k===q.a?" ✓":""}</li>`).join("")}</ul><p class="small muted">${q.tag ? "Правило: " + esc(q.tag) + ". " : ""}${esc(q.e || "")}</p></li>`).join("")}</ol>`;
+  const testList = qs => `<ol style="padding-left:20px">${qs.map(q => `<li style="margin-bottom:12px"><b>${esc(q.q)}</b>${q.pn ? U.pnHTML(q.pn, q.pn.a, {ro: true}) : !q.o ? `<div class="small">Ответ: ${esc(String(q.a).split("|")[0])}</div>` : ""}<ul>${(q.o || []).map((o,k) => `<li ${k===q.a?'style="color:var(--good);font-weight:800"':""}>${esc(o)}${k===q.a?" ✓":""}</li>`).join("")}</ul><p class="small muted">${q.tag ? "Правило: " + esc(q.tag) + ". " : ""}${esc(q.e || "")}</p></li>`).join("")}</ol>`;
   let body = "";
   if (!ok) body = `<p>${I.lock} Материалы этого урока откроются в тарифе «С материалами». <a href="#" data-view="sub">Выбрать тариф</a></p>`;
   else {
@@ -742,7 +743,8 @@ function liveTestHTML(m){
   const answered = m.picked != null;
   return `<div class="kicker"><span class="live-dot" aria-hidden="true"></span> ${kind} идёт · вопрос ${m.i + 1} из ${m.n} · верно ${m.score}</div>
     <p style="margin:6px 0"><b>${esc(q.q)}</b></p>
-    ${q.o ? `<ul class="lt-opts">${q.o.map((o, k) => `<li class="${k === q.a ? "ok" : ""} ${answered && k === m.picked ? (k === q.a ? "pick good" : "pick bad") : ""}">${esc(o)}${k === q.a ? " ✓" : ""}${answered && k === m.picked ? " ← ответ ученика" : ""}</li>`).join("")}</ul>`
+    ${q.pn ? `<div class="small">Ключ:</div>${U.pnHTML(q.pn, q.pn.a, {ro: true})}${answered ? `<div class="small">Ответ ученика – ${m.ok ? "верно" : "неверно"}:</div>${U.pnHTML(q.pn, m.sel || [], {ro: true, key: true})}` : ""}`
+      : q.o ? `<ul class="lt-opts">${q.o.map((o, k) => `<li class="${k === q.a ? "ok" : ""} ${answered && k === m.picked ? (k === q.a ? "pick good" : "pick bad") : ""}">${esc(o)}${k === q.a ? " ✓" : ""}${answered && k === m.picked ? " ← ответ ученика" : ""}</li>`).join("")}</ul>`
       : `<p class="small">Ответ ученика: <b>${answered ? esc(m.typed) : "…"}</b>${answered ? (m.ok ? " – верно" : " – неверно") : ""} · ключ: ${esc(String(q.a).split("|")[0])}</p>`}
     ${answered ? "" : `<p class="small muted">Ученик думает…</p>`}`;
 }
@@ -775,7 +777,7 @@ function roomPane(s, c, l, tab){
     const qs = U.lessonTests(l).test, rs = (T.rows || []).filter(x => x.student_id === who.id && x.lesson_id === l.id && x.kind === "lesson");
     return whoSeg + `<div class="card" style="box-shadow:none;margin-bottom:12px" id="live-test">${liveTestHTML(T.liveTest?.[who.id]?.lesson === l.id && T.liveTest[who.id].kind !== "hw" ? T.liveTest[who.id] : null)}</div>
       ${rs.length ? `<p class="small">Попытки: ${rs.map(x => `<span class="chip">${x.score}/${x.total}</span>`).join(" ")}</p>` : ""}
-      <details><summary class="small">Все вопросы с ответами (${qs.length})</summary><ol style="padding-left:20px">${qs.map(q => `<li style="margin:8px 0"><b>${esc(q.q)}</b>${q.o ? `<ul>${q.o.map((o, k) => `<li ${k === q.a ? 'style="color:var(--good);font-weight:800"' : ""}>${esc(o)}${k === q.a ? " ✓" : ""}</li>`).join("")}</ul>` : `<div class="small">Ответ: ${esc(String(q.a).split("|")[0])}</div>`}</li>`).join("")}</ol></details>`;
+      <details><summary class="small">Все вопросы с ответами (${qs.length})</summary><ol style="padding-left:20px">${qs.map(q => `<li style="margin:8px 0"><b>${esc(q.q)}</b>${q.pn ? U.pnHTML(q.pn, q.pn.a, {ro: true}) : q.o ? `<ul>${q.o.map((o, k) => `<li ${k === q.a ? 'style="color:var(--good);font-weight:800"' : ""}>${esc(o)}${k === q.a ? " ✓" : ""}</li>`).join("")}</ul>` : `<div class="small">Ответ: ${esc(String(q.a).split("|")[0])}</div>`}</li>`).join("")}</ol></details>`;
   }
   return "";
 }
@@ -879,7 +881,8 @@ function teOwnRow(cid, lid){ return T.mats.find(m => m.kind === "tasks" && m.dat
 function teCheck(q){
   if (!q.q || !q.q.trim()) return "нет текста вопроса";
   if (q.q.length > TE_LIM.q) return `вопрос длиннее ${TE_LIM.q} знаков`;
-  if (Array.isArray(q.o)){
+  if (q.pn){ if (!q.pn.w?.length || q.pn.w.length < 3) return "нужно предложение"; if (!q.pn.a.length) return "в предложении нет ни одной запятой"; }
+  else if (Array.isArray(q.o)){
     const o = q.o.map(x => String(x).trim());
     if (o.length < 2 || o.length > 6) return "нужно от 2 до 6 вариантов";
     if (o.some(x => !x)) return "есть пустой вариант";
@@ -891,11 +894,12 @@ function teCheck(q){
   return "";
 }
 function teQHTML(q, i, d){
-  const kindName = Array.isArray(q.o) ? (q.tf ? "Верно / неверно" : "Выбор ответа") : "Ввод ответа";
+  const kindName = q.pn ? "Расставить запятые" : Array.isArray(q.o) ? (q.tf ? "Верно / неверно" : "Выбор ответа") : "Ввод ответа";
   if (d && d.edit === i){
     return `<li class="te-q editing"><div class="kicker">${kindName}</div>
       <label class="small" for="te-q">Вопрос (до ${TE_LIM.q} знаков)</label><textarea id="te-q" maxlength="${TE_LIM.q}" rows="2">${esc(q.q || "")}</textarea>
-      ${Array.isArray(q.o) ? `<div class="small muted" style="margin-top:6px">Варианты: отметьте кружком верный (2–6 вариантов)</div>
+      ${q.pn ? `<label class="small" for="te-pn" style="margin-top:6px">Предложение с правильно расставленными запятыми – ученик увидит его без запятых и расставит сам</label><textarea id="te-pn" rows="2" maxlength="300">${esc(U.pnText(q.pn, q.pn.a))}</textarea>`
+      : Array.isArray(q.o) ? `<div class="small muted" style="margin-top:6px">Варианты: отметьте кружком верный (2–6 вариантов)</div>
         ${q.o.map((o, k) => `<div class="row te-opt" style="gap:6px;margin-top:4px"><input type="radio" name="te-a" value="${k}" ${k === q.a ? "checked" : ""} aria-label="Верный ответ" style="width:auto">
           <input class="te-o" value="${esc(o)}" maxlength="${TE_LIM.o}" ${q.tf ? "readonly" : ""} style="flex:1">${q.tf || q.o.length <= 2 ? "" : `<button class="iconbtn" data-act="te-odel" data-k="${k}" aria-label="Удалить вариант">✕</button>`}</div>`).join("")}
         ${q.tf || q.o.length >= 6 ? "" : `<button class="btn ghost sm" data-act="te-oadd" style="margin-top:6px">+ вариант</button>`}`
@@ -906,7 +910,7 @@ function teQHTML(q, i, d){
   const err = d ? teCheck(q) : "";
   return `<li class="te-q"><div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="flex:1">${esc(q.q)}</b>
       <span class="row te-tools" style="gap:2px;flex:none"><button class="iconbtn" data-act="te-edit" data-i="${i}" title="Изменить" aria-label="Изменить">✎</button><button class="iconbtn" data-act="te-up" data-i="${i}" title="Выше" aria-label="Выше">↑</button><button class="iconbtn" data-act="te-down" data-i="${i}" title="Ниже" aria-label="Ниже">↓</button><button class="iconbtn" data-act="te-del" data-i="${i}" title="Удалить" aria-label="Удалить">🗑</button></span></div>
-    ${Array.isArray(q.o) ? `<div class="te-opts">${q.o.map((o, k) => `<span class="te-o-view ${k === q.a ? "ok" : ""}">${k === q.a ? "✓ " : ""}${esc(o)}</span>`).join("")}</div>` : `<div class="te-opts"><span class="te-o-view ok">✓ ${esc(String(q.a).split("|").join(" / "))}</span></div>`}
+    ${q.pn ? U.pnHTML(q.pn, q.pn.a, {ro: true}) : Array.isArray(q.o) ? `<div class="te-opts">${q.o.map((o, k) => `<span class="te-o-view ${k === q.a ? "ok" : ""}">${k === q.a ? "✓ " : ""}${esc(o)}</span>`).join("")}</div>` : `<div class="te-opts"><span class="te-o-view ok">✓ ${esc(String(q.a).split("|").join(" / "))}</span></div>`}
     ${q.e ? `<p class="small muted" style="margin-top:4px">${esc(q.e)}</p>` : ""}${err ? `<p class="small" style="color:var(--bad)">⚠ ${esc(err)}</p>` : ""}</li>`;
 }
 function testEditor(cid, l, kind){
@@ -917,6 +921,7 @@ function testEditor(cid, l, kind){
       <button class="btn ghost sm" data-act="te-add" data-qk="choice">+ Выбор ответа</button>
       <button class="btn ghost sm" data-act="te-add" data-qk="input">+ Ввод ответа</button>
       <button class="btn ghost sm" data-act="te-add" data-qk="tf">+ Верно / неверно</button>
+      <button class="btn ghost sm" data-act="te-add" data-qk="pn">+ Расставить запятые</button>
       <button class="btn ghost sm" data-act="te-ai" ${T.busy === "te-ai" ? "disabled" : ""}>${T.busy === "te-ai" ? "Нейросеть пишет…" : "✨ Догенерировать 5 вопросов"}</button>
       ${d ? `<button class="btn sm" data-act="te-save">Сохранить тест (${qs.length})</button><button class="btn ghost sm" data-act="te-drop">Не сохранять</button>` : ""}
       ${!d && (own?.data?.[kind]) ? `<button class="btn ghost sm" data-act="te-reset">Вернуть исходный тест</button>` : ""}
@@ -931,14 +936,15 @@ function teReadForm(){
   const q = d.qs[d.edit]; if (!q) return;
   const val = id => document.getElementById(id)?.value ?? "";
   q.q = val("te-q").trim(); q.e = val("te-e").trim();
-  if (Array.isArray(q.o)){ q.o = [...document.querySelectorAll(".te-o")].map(x => x.value.trim()); const r = document.querySelector('input[name="te-a"]:checked'); q.a = r ? +r.value : -1; }
+  if (q.pn) q.pn = U.pnParse(val("te-pn"));
+  else if (Array.isArray(q.o)){ q.o = [...document.querySelectorAll(".te-o")].map(x => x.value.trim()); const r = document.querySelector('input[name="te-a"]:checked'); q.a = r ? +r.value : -1; }
   else q.a = val("te-ans").trim();
 }
 async function teAct(a, t){
   const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open), kind = T.sub === "hwtest" ? "hwtest" : "test";
   if (!l) return;
   if (a === "te-add"){ const d = teStart(l, kind); teReadForm(); const qk = t.dataset.qk;
-    d.qs.push(qk === "input" ? {q: "", a: "", e: ""} : qk === "tf" ? {q: "", o: ["Верно", "Неверно"], a: 0, e: "", tf: true} : {q: "", o: ["", ""], a: 0, e: ""}); d.edit = d.qs.length - 1; d.isNew = true; render(); document.getElementById("te-q")?.focus(); return; }
+    d.qs.push(qk === "pn" ? {q: "Расставьте запятые.", pn: {w: [], a: []}, a: "", e: ""} : qk === "input" ? {q: "", a: "", e: ""} : qk === "tf" ? {q: "", o: ["Верно", "Неверно"], a: 0, e: "", tf: true} : {q: "", o: ["", ""], a: 0, e: ""}); d.edit = d.qs.length - 1; d.isNew = true; render(); document.getElementById("te-q")?.focus(); return; }
   if (a === "te-edit"){ const d = teStart(l, kind); teReadForm(); d.edit = +t.dataset.i; d.isNew = false; render(); document.getElementById("te-q")?.focus(); return; }
   if (["te-up", "te-down", "te-del"].includes(a)){ const d = teStart(l, kind); teReadForm(); d.edit = null; const i = +t.dataset.i, j = a === "te-up" ? i - 1 : i + 1;
     if (a === "te-del") d.qs.splice(i, 1); else if (j >= 0 && j < d.qs.length) [d.qs[i], d.qs[j]] = [d.qs[j], d.qs[i]]; render(); return; }
@@ -959,7 +965,7 @@ async function teAct(a, t){
   if (a === "te-save"){
     const d = T.td; teReadForm(); if (d.edit != null){ const err = teCheck(d.qs[d.edit]); if (err){ toast("Вопрос " + (d.edit + 1) + ": " + err); return; } d.edit = null; }
     const bad = d.qs.map((q, i) => [i, teCheck(q)]).find(x => x[1]); if (bad){ toast(`Вопрос ${bad[0] + 1}: ${bad[1]}`); render(); return; }
-    const qs = d.qs.map(q => Array.isArray(q.o) ? {q: q.q, o: q.o, a: q.a, e: q.e || "", ...(q.tf ? {tf: true} : {}), tag: q.tag || l.title} : {q: q.q, a: q.a, e: q.e || "", tag: q.tag || l.title});
+    const qs = d.qs.map(q => q.pn ? {q: q.q, pn: q.pn, a: q.pn.a.join(","), e: q.e || "", tag: q.tag || l.title} : Array.isArray(q.o) ? {q: q.q, o: q.o, a: q.a, e: q.e || "", ...(q.tf ? {tf: true} : {}), tag: q.tag || l.title} : {q: q.q, a: q.a, e: q.e || "", tag: q.tag || l.title});
     const own = teOwnRow(cid, l.id), data = {...(own?.data || {kind: "test-edit"}), kind: "test-edit", [kind]: qs};
     const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
       : await sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "tasks", title: "Правка теста", shared: T.me?.role === "developer", data}).select().single();
@@ -1149,6 +1155,9 @@ function liveChan(id){
       T.liveTest = T.liveTest || {}; T.liveTest[m.id] = m;
       const el = document.getElementById("live-test");
       if (el && T.view === "room" && T.room?.who === m.id && T.room.lesson === m.lesson) el.innerHTML = liveTestHTML(m);
+      const card = document.querySelector(`[data-livetest="${m.id}"]`);
+      if (card) card.innerHTML = liveTestHTML(m);
+      else if (T.view === "student" && T.sel === m.id && !m.done && !m.quit && !typing()) render();
       if (m.done){ toast(`${m.name.split(" ")[0]}: тест «${m.title}» – ${m.score} из ${m.n}`); refreshSoon(); }
       return;
     }

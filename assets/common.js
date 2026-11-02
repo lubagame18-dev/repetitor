@@ -179,6 +179,22 @@ window.U = (() => {
     const t = course.texts[w.text], k = ["thesis","example"].includes(w.type) ? "13.3" : (w.type === "choice" ? (kind || "13.3") : w.type);
     return {title: t.title, topic: t.topics[k], kind: k, html: `<p>${esc(t.text)}</p>`};
   }
+  /* вопрос «расставьте запятые»: pn = {w:[слова без запятых], a:[номера слов, после которых запятая]}; ученик нажимает между словами */
+  const pnParse = text => { const w = [], a = []; String(text).trim().split(/\s+/).forEach(t => { const c = /,$/.test(t); w.push(t.replace(/,$/, "")); if (c) a.push(w.length - 1); }); return {w, a}; };
+  const pnSel = el => String(el?.dataset.sel || "").split(",").filter(Boolean).map(Number);
+  const pnOk = (pn, sel) => { const A = [...pn.a].sort((x, y) => x - y).join(","), B = [...new Set(sel)].sort((x, y) => x - y).join(","); return A === B; };
+  const pnText = (pn, sel) => pn.w.map((x, i) => x + (sel.includes(i) ? "," : "")).join(" ");
+  function pnHTML(pn, sel = [], o = {}){
+    const show = o.key ? pn.a : null;
+    return `<div class="pn ${o.ro ? "ro" : ""}" data-sel="${sel.join(",")}">${pn.w.map((x, i) => `<span class="pn-w">${esc(x)}</span>${i < pn.w.length - 1 ? `<button type="button" class="pn-gap ${sel.includes(i) ? "on" : ""} ${show ? (show.includes(i) ? "need" : "") : ""}" data-pn-gap="${i}" ${o.ro ? "disabled" : ""} aria-label="Запятая после слова «${esc(x)}»">${sel.includes(i) ? "," : ""}</button>` : ""}`).join(" ")}</div>`;
+  }
+  document.addEventListener("click", e => {
+    const g = e.target.closest("[data-pn-gap]"); if (!g || g.disabled) return;
+    const box = g.closest(".pn"); if (!box || box.classList.contains("ro")) return;
+    e.preventDefault(); const i = +g.dataset.pnGap; let sel = pnSel(box);
+    sel = sel.includes(i) ? sel.filter(x => x !== i) : [...sel, i];
+    box.dataset.sel = sel.join(","); g.classList.toggle("on", sel.includes(i)); g.textContent = sel.includes(i) ? "," : "";
+  });
   const findLesson = (c, id) => c?.lessons?.find(x => x.id === id) || c?.labLessons?.find(x => x.id === id) || null;
   function critFor(course, kind){ return kind === "izl" ? course.criteria.izl : ["13.1","13.2","13.3"].includes(kind) ? course.criteria.essay : null; }
   function writingResultHTML(course, w){
@@ -391,5 +407,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {pnParse, pnSel, pnOk, pnText, pnHTML, findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

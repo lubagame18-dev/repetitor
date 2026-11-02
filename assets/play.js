@@ -83,6 +83,7 @@ window.Play = (() => {
 
   /* ---------- вопрос (выбор или ввод) ---------- */
   function askHTML(q, i){
+    if (q.pn && window.U?.pnHTML) return `<p class="play-q">${mk(q.q)}</p><p class="small muted">Нажимай между словами, чтобы поставить запятую.</p>${U.pnHTML(q.pn)}<button class="btn play-pnok" style="margin-top:8px">Проверить</button>`;
     if (choiceOk(q)) return `<p class="play-q">${mk(q.q)}</p><div class="play-opts">${q.o.map((o, k) => `<button class="play-opt" data-k="${k}">${esc(o)}</button>`).join("")}</div>`;
     return `<p class="play-q">${mk(q.q)}</p><form class="row play-inp" style="gap:8px"><input autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Ответ" style="flex:1"><button class="btn">Проверить</button></form>`;
   }
@@ -93,12 +94,13 @@ window.Play = (() => {
       const hb = box.querySelector(".play-hintbtn"); if (hb) hb.onclick = () => { box.querySelector(".play-hint").hidden = false; hb.remove(); };
       const done = (ok, given) => {
         box.querySelectorAll("button.play-opt, .play-inp input, .play-inp button").forEach(b => b.disabled = true);
-        const right = choiceOk(q) ? q.o[q.a] : String(q.a).split("|")[0];
+        const right = q.pn ? U.pnText(q.pn, q.pn.a).replace(/[.!?]$/, "") : choiceOk(q) ? q.o[q.a] : String(q.a).split("|")[0];
         if (!ok) miss(q.tag && q.tag !== q.q ? `(${q.tag}) ${q.q} → ${right}` : `${q.q} → ${right}`);
         fb.innerHTML = `<div class="play-res ${ok ? "ok" : "bad"}"><b>${ok ? "Верно!" : "Неверно."}</b>${ok ? "" : ` Правильный ответ: <b>${esc(right)}</b>.`}${q.e ? `<div class="small" style="margin-top:4px">${mk(q.e)}</div>` : ""}</div><button class="btn play-next" style="margin-top:10px">Дальше →</button>`;
         fb.querySelector(".play-next").onclick = () => res({ok, given}); fb.querySelector(".play-next").focus();
       };
       box.querySelectorAll(".play-opt").forEach(b => b.onclick = () => { const k = +b.dataset.k, ok = k === q.a; b.classList.add(ok ? "ok" : "bad"); if (!ok) box.querySelector(`.play-opt[data-k="${q.a}"]`)?.classList.add("ok"); done(ok, q.o[k]); });
+      const pb = box.querySelector(".play-pnok"); if (pb) pb.onclick = () => { const p = box.querySelector(".pn"), sel = U.pnSel(p), ok = U.pnOk(q.pn, sel); pb.disabled = true; p.outerHTML = U.pnHTML(q.pn, sel, {ro: true, key: true}); done(ok, U.pnText(q.pn, sel)); };
       const f = box.querySelector(".play-inp"); if (f){ f.querySelector("input").focus(); f.onsubmit = e => { e.preventDefault(); const v = f.querySelector("input").value; if (!v.trim()) return; done(check(v, q.a), v); }; }
     });
   }

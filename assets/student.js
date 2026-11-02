@@ -577,18 +577,32 @@ function viewTest(){
         <div class="big tnum" style="font-size:2.6rem;color:${lvlColor(p)}">${T.score} из ${n}</div>
         ${T.kind === "lesson" || T.kind === "hw" ? `<p style="margin:2px 0" class="tnum">${T.kind === "lesson" ? (S.results[T.id]?.attempts > 1 ? "Пересдача: оценка за урок остаётся по первой попытке" : `Оценка за урок: <b style="font-size:1.4rem">${U.grade5(p)}</b>`) : `Результат ДЗ-теста – в оценку за ДЗ: <b style="font-size:1.4rem">${U.grade5(p)}</b>`}</p>` : ""}
         <p style="margin:4px 0 14px;font-weight:800">${p===100?"Котик ставит сто баллов!":p>=80?"Отличный результат!":p>=60?"Неплохо, есть что повторить.":T.kind==="entry"?"Спасибо! Учитель увидит, с чего начать.":"Тему повторим на уроке."}</p>
+        ${(T.kind === "lesson" || T.kind === "hw") && (T.marks || []).some(x => x === false) ? `<p class="small" style="margin-bottom:8px">Ошибки в вопросах: <b>${T.marks.map((x, i) => x === false ? i + 1 : null).filter(Boolean).join(", ")}</b>. Правильные ответы разберёте с учителем.</p>` : ""}
         ${T.kind === "entry" ? "" : `<p class="expl small" style="text-align:left"><b>Рекомендация:</b> ${esc(U.recText({score:T.score,total:n,wrong:T.wrong}))}</p>`}
         <div class="row" style="justify-content:center;margin-top:14px"><button class="btn" ${back}>${T.kind==="entry"?"Посмотреть результаты":"В папку"}</button><button class="btn ghost" data-go="stats">Статистика</button></div>
       </article>`;
   }
   const q = T.qs[T.i], ord = T.order[T.i];
+  /* тест урока и ДЗ-тест: ученик не видит правильных ответов (их видит учитель), только «ответ принят» */
+  const quiet = T.kind === "lesson" || T.kind === "hw";
+  const head = `<div class="row between" style="margin-bottom:10px"><button class="btn ghost sm" ${back}>✕ Выйти</button><span class="chip tnum">${label} · ${T.i+1} из ${n}</span></div>
+    <div class="progress"><i style="width:${T.i/n*100}%"></i></div>`;
+  const nextBtn = `<div style="margin-top:14px"><button class="btn" data-act="next-q">${T.i===n-1?"Завершить":"Дальше"}</button></div>`;
+  if (q.pn){   // расставить запятые прямо в предложении
+    const done = T.picked != null, sel = done ? (T.pnSel || []) : [];
+    return head + `<article class="card" style="margin-top:14px"><div class="kicker">${esc(T.title)}</div><p class="q">${esc(q.q)}</p>
+      <p class="small muted">Нажимай между словами, чтобы поставить или убрать запятую.</p>
+      <div class="test-pn">${U.pnHTML(q.pn, sel, {ro: done, key: done && !quiet && T.kind !== "entry"})}</div>
+      ${done ? `${quiet ? `<div class="expl"><b>Ответ принят.</b> Разбор – вместе с учителем.</div>` : T.kind === "entry" ? "" : `<div class="expl"><b>${T.picked ? "Верно." : "Неверно."}</b> ${T.picked ? "" : "Правильно: " + esc(U.pnText(q.pn, q.pn.a)) + " "}${esc(q.e || "")}</div>`}${nextBtn}`
+        : `<div style="margin-top:12px"><button class="btn" data-act="pn-answer">Ответить</button></div>`}</article>`;
+  }
   if (!q.o){   // вопрос с вводом ответа
     const done = T.picked != null, ok = done && T.picked === 1;
     return `<div class="row between" style="margin-bottom:10px"><button class="btn ghost sm" ${back}>✕ Выйти</button><span class="chip tnum">${label} · ${T.i+1} из ${n}</span></div>
     <div class="progress"><i style="width:${T.i/n*100}%"></i></div>
     <article class="card" style="margin-top:14px"><div class="kicker">${esc(T.title)}</div><p class="q">${esc(q.q)}</p>
       <form class="row" id="tin-form" style="flex-wrap:nowrap"><input type="text" id="tin" autocomplete="off" autocapitalize="none" spellcheck="false" ${done ? "readonly" : ""} value="${esc(T.typed || "")}" style="${done ? `border-color:${ok ? "var(--good)" : "var(--bad)"}` : ""}"><button class="btn" type="submit" ${done ? "hidden" : ""}>Ответить</button></form>
-      ${done ? `${T.kind === "entry" ? "" : `<div class="expl"><b>${ok ? "Верно." : "Неверно."}</b> ${ok ? "" : "Правильно: " + esc(String(q.a).split("|")[0]) + ". "}${esc(q.e || "")}</div>`}
+      ${done ? `${T.kind === "entry" ? "" : quiet ? `<div class="expl"><b>Ответ принят.</b></div>` : `<div class="expl"><b>${ok ? "Верно." : "Неверно."}</b> ${ok ? "" : "Правильно: " + esc(String(q.a).split("|")[0]) + ". "}${esc(q.e || "")}</div>`}
         <div style="margin-top:14px"><button class="btn" data-act="next-q">${T.i===n-1?"Завершить":"Дальше"}</button></div>` : ""}
     </article>`;
   }
@@ -597,9 +611,9 @@ function viewTest(){
   <article class="card" style="margin-top:14px">
     <div class="kicker">${esc(T.title)}</div>
     <p class="q">${esc(q.q)}</p>
-    <div class="opts">${ord.map(k => { let c = ""; if (T.picked != null){ if (k === q.a) c = "ok"; else if (k === T.picked) c = "no"; }
+    <div class="opts">${ord.map(k => { let c = ""; if (T.picked != null){ if (quiet) c = k === T.picked ? "chosen" : ""; else if (k === q.a) c = "ok"; else if (k === T.picked) c = "no"; }
       return `<button class="opt ${c}" data-pick="${k}" ${T.picked!=null?"disabled":""}>${esc(q.o[k])}</button>`; }).join("")}</div>
-    ${T.picked != null ? `${T.kind === "entry" ? "" : `<div class="expl"><b>${T.picked===q.a?"Верно.":"Неверно."}</b> ${esc(q.e)}</div>`}
+    ${T.picked != null ? `${T.kind === "entry" ? "" : quiet ? `<div class="expl"><b>Ответ принят.</b></div>` : `<div class="expl"><b>${T.picked===q.a?"Верно.":"Неверно."}</b> ${esc(q.e)}</div>`}
       <div style="margin-top:14px"><button class="btn" data-act="next-q">${T.i===n-1?"Завершить":"Дальше"}</button></div>` : ""}
   </article>`;
 }
@@ -812,7 +826,7 @@ function testLive(extra){
   const T = S.test; if (!T || T.kind === "entry") return;
   const q = T.qs[T.i];
   liveAct2({test: true, lesson: T.id, kind: T.kind, title: T.title, i: T.i, n: T.qs.length, score: T.score,
-    q: q ? {q: q.q, o: q.o || null, a: q.a} : null, picked: T.picked, typed: T.typed || "", ...extra});
+    q: q ? {q: q.q, o: q.o || null, a: q.a, pn: q.pn || null} : null, picked: T.picked, typed: T.typed || "", ...extra});
 }
 function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, id:S.profile.id, name:S.profile.name, text, ...extra}}).catch(() => {}); }
 /* ---------- отрисовка ---------- */
@@ -886,7 +900,7 @@ document.addEventListener("submit", async e => {
   }
   if (e.target.id === "tin-form"){
     const T = S.test, q = T.qs[T.i], v = $("#tin").value.trim(); if (!v) return;
-    T.typed = v; const ok = U.miniCheck(v, q.a); T.picked = ok ? 1 : 0; if (ok) T.score++; else T.wrong.push(q.tag || "ввод ответа"); testLive({ok}); render(); return;
+    T.typed = v; const ok = U.miniCheck(v, q.a); T.picked = ok ? 1 : 0; (T.marks = T.marks || [])[T.i] = ok; if (ok) T.score++; else T.wrong.push(q.tag || "ввод ответа"); testLive({ok}); render(); return;
   }
   if (e.target.id === "ssignup-form"){
     const code = $("#ss-code").value.trim().toUpperCase(), name = $("#ss-name").value.trim(), sub = $("#ss-subj").value, g = +$("#ss-grade").value, p1 = $("#ss-pass").value;
@@ -1036,7 +1050,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.test){ startTest(t.dataset.test, t.dataset.kind || "lesson"); return; }
   if (t.dataset.pick && S.test.picked == null){
     const T = S.test, q = T.qs[T.i], k = +t.dataset.pick;
-    T.picked = k; if (k === q.a) T.score++; else T.wrong.push(q.tag); testLive(); render(); return;
+    T.picked = k; (T.marks = T.marks || [])[T.i] = k === q.a; if (k === q.a) T.score++; else T.wrong.push(q.tag); testLive(); render(); return;
   }
   const a = t.dataset.act;
   if (a === "install"){ install(); return; }
@@ -1063,6 +1077,11 @@ document.addEventListener("click", async e => {
   if (a === "close-drawer"){ S.drawer = false; render(); }
   if (a === "start-entry" || a === "retry-entry") startTest(null, "entry");
   if (a === "to-login"){ S.invite = null; history.replaceState(null, "", location.pathname); render(); }
+  if (a === "pn-answer"){
+    const T = S.test, q = T.qs[T.i], sel = U.pnSel(document.querySelector(".test-pn .pn")), ok = U.pnOk(q.pn, sel);
+    T.pnSel = sel; T.typed = U.pnText(q.pn, sel); T.picked = ok ? 1 : 0; (T.marks = T.marks || [])[T.i] = ok; if (ok) T.score++; else T.wrong.push(q.tag || "запятые");
+    testLive({ok, sel}); render(); return;
+  }
   if (a === "next-q"){
     const T = S.test; T.i++; T.picked = null; T.typed = "";
     testLive(T.i >= T.qs.length ? {done: true} : {});

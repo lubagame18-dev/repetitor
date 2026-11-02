@@ -564,3 +564,12 @@ body.play-open{overflow:hidden}
 .lab-rows{padding-left:22px;display:grid;gap:8px}
 .lab-row{padding:8px 10px;border-radius:12px;border:1px solid var(--line)}
 .lab-row.on{border-color:var(--violet);background:color-mix(in srgb,var(--violet) 8%,transparent)}
+.pn{font-size:1.15rem;line-height:2.3;margin:8px 0}
+.pn-w{white-space:nowrap}
+.pn-gap{display:inline-block;vertical-align:baseline;min-width:16px;height:30px;margin:0 -2px 0 -3px;padding:0 3px;border:0;border-bottom:2px dashed var(--line);background:transparent;color:var(--violet);font-weight:900;font-size:1.3rem;cursor:pointer;border-radius:6px}
+.pn-gap:hover{background:var(--chip)}
+.pn-gap.on{border-bottom-color:var(--violet)}
+.pn.ro .pn-gap{cursor:default;border-bottom-color:transparent}
+.pn-gap.need{background:color-mix(in srgb,var(--good) 22%,transparent)}
+.pn-gap.on:not(.need).keyed{background:color-mix(in srgb,var(--bad) 22%,transparent)}
+.opt.chosen{border-color:var(--violet);background:color-mix(in srgb,var(--violet) 12%,var(--glass-2))}
