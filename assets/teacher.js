@@ -184,7 +184,10 @@ function writingReviewHTML(s, x, l){
     <p class="small"><b>${esc(U.KIND_NAME[w.kind] || w.kind)}</b>${src.title ? ` · текст «${esc(src.title)}»` : ""} · ${w.words || 0} сл. · ${new Date(w.submitted_at).toLocaleString("ru-RU",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</p>
     ${src.topic ? `<p class="small"><b>Тема:</b> ${esc(src.topic)}</p><details class="small"><summary>Исходный текст</summary><div class="ttext">${src.html}</div></details>` : ""}
     ${w.body ? `<div class="ttext" style="white-space:pre-wrap;background:var(--field)">${esc(w.body)}</div>` : ""}
-    ${w.photos?.length ? `<div class="row">${w.photos.map((u, k) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Страница ${k+1}" style="width:120px;height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line)"></a>`).join("")}</div>` : ""}
+    ${w.photos?.length ? `<div class="row">${w.photos.map((u, k) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Страница ${k+1}" style="width:120px;height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line)"></a>`).join("")}</div>
+      <div class="row" style="gap:6px"><button class="btn ${w.body ? "ghost" : ""} sm" data-act="ocr-ai" ${T.busy ? "disabled" : ""}>${T.busy === "ocr" ? "Распознаю…" : "📝 Распознать текст с фото (нейросеть)"}</button>
+        <button class="btn ghost sm" data-act="ocr-local" ${T.busy ? "disabled" : ""}>${T.busy === "ocr-local" ? "Распознаю…" : "Распознать в браузере"}</button></div>
+      <p class="small muted">Текст переписывается с сохранением ошибок ученика – потом его можно проверить нейросетью по критериям. Рукописный текст лучше читает нейросеть, распознавание в браузере подходит для печатного и очень разборчивого почерка.</p>` : ""}
     ${w.body ? `<div class="ai-box"><div class="row between"><b>Нейросеть</b><button class="btn sm" data-act="ai-check" ${T.busy ? "disabled" : ""}>${T.busy === "check" ? "Проверяю…" : ai ? "Проверить заново" : "Проверить по критериям"}</button></div>
       ${ai ? (ai.error ? `<p class="small" style="color:var(--bad);margin-top:6px">${esc(ai.error)}</p>` : `<div class="small" style="margin-top:8px">
         <p><b>Баллы:</b> ${Object.entries(ai.scores || {}).map(([k, v]) => `${esc(k)} – ${v}`).join(", ")} · <b>Ошибки:</b> ${c.criteria.errors.filter(([k]) => ai.errors?.[k] != null).map(([k, n]) => `${esc(n)} – ${ai.errors[k]}`).join(", ")}${ai.errors?.fact ? `, фактические – ${ai.errors.fact}` : ""}</p>
@@ -195,7 +198,32 @@ function writingReviewHTML(s, x, l){
     ${crit ? `<div class="crit">${crit.map(([k,n,m]) => `<label for="sc-${k}">${k} – ${esc(n)}</label><select id="sc-${k}" data-crit="${k}">${Array.from({length:m+1},(_,i) => `<option ${(w.scores?.[k] ?? -1) === i ? "selected" : ""}>${i}</option>`).join("")}</select>`).join("")}</div>` : ""}
     <div class="crit">${c.criteria.errors.map(([k,n]) => `<label for="er-${k}">Ошибки: ${esc(n)}</label><input type="text" inputmode="numeric" id="er-${k}" data-err="${k}" style="width:70px" value="${esc(w.errors?.[k] ?? "")}">`).join("")}</div>
     <label for="w-comment">Комментарий ученику</label><textarea id="w-comment">${esc(w.comment || "")}</textarea>
+    <label for="w-fix">Что доработать (каждый пункт с новой строки – ученик увидит списком)</label><textarea id="w-fix" placeholder="«дощечка» → «дощечка» – правописание суффиксов&#10;Нет пояснения ко второму примеру">${esc((w.scores?._fix || []).join("\n"))}</textarea>
     <div class="row"><button class="btn sm" data-act="wsave" data-st="reviewed">Сохранить оценку</button><button class="btn ghost sm" data-act="wsave" data-st="redo">Вернуть на доработку</button></div></div>`;
+}
+
+/* журнал самообучения ученика и отработки ОГЭ: режим, урок, результат, ошибки */
+const SELF_NAMES = {trainer:"Тренажёр урока", tf:"Верно или неверно", cards:"Карточки-запоминалки", quiz:"Тест для самопроверки", games:"Игры по уроку", mix:"Повторение всего", stress:"Ударения", spell:"Вставь букву", game:"Игра от учителя"};
+function selfLogHTML(s, c){
+  const rows = T.rows.filter(r => r.student_id === s.id && (r.kind === "self" || r.kind === "oge" || /^(self|oge):/.test(r.lesson_id || "")) && !/^oge:rate:/.test(r.lesson_id || "")).slice().reverse();
+  if (!rows.length) return `<div class="card"><p class="muted">Ученик пока не занимался самостоятельно. Здесь появятся тренажёры, игры, отработка заданий ОГЭ – с результатом и ошибками.</p></div>`;
+  const week = rows.filter(r => Date.now() - new Date(r.created_at) < 7 * 864e5), avg = a => a.length ? Math.round(a.reduce((p, r) => p + r.score / r.total * 100, 0) / a.length) : null;
+  const title = lid => c?.lessons.find(l => l.id === lid)?.title || "";
+  const nameOf = r => { const [k, m, lid] = String(r.lesson_id).split(":");
+    if (k === "oge") return {n: m === "mock" ? "Пробный вариант ОГЭ" : "Отработка ОГЭ: задание " + m, t: ""};
+    if (m?.startsWith("t-")) return {n: "Игра по теме", t: (window.PLAY_BANKS?.themes || []).find(x => x.id === m.slice(2))?.title || ""};
+    if (m === "game") return {n: SELF_NAMES.game, t: (T.mats.find(x => String(x.id) === lid)?.title) || ""};
+    return {n: SELF_NAMES[m] || m, t: title(lid)}; };
+  const errs = {}; rows.forEach(r => (r.wrong || []).forEach(w => errs[w] = (errs[w] || 0) + 1));
+  const top = Object.entries(errs).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  return `<div class="grid2 stats"><div class="card"><div class="kicker">За 7 дней</div><div class="big tnum" style="margin-top:6px">${week.length}</div><div class="small muted">занятий, средний результат ${avg(week) ?? "–"}${avg(week) != null ? "%" : ""}</div></div>
+    <div class="card"><div class="kicker">Всего</div><div class="big tnum" style="margin-top:6px">${rows.length}</div><div class="small muted">последнее: ${new Date(rows[0].created_at).toLocaleString("ru-RU", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"})}</div></div></div>
+    ${top.length ? `<div class="card" style="margin-top:12px"><div class="kicker">Чаще всего ошибается</div><ul style="margin:6px 0 0;padding-left:18px">${top.map(([w, n]) => `<li>${esc(w)}${n > 1 ? ` <span class="small muted">×${n}</span>` : ""}</li>`).join("")}</ul></div>` : ""}
+    <div class="tablewrap"><table><thead><tr><th>Когда</th><th>Что</th><th>Результат</th><th>Ошибки</th></tr></thead><tbody>
+    ${rows.slice(0, 30).map(r => { const nm = nameOf(r), p = Math.round(r.score / r.total * 100);
+      return `<tr><td class="small tnum" style="white-space:nowrap">${new Date(r.created_at).toLocaleString("ru-RU", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"})}</td><td><b>${esc(nm.n)}</b>${nm.t ? `<br><span class="small muted">${esc(nm.t)}</span>` : ""}</td>
+        <td class="tnum" style="color:${U.lvlColor(p)};font-weight:800">${r.score}/${r.total}</td><td class="small">${(r.wrong || []).length ? `<details><summary>${r.wrong.length}</summary><ul style="margin:4px 0 0;padding-left:16px">${r.wrong.map(w => `<li>${esc(w)}</li>`).join("")}</ul></details>` : "–"}</td></tr>`; }).join("")}
+    </tbody></table></div>`;
 }
 
 function aiReportHTML(s, x){
@@ -256,7 +284,10 @@ function viewStudent(){
   ${!pending(s) ? `<div class="section-title"><h2>Анализ и план</h2></div>${aiReportHTML(s, x)}` : ""}
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
-  ${c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings)}
+  ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
+  ${!pending(s) && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
+  <div style="margin-top:16px">${U.progressHTML(T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id) && !pending(o)).map(o => ({subject: o.subject || U.subjectOf(o.course), ...U.subjectNow(T.rows.filter(r => r.student_id === o.id), T.writings.filter(w => w.student_id === o.id))})))}</div>
+  ${c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings, x.hw)}
   <div class="section-title"><h2>Уроки</h2><div class="row"><button class="btn ghost sm" data-act="shift" title="Перенести все будущие уроки на неделю вперёд">Каникулы: сдвинуть будущие уроки на неделю</button></div></div>
   <div class="tablewrap glass"><table style="min-width:1040px"><thead><tr><th>№</th><th>Дата</th><th>Тема</th><th>Доступ</th><th>Время</th><th>Выполнено</th><th>Тест</th><th>ДЗ-тест</th><th>Письмо</th><th>ДЗ</th><th></th></tr></thead><tbody>
   ${c.lessons.map((l,i) => { const r = x.results[l.id], hr = x.hwres[l.id], h = x.hw[l.id], w = x.writings[l.id], hs = U.hwState(c, l.id, x.hw), dn = x.done(l);
@@ -384,7 +415,7 @@ async function gameAct(a, t){
 }
 
 function materialsTab(cid, l){
-  const own = T.mats.filter(m => m.course === cid && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && !m.student_id && m.data?.kind !== "test-edit");
+  const own = T.mats.filter(m => m.course === cid && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && !m.student_id && m.data?.kind !== "test-edit" && m.data?.kind !== "content-edit");
   const g = T.gen && T.gen.lesson === l.id ? T.gen : null;
   return `${own.length ? own.map(m => m.data?.kind === "game" ? `<div class="mat"><span class="ic">🎮</span><div style="flex:1;min-width:0"><b>${esc(m.title || "Игра")}</b>
       <p class="small muted">Игры: ${Play.gamesFor(m.data.theme || {}).map(k => Play.GAMES[k].n).join(", ")}</p><div class="row" style="gap:6px;margin-top:4px"><button class="btn ghost sm" data-act="game-play" data-mid="${m.id}">▶ Посмотреть</button></div></div>
@@ -434,8 +465,10 @@ function viewLesson(){
       <p class="small muted" style="margin-top:6px">Расчёт на 60 минут. Теория идёт маленькими блоками, после каждого – мини-практика.${l.writing ? " Письменную линию не сокращаем: умение писать формируется только регулярной практикой." : ""}</p>
       ${l.method?.tips?.length ? `<h3 style="margin-top:14px">Методические советы</h3><ul>${l.method.tips.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       ${l.stub ? `<p class="small" style="margin-top:12px">Содержание урока – по ФРП. Добавьте материалы и задания во вкладке «Свои материалы» – можно составить их нейросетью.</p>` : ""}`;
-  if (T.sub === "theory") body = U.theoryHTML(l, true) + (Tt.mini.length ? `<div class="tblock">${U.miniHTML({id:"own"}, 0, Tt.mini, true)}</div>` : "");
-  if (T.sub === "practice") body = `<p class="small muted">Ключи видите только вы. ✎ – изменить ключ${T.me?.role === "developer" ? " (в режиме разработчика – сразу во встроенной базе для всех)" : " (ваши ключи – только для вас)"}.</p>` + lk.practice.map((p, k) => `<div class="task">
+  if (T.sub === "theory" && ceOpen({cid, lid: l.id, sid: null}, "theory")) body = ceEditor({cid, lid: l.id, sid: null}, l, "theory");
+  else if (T.sub === "theory") body = ceBar({cid, lid: l.id, sid: null}, l, "theory") + U.theoryHTML(l, true) + (Tt.mini.length ? `<div class="tblock">${U.miniHTML({id:"own"}, 0, Tt.mini, true)}</div>` : "");
+  if (T.sub === "practice" && ceOpen({cid, lid: l.id, sid: null}, "practice")) body = ceEditor({cid, lid: l.id, sid: null}, l, "practice");
+  else if (T.sub === "practice") body = ceBar({cid, lid: l.id, sid: null}, l, "practice") + `<p class="small muted">Ключи видите только вы. ✎ – изменить ключ${T.me?.role === "developer" ? " (в режиме разработчика – сразу во встроенной базе для всех)" : " (ваши ключи – только для вас)"}.</p>` + lk.practice.map((p, k) => `<div class="task">
       <b>Задание ${k+1}.</b> ${esc(p.t)}${p.text ? `<div class="ttext">${esc(p.text)}</div>` : ""}${p.items?.length ? `<ol class="items">${p.items.map((x, j) => `<li>${/^\d+\)/.test(x) ? "" : (j + 1) + ") "}${esc(x)}</li>`).join("")}</ol>` : ""}
       ${T.editKey === k ? `<div class="keyedit"><textarea id="key-edit" aria-label="Ключ">${esc(p.key || "")}</textarea><div class="stack" style="gap:6px"><button class="btn sm" data-act="key-save" data-k="${k}">Сохранить</button><button class="btn ghost sm" data-act="key-cancel">Отмена</button></div></div>`
         : `<div class="key"><b>Ключ:</b> ${esc(p.key || "– нет –")} <button class="btn ghost sm" data-act="key-edit" data-k="${k}" style="margin-left:6px">✎</button></div>`}</div>`).join("");
@@ -666,11 +699,13 @@ function liveTestHTML(m){
 function roomPane(s, c, l, tab){
   const who = T.students.find(x => x.id === T.room.who) || s, pair = s.pair_id && T.students.find(x => x.id === s.pair_id);
   const whoSeg = pair ? `<div class="seg" role="group" aria-label="Чьи ответы" style="margin-bottom:10px">${[s, pair].map(o => `<button data-act="room-who" data-id="${o.id}" aria-pressed="${o.id === who.id}">${esc(o.name.split(" ")[0])}</button>`).join("")}</div>` : "";
-  if (tab === "theory") return l.theory?.length ? U.theoryHTML(l, true) : `<p class="muted">У этого урока нет теории – см. «Материалы».</p>`;
+  const ctx = {cid: s.course, lid: l.id, sid: s.id};
+  if ((tab === "theory" || tab === "practice") && ceOpen(ctx, tab) && !T.ce.modal) return ceEditor(ctx, l, tab);
+  if (tab === "theory") return ceBar(ctx, l, "theory") + (l.theory?.length ? U.theoryHTML(l, true) : `<p class="muted">У этого урока нет теории – добавьте блок или см. «Материалы».</p>`);
   if (tab === "mnemo") return U.mnemoTabHTML(l);
   if (tab === "practice"){
     const keys = keysFor(who.course, l), st = Object.fromEntries((T.works || []).filter(w => w.student_id === who.id && w.lesson_id === l.id).map(w => [w.task, w.data]));
-    return whoSeg + `<p class="small muted">Тетрадь ${esc(who.name.split(" ")[0])} – обновляется вживую, рядом ключи.</p>`
+    return ceBar(ctx, l, "practice") + whoSeg + `<p class="small muted">Тетрадь ${esc(who.name.split(" ")[0])} – обновляется вживую, рядом ключи.</p>`
       + `<div id="wk-view">${l.practice.map((p, i) => Work.task({...p, key: keys[i]}, i, st[i] || {}, true).replace('class="task wk"', 'class="task wk ro"')).join("")}</div>`;
   }
   if (tab === "writing"){
@@ -755,9 +790,30 @@ function render(){
   if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
     const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = bl === "free" ? FREE : c.lessons.find(x => x.id === bl) || FREE, owner = ownerOf(s);
-    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l)});
+    const menu = () => !s || l === FREE ? [] : [{label: "✨ Добавить тему или объяснение", run: () => ceModal(s, l, "theory")}, {label: "🧩 Сгенерировать задания", run: () => ceModal(s, l, "practice")},
+      {label: "🎯 Отработать слабую зону", run: () => ceModal(s, l, "practice", weakReq(s, l))}];
+    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages: Board.pages(c, l), menu});
   }
   if (!$("#board")){ Board.release(); T.board = null; }
+  if (T.session && !T.loading && T.routeReady) try { sessionStorage.setItem("t-route", JSON.stringify({view: T.view, sel: T.sel, open: T.open, sub: T.sub, courseId: T.courseId, matSubject: T.matSubject, boardLesson: T.boardLesson, workLesson: T.workLesson, room: T.room ? {sid: T.room.sid, lesson: T.room.lesson} : null, y: scrollY})); } catch(_) {}
+  /* правка урока поверх доски: ученик черновик не видит, получает только сохранённый блок */
+  document.querySelector(".ce-modal-back")?.remove();
+  if (T.ce?.modal && sb && T.session){
+    const l = ceLesson(T.ce.ctx);
+    if (l){ const box = document.createElement("div"); box.className = "ce-modal-back"; box.innerHTML = `<div class="ce-modal glass" role="dialog" aria-modal="true" aria-label="Нейросеть на уроке"><div class="row between" style="margin-bottom:8px"><b>${T.ce.kind === "theory" ? "Новая тема или объяснение" : "Новые задания"} · ${esc(l.title)}</b><button class="iconbtn" data-act="ce-close" aria-label="Закрыть">✕</button></div>${ceEditor(T.ce.ctx, l, T.ce.kind)}</div>`; document.body.appendChild(box); }
+  }
+}
+function weakReq(s, l){
+  const rows = T.rows.filter(r => r.student_id === s.id && (r.lesson_id === l.id || r.lesson_id.endsWith(":" + l.id)) && r.wrong?.length).slice(-4);
+  const wrong = [...new Set(rows.flatMap(r => r.wrong))].slice(0, 12);
+  return wrong.length ? `Задания на отработку ошибок ученика по этой теме. Ошибки: ${wrong.join("; ")}` : "Задания на отработку самых частых ошибок по этой теме, от простого к трудному";
+}
+function ceModal(s, l, kind, req){
+  const ctx = {cid: s.course, lid: l.id, sid: s.id}, l2 = ceLesson(ctx) || l;
+  const keys = kind === "practice" ? keysFor(ctx.cid, l2) : [];
+  T.ce = {key: ceKey(ctx), ctx, kind, modal: true, edit: null, req: req || "", all: false, n: kind === "theory" ? 1 : 3,
+    items: JSON.parse(JSON.stringify(kind === "theory" ? (l2.theory || []) : (l2.practice || []).map((p, k) => ({...p, key: keys[k] ?? p.key}))))};
+  render(); setTimeout(() => document.getElementById("ce-req")?.focus(), 30);
 }
 
 /* ---------- редактор тестов: вопросы как тест, правка, добавление, догенерация ---------- */
@@ -870,9 +926,125 @@ async function teAct(a, t){
   }
 }
 
+/* ---------- редактор теории и практики: правка, свои блоки, догенерация нейросетью (в том числе прямо на уроке) ----------
+   Пока учитель правит, ученик ничего не видит; после «Сохранить» блок появляется у ученика (у всех или только у этого). */
+const CE_LIM = {h: 120, t: 900, line: 300, n: 12};
+const ceKey = ctx => `${ctx.cid}|${ctx.lid}|${ctx.sid || ""}`;
+const ceOpen = (ctx, kind) => T.ce && T.ce.key === ceKey(ctx) && T.ce.kind === kind;
+function ceRow(ctx, kind){ return T.mats.find(m => m.kind === "tasks" && m.data?.kind === "content-edit" && m.course === ctx.cid && m.lesson_id === ctx.lid && m.teacher_id === T.session?.user.id && (m.student_id || null) === (ctx.sid || null) && m.data?.[kind]); }
+function ceBar(ctx, l, kind){
+  const own = ceRow(ctx, kind);
+  return `<div class="row ce-bar" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">
+    <button class="btn ghost sm" data-act="ce-open" data-k="${kind}" data-ctx="${esc(ceKey(ctx))}">✎ ${kind === "theory" ? "Править теорию" : "Править задания"}</button>
+    <button class="btn ghost sm" data-act="ce-open" data-k="${kind}" data-ctx="${esc(ceKey(ctx))}" data-gen="1">✨ ${kind === "theory" ? "Добавить тему / объяснение" : "Догенерировать задания"}</button>
+    ${own ? `<span class="chip">${ctx.sid ? "изменено для этого ученика" : "изменено вами"}</span><button class="btn ghost sm" data-act="ce-reset" data-k="${kind}" data-ctx="${esc(ceKey(ctx))}">Вернуть исходное</button>` : ""}</div>`;
+}
+const lines = v => String(v || "").split("\n").map(x => x.trim()).filter(Boolean);
+function ceItemHTML(kind, it, i, d){
+  if (d.edit === i){
+    if (kind === "theory") return `<li class="te-q editing"><label class="small" for="ce-h">Заголовок</label><input id="ce-h" maxlength="${CE_LIM.h}" value="${esc(it.h || "")}">
+      <label class="small" for="ce-t">Объяснение</label><textarea id="ce-t" rows="3" maxlength="${CE_LIM.t}">${esc(it.t || "")}</textarea>
+      <label class="small" for="ce-list">Пункты правила (каждый с новой строки)</label><textarea id="ce-list" rows="3">${esc((it.list || []).join("\n"))}</textarea>
+      <label class="small" for="ce-ex">Примеры (каждый с новой строки; разметка: [[s:подлежащее]], [[p:сказуемое]], [[o:орфограмма]])</label><textarea id="ce-ex" rows="2">${esc((it.ex || []).join("\n"))}</textarea>
+      <label class="small" for="ce-mini">Мини-практика: «вопрос = ответ» (варианты ответа через «|»)</label><textarea id="ce-mini" rows="2">${esc((it.mini || []).map(m => m.q + " = " + m.a).join("\n"))}</textarea>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" data-act="ce-ok">Готово</button><button class="btn ghost sm" data-act="ce-cancel">Отмена</button></div></li>`;
+    return `<li class="te-q editing"><label class="small" for="ce-t">Формулировка задания</label><textarea id="ce-t" rows="3" maxlength="${CE_LIM.t}">${esc(it.t || "")}</textarea>
+      <label class="small" for="ce-items">Предложения или слова для листа (каждое с новой строки; пропуск буквы – «..»; знаки, которые ставит ученик, не пишите)</label><textarea id="ce-items" rows="4">${esc((it.items || []).join("\n"))}</textarea>
+      <label class="small" for="ce-key">Ключ (видите только вы)</label><textarea id="ce-key" rows="2">${esc(it.key || "")}</textarea>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" data-act="ce-ok">Готово</button><button class="btn ghost sm" data-act="ce-cancel">Отмена</button></div></li>`;
+  }
+  const tools = `<span class="row te-tools" style="gap:2px;flex:none"><button class="iconbtn" data-act="ce-edit" data-i="${i}" aria-label="Изменить">✎</button><button class="iconbtn" data-act="ce-up" data-i="${i}" aria-label="Выше">↑</button><button class="iconbtn" data-act="ce-down" data-i="${i}" aria-label="Ниже">↓</button><button class="iconbtn" data-act="ce-del" data-i="${i}" aria-label="Удалить">🗑</button></span>`;
+  const fresh = it._new ? ` <span class="chip mid">новое</span>` : "";
+  if (kind === "theory") return `<li class="te-q"><div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><b style="flex:1">${esc(it.h)}${fresh}</b>${tools}</div>
+    ${it.t ? `<p class="small">${U.mark(it.t)}</p>` : ""}${it.list?.length ? `<ul class="small">${it.list.map(x => `<li>${U.mark(x)}</li>`).join("")}</ul>` : ""}${it.ex?.length ? `<div class="small muted">${it.ex.map(x => U.mark(x)).join("<br>")}</div>` : ""}${it.mini?.length ? `<p class="small">Мини-практика: ${it.mini.length}</p>` : ""}${it.table ? `<p class="small muted">+ таблица</p>` : ""}</li>`;
+  return `<li class="te-q"><div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><span style="flex:1">${esc(it.t)}${fresh}</span>${tools}</div>
+    ${it.items?.length ? `<ol class="small" style="margin:4px 0 0;padding-left:18px">${it.items.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}<p class="small" style="color:var(--good)">Ключ: ${esc(it.key || "–")}</p></li>`;
+}
+function ceEditor(ctx, l, kind){
+  const d = T.ce, room = !!ctx.sid;
+  return `<div class="te ce"><div class="row te-bar" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn ghost sm" data-act="ce-add">+ ${kind === "theory" ? "Блок теории" : "Задание"}</button>
+      <button class="btn sm" data-act="ce-save">${room ? "Сохранить и показать ученику" : "Сохранить"} (${d.items.length})</button><button class="btn ghost sm" data-act="ce-close">Закрыть без сохранения</button></div>
+    <div class="ai-box stack" style="gap:6px;margin-bottom:12px"><label class="small" for="ce-req"><b>✨ Нейросеть: что добавить?</b> ${kind === "theory" ? "Например: «объясни разницу между -тся и -ться с примерами» или «слабая зона: вводные слова в начале предложения»." : "Например: «5 предложений на запятые при деепричастном обороте, посложнее»."}</label>
+      <textarea id="ce-req" rows="2">${esc(d.req || "")}</textarea>
+      <div class="row" style="gap:6px"><select id="ce-n" aria-label="Сколько">${[1, 2, 3, 4, 5].map(n => `<option ${n === (d.n || (kind === "theory" ? 1 : 3)) ? "selected" : ""}>${n}</option>`).join("")}</select>
+        <button class="btn sm" data-act="ce-ai" ${T.busy === "ce-ai" ? "disabled" : ""}>${T.busy === "ce-ai" ? "Нейросеть пишет…" : kind === "theory" ? "Сгенерировать блок" : "Сгенерировать задания"}</button></div>
+      <p class="small muted">${room ? "Ученик не видит черновик – новое появится у него только после сохранения." : "Черновик видите только вы."} Сгенерированное отмечено «новое» – проверьте перед сохранением.</p></div>
+    ${room ? `<label class="small" style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" id="ce-all" ${d.all ? "checked" : ""}> Сохранить для всех учеников этого курса (иначе – только для этого ученика)</label>` : ""}
+    <ol class="te-list">${d.items.map((it, i) => ceItemHTML(kind, it, i, d)).join("") || `<p class="muted">Пусто – добавьте ${kind === "theory" ? "блок" : "задание"}.</p>`}</ol></div>`;
+}
+function ceRead(){
+  const d = T.ce; if (!d || d.edit == null) return;
+  const it = d.items[d.edit], v = id => document.getElementById(id)?.value ?? "";
+  if (d.kind === "theory"){ it.h = v("ce-h").trim().slice(0, CE_LIM.h); it.t = v("ce-t").trim().slice(0, CE_LIM.t); it.list = lines(v("ce-list")).slice(0, CE_LIM.n); it.ex = lines(v("ce-ex")).slice(0, CE_LIM.n);
+    it.mini = lines(v("ce-mini")).map(x => { const k = x.lastIndexOf("="); return k > 0 ? {q: x.slice(0, k).trim(), a: x.slice(k + 1).trim()} : null; }).filter(m => m && m.q && m.a).slice(0, 6); }
+  else { it.t = v("ce-t").trim().slice(0, CE_LIM.t); it.items = lines(v("ce-items")).slice(0, 15); it.key = v("ce-key").trim().slice(0, 1200); }
+}
+const ceClean = (kind, it) => { const o = {...it}; delete o._new; ["list", "ex", "mini", "items"].forEach(k => { if (Array.isArray(o[k]) && !o[k].length) delete o[k]; }); if (!o.t) delete o.t; return o; };
+const ceBad = (kind, it) => kind === "theory" ? (!it.h ? "у блока нет заголовка" : "") : (!it.t ? "у задания нет формулировки" : !it.key ? "у задания нет ключа" : "");
+function ceCtxOf(key){ const [cid, lid, sid] = String(key).split("|"); return {cid, lid, sid: sid || null}; }
+function ceLesson(ctx){
+  if (ctx.sid){ const s = T.students.find(x => x.id === ctx.sid); return U.courseFor(s, T.mats)?.lessons.find(x => x.id === ctx.lid); }
+  return teacherCourse(ctx.cid).lessons.find(x => x.id === ctx.lid);
+}
+async function ceAct(a, t){
+  if (a === "ce-open"){
+    const ctx = ceCtxOf(t.dataset.ctx), l = ceLesson(ctx), kind = t.dataset.k; if (!l) return;
+    if (!ceOpen(ctx, kind)){
+      const keys = kind === "practice" ? keysFor(ctx.cid, l) : [];
+      T.ce = {key: ceKey(ctx), ctx, kind, edit: null, req: "", all: false, items: JSON.parse(JSON.stringify(kind === "theory" ? (l.theory || []) : (l.practice || []).map((p, k) => ({...p, key: keys[k] ?? p.key}))))};
+    }
+    render(); if (t.dataset.gen) setTimeout(() => document.getElementById("ce-req")?.focus(), 30); return;
+  }
+  const d = T.ce; if (!d) return;
+  const l = ceLesson(d.ctx); if (!l) return;
+  if (a === "ce-close"){ T.ce = null; render(); return; }
+  if (a === "ce-add"){ ceRead(); d.items.push(d.kind === "theory" ? {h: "", t: "", list: [], ex: [], mini: [], _new: true} : {t: "", items: [], key: "", _new: true}); d.edit = d.items.length - 1; render(); document.getElementById(d.kind === "theory" ? "ce-h" : "ce-t")?.focus(); return; }
+  if (a === "ce-edit"){ ceRead(); d.edit = +t.dataset.i; render(); return; }
+  if (a === "ce-ok"){ ceRead(); const err = ceBad(d.kind, d.items[d.edit]); if (err){ toast("Исправьте: " + err); return; } d.edit = null; render(); return; }
+  if (a === "ce-cancel"){ const it = d.items[d.edit]; if (it && ceBad(d.kind, it)) d.items.splice(d.edit, 1); d.edit = null; render(); return; }
+  if (["ce-up", "ce-down", "ce-del"].includes(a)){ ceRead(); d.edit = null; const i = +t.dataset.i, j = a === "ce-up" ? i - 1 : i + 1;
+    if (a === "ce-del") d.items.splice(i, 1); else if (j >= 0 && j < d.items.length) [d.items[i], d.items[j]] = [d.items[j], d.items[i]]; render(); return; }
+  if (a === "ce-ai"){
+    ceRead(); d.edit = null; d.req = $("#ce-req")?.value.trim() || ""; d.n = +($("#ce-n")?.value || 1); d.all = !!$("#ce-all")?.checked;
+    const c = COURSES[d.ctx.cid] || U.getCourse(d.ctx.cid) || {};
+    T.busy = "ce-ai"; render();
+    const cur = d.kind === "theory" ? d.items.map(b => `${b.h}: ${b.t || ""} ${(b.list || []).join("; ")}`).join("\n") : d.items.map(p => p.t).join("\n");
+    const r = await ai({action: "edit_lesson", kind: d.kind, title: l.title, current: cur, request: d.req || (d.kind === "theory" ? "Добавь блок, который помогает понять тему: особые случаи и типичные ошибки" : "Добавь задания на отработку темы, включая трудные случаи"), count: d.n, grade: c.grade, exam: c.goal === "ОГЭ" || c.goal === "ЕГЭ" ? c.goal : ""});
+    T.busy = false;
+    if (r?.error){ toast(r.error); render(); return; }
+    const add = d.kind === "theory"
+      ? (r?.blocks || []).filter(b => b?.h).map(b => ({h: String(b.h).slice(0, CE_LIM.h), t: String(b.t || "").slice(0, CE_LIM.t), list: (b.list || []).map(String).slice(0, CE_LIM.n), ex: (b.ex || []).map(String).slice(0, CE_LIM.n), mini: (b.mini || []).filter(m => m?.q && m?.a).map(m => ({q: String(m.q), a: String(m.a)})).slice(0, 4), _new: true}))
+      : (r?.tasks || []).filter(p => p?.t && p?.key).map(p => ({t: String(p.t).slice(0, CE_LIM.t), key: String(p.key).slice(0, 1200), ...(Array.isArray(p.items) && p.items.length ? {items: p.items.map(String).slice(0, 15)} : {}), _new: true}));
+    d.items.push(...add); toast(add.length ? `Добавлено: ${add.length}. Проверьте и сохраните.` : "Нейросеть не вернула подходящего"); render(); return;
+  }
+  if (a === "ce-save"){
+    ceRead(); if ($("#ce-all")) d.all = $("#ce-all").checked;
+    const bad = d.items.map((it, i) => [i, ceBad(d.kind, it)]).find(x => x[1]); if (bad){ toast(`${d.kind === "theory" ? "Блок" : "Задание"} ${bad[0] + 1}: ${bad[1]}`); d.edit = bad[0]; render(); return; }
+    const items = d.items.map(it => ceClean(d.kind, it)), sid = d.all ? null : d.ctx.sid, ctx = {...d.ctx, sid};
+    const own = ceRow(ctx, d.kind) || T.mats.find(m => m.kind === "tasks" && m.data?.kind === "content-edit" && m.course === ctx.cid && m.lesson_id === ctx.lid && m.teacher_id === T.session?.user.id && (m.student_id || null) === (sid || null));
+    const data = {...(own?.data || {}), kind: "content-edit", [d.kind]: items};
+    const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
+      : await sb.from("materials").insert({course: ctx.cid, lesson_id: ctx.lid, kind: "tasks", title: d.kind === "theory" ? "Правка теории" : "Правка практики", student_id: sid, shared: !sid && T.me?.role === "developer", data}).select().single();
+    if (res.error){ toast("Не сохранилось: " + res.error.message); return; }
+    if (own) Object.assign(own, res.data); else T.mats.push(res.data);
+    T.ce = null; render(); cmd(sid || "all", "refresh", {msg: d.kind === "theory" ? "Учитель добавил материал к уроку" : "Учитель обновил задания"});
+    toast(sid ? "Сохранено – ученик уже видит" : "Сохранено для всех учеников курса"); return;
+  }
+}
+async function ceReset(t){
+  const ctx = ceCtxOf(t.dataset.ctx), kind = t.dataset.k, own = ceRow(ctx, kind); if (!own) return;
+  if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно вернуть исходное?"; return; }
+  const data = {...own.data}; delete data[kind];
+  const res = data.theory || data.practice ? await sb.from("materials").update({data}).eq("id", own.id).select().single() : await sb.from("materials").delete().eq("id", own.id);
+  if (res.error){ toast("Не получилось: " + res.error.message); return; }
+  if (data.theory || data.practice) own.data = data; else T.mats = T.mats.filter(m => m !== own);
+  render(); cmd(ctx.sid || "all", "refresh", {msg: "Учитель обновил урок"}); toast("Возвращено исходное");
+}
+
 /* ключи к заданиям: из базы + свои правки учителя */
 function keysFor(cid, l){
-  const base = [...((window.COURSE_KEYS?.[cid] || {})[l.id] || (l.practice || []).map(p => p.key))];
+  const base = [...(!l.pEdited && (window.COURSE_KEYS?.[cid] || {})[l.id] || (l.practice || []).map(p => p.key))];
   const own = T.mats.find(m => m.kind === "keys" && m.course === cid && m.lesson_id === l.id && m.teacher_id === T.session?.user.id);
   Object.entries(own?.data || {}).forEach(([k, v]) => base[+k] = v);
   return base;
@@ -1099,6 +1271,8 @@ document.addEventListener("click", async e => {
   const a = t.dataset.act;
   if (a && a.startsWith("te-")){ await teAct(a, t); return; }
   if (a && a.startsWith("game-")){ await gameAct(a, t); return; }
+  if (a === "ce-reset"){ await ceReset(t); return; }
+  if (a && a.startsWith("ce-")){ await ceAct(a, t); return; }
   if (a === "key-edit"){ T.editKey = +t.dataset.k; render(); $("#key-edit")?.focus(); return; }
   if (a === "key-cancel"){ T.editKey = null; render(); return; }
   if (a === "key-save"){
@@ -1220,11 +1394,29 @@ document.addEventListener("click", async e => {
     const r = await ai({action: "check_essay", student_id: s.id, lesson_id: l.id, topic: src.topic, source: srcText});
     T.busy = false; T.ai[s.id + l.id] = r; if (!r.error) w.ai = r; render();
   }
+  if (a === "ocr-ai" || a === "ocr-local"){
+    const w = T.writings.find(x => x.student_id === T.sel && x.lesson_id === T.wreview); if (!w?.photos?.length) return;
+    T.busy = a === "ocr-ai" ? "ocr" : "ocr-local"; render();
+    let text = "", err = "";
+    try {
+      if (a === "ocr-ai"){ const r = await ai({action: "ocr_work", student_id: T.sel, lesson_id: T.wreview}); if (r.error) err = r.error; else text = r.text || ""; }
+      else {
+        if (!window.Tesseract) await new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"; sc.onload = ok; sc.onerror = () => no(new Error("не загрузился модуль распознавания")); document.head.appendChild(sc); });
+        for (const u of w.photos){ const res = await window.Tesseract.recognize(u, "rus"); text += (text ? "\n\n" : "") + (res.data.text || "").trim(); }
+        if (text) await sb.from("writings").update({body: text, words: U.wordCount(text)}).eq("student_id", T.sel).eq("lesson_id", T.wreview);
+      }
+    } catch(e){ err = e.message || String(e); }
+    T.busy = false;
+    if (err){ render(); toast("Не распознано: " + err); return; }
+    w.body = text; w.words = U.wordCount(text); render(); toast("Текст распознан – проверьте его и запустите проверку по критериям");
+  }
   if (a === "ai-apply"){
     const w = T.writings.find(x => x.student_id === T.sel && x.lesson_id === T.wreview), r = T.ai[T.sel + T.wreview] || w.ai;
     Object.entries(r.scores || {}).forEach(([k, v]) => { const el = document.querySelector(`[data-crit="${k}"]`); if (el) el.value = String(v); });
     Object.entries(r.errors || {}).forEach(([k, v]) => { const el = document.querySelector(`[data-err="${k}"]`); if (el) el.value = String(v); });
     if (r.comment && !$("#w-comment").value.trim()) $("#w-comment").value = r.comment;
+    const TYPE = {orf:"орфография", punct:"пунктуация", gram:"грамматика", speech:"речь", fact:"факт", logic:"логика"};
+    if (r.found?.length && !$("#w-fix").value.trim()) $("#w-fix").value = r.found.slice(0, 15).map(f => `«${f.fragment}» → ${f.fix}${TYPE[f.type] ? " (" + TYPE[f.type] + ")" : ""}`).join("\n");
     toast("Баллы подставлены – проверьте и сохраните");
   }
   if (a === "ai-analyze"){
@@ -1278,8 +1470,11 @@ document.addEventListener("click", async e => {
     const w = T.writings.find(x => x.student_id === T.sel && x.lesson_id === T.wreview), crit = U.critFor(c, w.kind) || [];
     const scores = {}; crit.forEach(([k]) => scores[k] = +document.querySelector(`[data-crit="${k}"]`).value);
     const errors = {}; c.criteria.errors.forEach(([k]) => { const v = document.querySelector(`[data-err="${k}"]`).value.trim(); if (v !== "") errors[k] = +v || 0; });
+    const fix = $("#w-fix").value.split("\n").map(x => x.trim()).filter(Boolean).slice(0, 30);
+    const total = crit.length ? crit.reduce((x, [k]) => x + (scores[k] || 0), 0) : null;
+    if (fix.length) scores._fix = fix;
     const row = {status: t.dataset.st, scores, errors, comment: $("#w-comment").value.trim(), reviewed_at: new Date().toISOString(),
-                 total: crit.length ? Object.values(scores).reduce((x,y) => x+y, 0) : null, max: crit.length ? crit.reduce((x,[,,m]) => x+m, 0) : null};
+                 total, max: crit.length ? crit.reduce((x,[,,m]) => x+m, 0) : null};
     const {error} = await sb.from("writings").update(row).eq("student_id", T.sel).eq("lesson_id", T.wreview);
     if (error){ toast("Не сохранилось: " + error.message); return; }
     Object.assign(w, row); T.wreview = null; render(); cmd(T.sel, "refresh", {msg:"Учитель проверил твою работу"}); toast(row.status === "redo" ? "Работа возвращена на доработку" : "Оценка сохранена – ученик её видит");
@@ -1318,6 +1513,16 @@ document.addEventListener("click", async e => {
   }
   const hm = location.hash.match(/^#mat-(\w+)/);
   if (hm){ T.matSubject = hm[1]; T.courseId = U.coursesOf(hm[1])[0]; T.view = "course"; }
+  /* после перезагрузки – туда же, где был учитель (в том числе обратно на урок) */
+  let rt = null; if (!hm && location.hash !== "#paid") try { rt = JSON.parse(sessionStorage.getItem("t-route") || "null"); } catch(_) {}
+  if (rt && ["students","student","course","lesson","methodology","look","sub","board","work"].includes(rt.view)) ["view","sel","open","sub","courseId","matSubject","boardLesson","workLesson"].forEach(k => { if (rt[k] != null) T[k] = rt[k]; });
   if (T.session) await loadAll(); else render();
+  if (rt && T.session){
+    const st = rt.room && T.students.find(x => x.id === rt.room.sid);
+    if (rt.view === "room" && st) startRoom(st, rt.room.lesson, true);
+    else if (["student","board","work"].includes(T.view) && !T.students.find(x => x.id === T.sel)){ T.view = "students"; render(); }
+    if (rt.y && T.view !== "room") requestAnimationFrame(() => scrollTo(0, rt.y));
+  }
+  T.routeReady = true;
 })();
 })();

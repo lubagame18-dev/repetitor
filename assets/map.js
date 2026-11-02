@@ -1,7 +1,7 @@
 /* Карта успеха: общая для ученика и учителя */
 (() => {
 const {esc, pct, lvlColor} = U;
-function mapHTML(course, results, hwres, writings){
+function mapHTML(course, results, hwres, writings, hw){
   const blocks = U.blockStats(course, results), hwBlocks = U.blockStats(course, hwres), weak = U.weakTags(course, results), weakHw = U.weakTags(course, hwres);
   const ws = U.writingStats(course, writings);
   const errNames = Object.fromEntries(course.criteria.errors);
@@ -16,6 +16,7 @@ function mapHTML(course, results, hwres, writings){
     <div class="card"><div class="kicker">Сочинения</div><div class="big tnum" style="margin-top:6px">${ws.essays.length ? Math.round(ws.essays.reduce((a,x) => a + x.w.total/x.w.max*100, 0)/ws.essays.length) + "%" : "–"}</div><div class="small muted">проверено: ${ws.essays.length}</div></div>
     <div class="card"><div class="kicker">Изложения</div><div class="big tnum" style="margin-top:6px">${ws.avgIzl ?? "–"}${ws.avgIzl!=null?"%":""}</div><div class="small muted">проверено: ${ws.izl.length}</div></div>
   </div>
+  ${gradesHTML(course, results, hwres, writings, hw || {})}
   ${course.lessons.some(l => l.writing) ? `<div class="section-title"><h2>Письменная линия</h2></div>
   <div class="card stack">
     <div><div class="kicker">Сочинения по неделям</div>${U.sparkHTML(ws.essays)}</div>
@@ -35,6 +36,19 @@ function mapHTML(course, results, hwres, writings){
   <div class="section-title"><h2>Что повторить</h2></div>
   <div class="card">${weakList.length ? `<ul style="margin:0;padding-left:20px">${weakList.map(([t,n]) => `<li><b>${esc(t)}</b> <span class="muted small">– ошибок: ${n}</span></li>`).join("")}</ul>`
     : `<div class="row" style="flex-wrap:nowrap"><img class="catmini" data-m src="${U.mascot()}" alt=""><p class="muted">Здесь появятся правила, в которых были ошибки в последних тестах.</p></div>`}</div>`;
+}
+/* оценки: за урок (тест на уроке) и отдельно за ДЗ */
+function gradesHTML(course, results, hwres, writings, hw){
+  const rows = course.lessons.map((l, i) => ({l, i, G: U.lessonGrades(l, results, hwres, hw, writings)})).filter(x => x.G.lesson || x.G.home);
+  if (!rows.length) return "";
+  const avg = k => { const a = rows.map(x => x.G[k]?.g).filter(Boolean); return a.length ? (a.reduce((p, q) => p + q, 0) / a.length).toFixed(1).replace(".", ",") : "–"; };
+  const cell = x => x?.g ? `<b class="tnum" style="color:${x.g >= 4 ? "var(--good)" : x.g === 3 ? "var(--mid)" : "var(--bad)"}">${x.g}</b>${x.p != null ? ` <span class="small muted">${x.p}%</span>` : ""}` : `<span class="muted">–</span>`;
+  return `<div class="section-title"><h2>Оценки</h2></div>
+  <div class="grid2 stats"><div class="card"><div class="kicker">Средняя за уроки</div><div class="big tnum" style="margin-top:6px">${avg("lesson")}</div><div class="small muted">по тесту на уроке (первая попытка)</div></div>
+    <div class="card"><div class="kicker">Средняя за ДЗ</div><div class="big tnum" style="margin-top:6px">${avg("home")}</div><div class="small muted">оценка учителя или ДЗ-тест + письмо</div></div></div>
+  <div class="card" style="margin-top:12px"><div class="tablewrap" style="margin-top:0"><table><thead><tr><th>№</th><th>Урок</th><th>За урок</th><th>За ДЗ</th></tr></thead><tbody>
+    ${rows.slice(-12).reverse().map(x => `<tr><td class="tnum">${x.i + 1}</td><td><a href="#" data-open="${x.l.id}" data-sub="test">${esc(x.l.title)}</a></td><td>${cell(x.G.lesson)}</td><td>${cell(x.G.home)}</td></tr>`).join("")}
+  </tbody></table></div>${rows.length > 12 ? `<p class="small muted" style="margin-top:6px">Показаны последние 12 уроков с оценками из ${rows.length}.</p>` : ""}</div>`;
 }
 window.mapHTML = mapHTML;
 })();

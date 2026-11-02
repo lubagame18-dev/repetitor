@@ -68,8 +68,8 @@ async function sendResult(lesson_id, kind, score, total, wrong, dur){
   S.rows.push({lesson_id, kind, score, total, wrong, duration_sec:dur, created_at: new Date().toISOString()}); recompute();
   if (sb){
     const {error} = await sb.rpc("student_submit_result", {p_code:S.token, p_lesson:lesson_id, p_score:score, p_total:total, p_wrong:wrong, p_kind:kind, p_duration:dur ?? null});
-    if (error) toast("Результат не отправлен: нет связи. Пройди тест ещё раз, когда появится интернет.");
-    else liveAct(`${kind === "mini" ? "мини-практика" : kind === "hw" ? "ДЗ-тест" : kind === "entry" ? "входной тест" : "тест"}: ${score} из ${total}`);
+    if (error && kind !== "self") toast("Результат не отправлен: нет связи. Пройди тест ещё раз, когда появится интернет.");
+    else if (kind !== "self") liveAct(`${kind === "mini" ? "мини-практика" : kind === "hw" ? "ДЗ-тест" : kind === "entry" ? "входной тест" : kind === "oge" ? "отработка ОГЭ" : "тест"}: ${score} из ${total}`);
   } else LS.set("rows", S.rows);
 }
 async function sendHw(lesson_id, note, silent){
@@ -276,7 +276,7 @@ function viewLogin(){
 /* ---------- оболочка ---------- */
 function drawerHTML(){
   const p = S.profile, ini = (p.name || "?").split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase();
-  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["self","Самообучение",I.book],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
+  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["self","Самообучение",I.book], window.OGE?.isOge(S.course) && ["oge","Мой ОГЭ",I.stats],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
   const mine = p.subjects?.length ? p.subjects : [{id:p.id, subject:subjKey(), grade:p.grade}];
   const others = U.SUBJECTS.filter(x => !mine.some(m => m.subject === x.k) && x.g.includes(+p.grade));
   const cur = S.view === "folder" ? "lessons" : S.view === "test" ? (S.test?.kind === "entry" ? "entry" : "lessons") : S.view;
@@ -295,7 +295,7 @@ function drawerHTML(){
    ${!sb ? '<p class="small muted" style="padding:0 8px">Демо-режим: данные хранятся на этом устройстве.</p>' : ""}
    <div class="drawer-foot"><button class="btn" data-act="install" style="width:100%;justify-content:center">${I.phone.replace('<svg','<svg width="18" height="18"')} Скачать на телефон</button></div>`;
 }
-const TITLES = {self:"Самообучение", room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
+const TITLES = {oge:"Мой ОГЭ", self:"Самообучение", room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
 
 /* ---------- экраны ---------- */
 function folderHTML(l){
@@ -307,7 +307,7 @@ function folderHTML(l){
       ${open ? "" : `<span class="lockico">${I.lock}</span>`}
       <span class="num">№ ${String(i+1).padStart(2,"0")} · ${fmt(l.date,{day:"numeric",month:"short"}).toUpperCase()}</span>
       <span class="ttl">${esc(l.title)}</span>
-      <span class="meta">${open ? `${r ? `<span class="pill">тест ${pct(r.best)}%</span>` : ""}${hr ? `<span class="pill">ДЗ ${pct(hr.best)}%</span>` : ""}${w?.max ? `<span class="pill">✍ ${w.total}/${w.max}</span>` : ""}${hs.c==="bad" ? '<span class="pill">ДЗ!</span>' : ""}<span class="arrow">→</span>`
+      <span class="meta">${open ? `${(G => `${G.lesson ? `<span class="pill">урок: ${G.lesson.g}</span>` : ""}${G.home ? `<span class="pill">ДЗ: ${G.home.g}</span>` : ""}`)(U.lessonGrades(l, S.results, S.hwres, S.hw, S.writings))}${w?.max ? `<span class="pill">✍ ${w.total}/${w.max}</span>` : ""}${hs.c==="bad" ? '<span class="pill">ДЗ!</span>' : ""}<span class="arrow">→</span>`
         : `<span class="pill">откроется ${fmt(l.date,{day:"numeric",month:"short"})}</span>`}</span>
     </span></button>`;
 }
@@ -412,7 +412,7 @@ function writingBody(l){
       <div class="kicker" style="margin-top:10px">Домашнее письмо</div><p style="margin-top:4px"><b>${esc(w.task)}</b></p></div>
     ${w.type === "choice" ? `<div class="row" style="margin-top:14px" role="group" aria-label="Тип сочинения">${["13.1","13.2","13.3"].map(k => `<button class="btn ${k===kind?"":"ghost"} sm" data-etype="${k}" ${locked?"disabled":""}>${k}</button>`).join("")}</div>` : ""}
     <div style="margin-top:16px"><div class="kicker">Текст «${esc(src.title)}»</div>
-      <div class="ttext" style="white-space:normal">${src.html}</div>
+      ${w.type === "izl" ? `<details><summary class="small">Показать текст (если на уроке его не читали)</summary><div class="ttext" style="white-space:normal">${src.html}</div></details>` : `<div class="ttext" style="white-space:normal">${src.html}</div>`}
       <p style="margin-top:10px"><b>Тема:</b> ${esc(src.topic)}</p></div>
     ${toBoard("text")}
     <div class="stack" style="margin-top:14px;gap:8px">
@@ -473,7 +473,7 @@ function lessonPane(l, sub){
   if (S.sub === "mats") pane = materialsHTML(l);
   if (S.sub === "hw") pane = `<ol style="margin:0;padding-left:20px">
         ${l.hw ? `<li>${esc(l.hw)}</li>` : ""}${l.writing ? `<li>Письмо: ${esc(l.writing.task)} <a href="#" data-sub="writing">Открыть</a></li>` : ""}${l.hwtest?.length ? `<li>ДЗ-тест: ${l.hwtest.length} вопросов – проверь, как усвоил тему.</li>` : ""}</ol>
-      <div class="row" style="margin-top:12px"><span class="chip ${hs.c}">${hs.t}</span>${due?`<span class="chip">срок: ${fmt(due.date,{weekday:"short",day:"numeric",month:"long"})}</span>`:""}</div>
+      <div class="row" style="margin-top:12px"><span class="chip ${hs.c}">${hs.t}</span>${due?`<span class="chip">срок: ${fmt(due.date,{weekday:"short",day:"numeric",month:"long"})}</span>`:""}${U.gradeChip(U.lessonGrades(l, S.results, S.hwres, S.hw, S.writings).home, "Оценка за ДЗ")}</div>
       ${l.hwtest?.length ? `<div class="card" style="margin-top:14px;box-shadow:none"><div class="kicker">ДЗ-тест</div>
         ${hr ? `<div class="row" style="margin-top:6px"><span class="big tnum" style="color:${lvlColor(pct(hr.last))}">${pct(hr.last)}%</span><span class="small muted">лучший ${pct(hr.best)}% · попыток: ${hr.attempts}</span></div>
           <p class="expl small"><b>Рекомендация:</b> ${esc(U.recText(hr.last))}</p>` : `<p class="muted" style="margin-top:6px">Пройди после того, как сделаешь домашнее задание.</p>`}
@@ -483,7 +483,8 @@ function lessonPane(l, sub){
         <textarea id="hw-note" placeholder="Например, ссылка на фото в Google Диске">${esc(h.note || "")}</textarea>
         <div><button class="btn yellow" data-act="send-hw">${h.status ? "Обновить отметку" : "Я сделал ДЗ"}</button></div></div>` : ""}`;
   if (S.sub === "test") pane = `${r ? `<div class="row"><span class="big tnum" style="color:${lvlColor(pct(r.last))}">${pct(r.last)}%</span>
-        <span class="small muted">последняя попытка · лучший ${pct(r.best)}% · попыток: ${r.attempts}</span></div>
+        <span class="small muted">последняя попытка · лучший ${pct(r.best)}% · попыток: ${r.attempts}</span>${U.gradeChip(U.lessonGrades(l, S.results, S.hwres, S.hw, S.writings).lesson, "Оценка за урок")}</div>
+        <p class="small muted" style="margin-top:4px">Оценка за урок ставится по первой попытке теста: 85% и выше – «5», от 65% – «4», от 45% – «3».</p>
         <p class="expl small"><b>Рекомендация:</b> ${esc(U.recText(r.last))}</p>` : `<p class="muted">${T.test.length} вопросов по теме. Пройди в конце урока.</p>`}
       <div class="row" style="margin-top:12px"><button class="btn" data-test="${l.id}" data-kind="lesson">${r ? "Пройти ещё раз" : "Начать тест"}</button></div>`;
   return pane;
@@ -549,6 +550,7 @@ function viewTest(){
         <span class="tag">${label} завершён</span><h1 style="margin:12px 0 4px;font-size:1.8rem">${esc(T.title)}</h1>
         <img data-m src="${U.mascot()}" alt="" style="width:150px;margin-top:8px">
         <div class="big tnum" style="font-size:2.6rem;color:${lvlColor(p)}">${T.score} из ${n}</div>
+        ${T.kind === "lesson" || T.kind === "hw" ? `<p style="margin:2px 0" class="tnum">${T.kind === "lesson" ? (S.results[T.id]?.attempts > 1 ? "Пересдача: оценка за урок остаётся по первой попытке" : `Оценка за урок: <b style="font-size:1.4rem">${U.grade5(p)}</b>`) : `Результат ДЗ-теста – в оценку за ДЗ: <b style="font-size:1.4rem">${U.grade5(p)}</b>`}</p>` : ""}
         <p style="margin:4px 0 14px;font-weight:800">${p===100?"Котик ставит сто баллов!":p>=80?"Отличный результат!":p>=60?"Неплохо, есть что повторить.":T.kind==="entry"?"Спасибо! Учитель увидит, с чего начать.":"Тему повторим на уроке."}</p>
         ${T.kind === "entry" ? "" : `<p class="expl small" style="text-align:left"><b>Рекомендация:</b> ${esc(U.recText({score:T.score,total:n,wrong:T.wrong}))}</p>`}
         <div class="row" style="justify-content:center;margin-top:14px"><button class="btn" ${back}>${T.kind==="entry"?"Посмотреть результаты":"В папку"}</button><button class="btn ghost" data-go="stats">Статистика</button></div>
@@ -618,15 +620,39 @@ function viewSelf(){
     <h3 style="margin:6px 0 10px">Игры по темам</h3>
     <div class="pl-grid">${themes.map(t => `<button class="pl-card" data-play-theme="${t.id}"><span class="pl-emo">🕹️</span><b>${esc(t.title)}</b><span class="small muted">${Play.gamesFor(t).map(k => Play.GAMES[k].n).join(" · ")}</span></button>`).join("")}</div>`;
 }
-function selfDone(act){
+/* результат самообучения уходит учителю: вид «self», в lesson_id – режим и урок, в wrong – ошибки */
+const SELF_MODE = {"self-trainer":"trainer", "self-tf":"tf", "self-cards":"cards", "self-quiz":"quiz", "self-lgames":"games", "self-mix":"mix", "self-stress":"stress", "self-spell":"spell"};
+function viewOge(){
+  if (!OGE.isOge(S.course)) return viewSelf();
+  return `<div class="section-title" style="margin-top:6px"><h2>Мой ОГЭ</h2></div>
+    <p class="muted" style="margin-bottom:12px">Все задания экзамена: как ты справляешься с каждым, где слабые зоны и что отработать. Отметь звёздами, насколько уверен в каждом задании, – и сравни с результатами.</p>
+    ${OGE.html(S.course, S.rows, S.writings, {isOpen})}`;
+}
+function ogeAct(t){
+  const isO = l => isOpen(l);
+  if (t.dataset.ogeRate){ sendResult(`oge:rate:${t.dataset.ogeRate}`, "oge", +t.dataset.v, 5, []); render(); return; }
+  if (t.dataset.ogeDrill != null){
+    const n = t.dataset.ogeDrill, name = (OGE.TASKS.find(x => x[0] === n) || [])[1] || "";
+    Play.onDone = r => { liveAct(`отработка ОГЭ, задание ${n}: ${r.ok} из ${r.n}`); if (r.n) sendResult("oge:" + n, "oge", r.ok, Math.min(r.n, 100), (r.wrong || []).slice(0, 30)); if (S.view === "oge") setTimeout(render, 50); };
+    Play.quizRun(`Задание ${n}. ${name}`, OGE.drillQs(S.course, n, isO), "Отработка ОГЭ", 12); return;
+  }
+  if (t.dataset.ogeMock != null){
+    const qs = OGE.mockQs(S.course, isO);
+    Play.onDone = r => { liveAct(`пробный вариант ОГЭ: ${r.ok} из ${r.n}`); if (r.n) sendResult("oge:mock", "oge", r.ok, Math.min(r.n, 100), (r.wrong || []).slice(0, 30)); if (S.view === "oge") setTimeout(render, 50); };
+    Play.quizRun("Пробный вариант: задания 2–12", qs, "ОГЭ", 30, true);
+  }
+}
+function selfDone(act, lid){
   return r => {
     liveAct(`самообучение · ${r.title}: ${r.ok} из ${r.n}`);
+    const n = Math.min(r.n || 0, 100), ok = Math.min(Math.max(r.ok || 0, 0), n);
+    if (n > 0) sendResult(`self:${SELF_MODE[act] || act.replace(/^theme-/, "t-")}:${lid || "-"}`.slice(0, 40), "self", ok, n, (r.wrong || []).slice(0, 30));
     try { const b = LS.get("self-best", {}) || {}; const pc = r.n ? Math.round(r.ok / r.n * 100) : 0; const prev = parseInt(b[act] || "0"); if (pc >= prev){ b[act] = pc + "%"; LS.set("self-best", b); } } catch(_) {}
   };
 }
 function selfAct(a, t){
   const l = selfLesson();
-  Play.onDone = selfDone(a);
+  Play.onDone = selfDone(a, ["self-stress", "self-spell", "self-mix"].includes(a) ? "" : l?.id);
   if (a === "self-trainer") Play.trainer(l);
   if (a === "self-tf") Play.tfCards(l.title, Play.tfFromQuiz(Play.quizFromLessons([l])));
   if (a === "self-cards") Play.flashcards(l.title, Play.cardsFromLessons([l]));
@@ -639,14 +665,25 @@ function selfAct(a, t){
 function playGame(mid, g){
   const m = (S.course?.lessons || []).flatMap(l => l.materials || []).find(x => String(x.id) === String(mid)); if (!m) return;
   const th = {...(m.data.theme || {}), title: m.title || m.data.theme?.title || "Игра"};
-  Play.onDone = r => liveAct(`игра «${th.title}»: ${r.ok} из ${r.n}`);
+  Play.onDone = selfDone("game", String(mid));
   if (g) Play.game(g, th); else Play.chooseGame(th);
 }
 
+/* успеваемость по всем предметам: с сервера (если функция есть), иначе – только текущий предмет */
+function progressList(){
+  if (sb && !S.progLoading && (!S.prog || Date.now() - S.progAt > 60000)){
+    S.progLoading = true;
+    sb.rpc("student_progress", {p_code: S.token}).then(({data, error}) => { S.progLoading = false; S.progAt = Date.now(); if (!error && Array.isArray(data)){ S.prog = data; if (S.view === "stats") render(); } });
+  }
+  const cur = {subject: S.profile.subject || subjKey(), ...U.subjectNow(S.rows, Object.values(S.writings))};
+  if (!S.prog) return [cur];
+  return S.prog.map(x => x.id === S.profile.id ? cur : {subject: x.subject, ...U.subjectNow(x.results, x.writings)});
+}
 function viewStats(){
   const et = entryTest(), er = entryRes();
   return `<div class="section-title" style="margin-top:6px"><h2>Статистика</h2></div>
-    ${S.course ? window.mapHTML(S.course, S.results, S.hwres, S.writings) : ""}
+    ${U.progressHTML(progressList())}
+    ${S.course ? window.mapHTML(S.course, S.results, S.hwres, S.writings, S.hw) : ""}
     ${et && er ? `<div class="section-title"><h2>Входной тест</h2></div>${window.entryHTML(et, er)}` : ""}
     ${!S.course && !er ? noCourse() : ""}`;
 }
@@ -758,8 +795,12 @@ function render(){
   const app = $("#app");
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
-  const v = S.view;
-  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():viewInstall();
+  /* урок ещё не загрузился (после перезагрузки) – пока показываем главную, маршрут не теряем */
+  const wait = S.view === "folder" && !(S.course?.lessons || []).some(l => l.id === S.open);
+  const v = wait ? "home" : S.view;
+  if (!wait) try { sessionStorage.setItem("s-route", JSON.stringify({view: v, open: S.open, sub: S.sub, y: v === S.routeV ? scrollY : 0})); S.routeV = v; } catch(_) {}
+  if (S.routeY){ const y = S.routeY; S.routeY = 0; requestAnimationFrame(() => scrollTo(0, y)); }
+  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():v==="oge"?viewOge():viewInstall();
   app.innerHTML = `<div class="shell">
     <div class="drawer-back" ${S.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${S.drawer ? "open" : ""}" aria-label="Меню">${drawerHTML()}</nav>
@@ -919,7 +960,8 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-play-game],[data-play-theme],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  const t = e.target.closest("[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  if (t.dataset.ogeRate || t.dataset.ogeDrill != null || t.dataset.ogeMock != null){ e.preventDefault(); ogeAct(t); return; }
   if (t.dataset.role){ S.role = t.dataset.role; S.mode = "in"; S.authMsg = null; S.signupDone = null; render(); return; }
   if (t.dataset.authmode){ if (t.dataset.authmode !== "signup") S.signupDone = null; S.mode = t.dataset.authmode; S.authMsg = null; render(); return; }
   if (t.dataset.switch){
@@ -950,7 +992,7 @@ document.addEventListener("click", async e => {
   }
   if (t.tagName === "A" && !t.href.startsWith("http")) e.preventDefault();
   if (t.dataset.playGame){ playGame(t.dataset.playGame, t.dataset.g); return; }
-  if (t.dataset.playTheme){ const th = (PLAY_BANKS.themes || []).find(x => x.id === t.dataset.playTheme); if (th){ Play.onDone = selfDone("theme-" + th.id); Play.chooseGame(th); } return; }
+  if (t.dataset.playTheme){ const th = (PLAY_BANKS.themes || []).find(x => x.id === t.dataset.playTheme); if (th){ Play.onDone = selfDone("theme-" + th.id, ""); Play.chooseGame(th); } return; }
   if (t.dataset.act && t.dataset.act.startsWith("self-")){ selfAct(t.dataset.act, t); return; }
   if (t.dataset.go){
     if (S.regDone){ S.invite = null; S.regDone = null; }
@@ -1059,6 +1101,11 @@ document.addEventListener("click", async e => {
     const {data} = await sb.auth.getSession(); if (data?.session){ location.replace("teacher.html"); return; }
   } else if (sess?.token){
     S.token = sess.token; S.profile = sess.profile; recompute();
+    /* после перезагрузки – на тот же экран и ту же вкладку урока */
+    try { const rt = JSON.parse(sessionStorage.getItem("s-route") || "null");
+      if (rt && ["home","lessons","self","oge","myboard","stats","plan","look","folder","room","test"].includes(rt.view)){
+        S.view = rt.view === "room" || rt.view === "test" ? (rt.open ? "folder" : "home") : rt.view; S.open = rt.open || null; if (rt.sub) S.sub = rt.sub === "board" && rt.view !== "room" ? "theory" : rt.sub; S.routeY = rt.y || 0; }
+    } catch(_) {}
     const c = LS.get("cache", null);
     if (c && sb){ S.rows = c.rows || []; S.hw = c.hw || {}; S.sheets = c.sheets || {}; S.writings = c.writings || {}; S.mats = c.mats || []; U.loadBase(c.base); recompute(); }
     render(); await load();
@@ -1066,4 +1113,5 @@ document.addEventListener("click", async e => {
   render();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
+window.__app = {S, render};   // для отладки и автотестов
 })();

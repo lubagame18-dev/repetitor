@@ -7,6 +7,8 @@
 //   analyze_student  – учитель: разбор результатов ученика и предложения к плану
 //   generate_tasks   – учитель: мини-практика и тест по теме урока
 //   upload_work      – ученик: фото рукописной работы (по личному ключу ученика)
+//   ocr_work         – учитель: распознать текст с фото рукописной работы (модель с поддержкой изображений)
+//   edit_lesson      – учитель: дописать или исправить блок теории / задания практики по запросу
 //   test_key         – разработчик: проверить, что ключ работает
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.100.0";
 
@@ -54,9 +56,29 @@ async function ask(system: string, user: string, maxTokens = 1800) {
   catch { return { raw: txt }; }
 }
 
+// Распознавание фото: нужна модель, которая понимает изображения (у DeepSeek такой нет – берём другой ключ, если он есть)
+const VISION: Record<string, string> = { openai: "gpt-4o-mini", openrouter: "openai/gpt-4o-mini", aitunnel: "gpt-4o-mini" };
+async function askVision(system: string, text: string, images: string[], maxTokens = 3000) {
+  const s = await secrets();
+  const order = [s.ai_provider, "openrouter", "aitunnel", "openai"].filter((p, i, a) => p && VISION[p] && a.indexOf(p) === i);
+  const prov = order.find((p) => s[`key_${p}`]);
+  if (!prov) throw new Error("Для распознавания фото нужен ключ OpenRouter, AITunnel или OpenAI (DeepSeek не читает изображения). Его вводит разработчик.");
+  const r = await fetch(PROVIDERS[prov].url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${s[`key_${prov}`]}` },
+    body: JSON.stringify({
+      model: s.ai_vision_model || VISION[prov], temperature: 0, max_tokens: maxTokens,
+      messages: [{ role: "system", content: system }, { role: "user", content: [{ type: "text", text }, ...images.slice(0, 6).map((url) => ({ type: "image_url", image_url: { url } }))] }],
+    }),
+  });
+  if (!r.ok) throw new Error(`Нейросеть ответила ошибкой ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const out = await r.json();
+  return String(out.choices?.[0]?.message?.content || "").trim();
+}
+
 const RULES_OGE = `Ты – опытный эксперт ОГЭ по русскому языку (критерии 2027 года). Пиши по-русски, коротко и доброжелательно, обращайся к ученику на «ты» в поле comment.
 Сочинение 13.1/13.2/13.3: СК1 (0–1) – ответ на вопрос/тезис; СК2 (0–4) – два примера из текста с пояснениями и указанием их смысловой связи (примеры только из текста, у каждого – пояснение; без пояснения пример не засчитывается); СК3 (0–2) – логичность; СК4 (0–1) – композиционная стройность. Если менее 70 слов – 0 баллов за всё.
-Сжатое изложение: ИК1 (0–2) – три микротемы; ИК2 (0–3) – приёмы сжатия; ИК3 (0–1) – смысловая цельность и последовательность.
+Сжатое изложение: ИК1 (0–2) – все микротемы; ИК2 (0–3) – приёмы сжатия; ИК3 (0–2) – смысловая цельность, связность, абзацы.
 Грамотность считай отдельно: число орфографических (orf), пунктуационных (punct), грамматических (gram) и речевых (speech) ошибок, и фактических (fact).`;
 
 Deno.serve(async (req) => {
@@ -89,7 +111,7 @@ Deno.serve(async (req) => {
     if (!me) return json({ error: "Нет профиля учителя" }, 403);
     // тарифы: анализ и план – от 300 ₽ (materials), проверка сочинений и задания – 500 ₽ (full)
     const { data: plan } = await admin.rpc("plan_active", { uid });
-    const need: Record<string, string[]> = { analyze_student: ["materials", "full"], check_essay: ["full"], generate_tasks: ["full"], test_key: ["full"] };
+    const need: Record<string, string[]> = { analyze_student: ["materials", "full"], check_essay: ["full"], ocr_work: ["full"], edit_lesson: ["full"], generate_tasks: ["full"], test_key: ["full"] };
     if (need[action] && !need[action].includes(plan as string))
       return json({ error: plan ? "Эта функция нейросети входит в тариф " + (need[action][0] === "full" ? "«Полный» (500 ₽ в месяц)" : "от 300 ₽ в месяц") + "." : "Подписка закончилась – продлите её в разделе «Подписка»." }, 402);
     const own = async (sid: string) => {
@@ -113,6 +135,27 @@ Deno.serve(async (req) => {
         `Тип работы: ${w.kind}. ${body.topic ? "Тема: " + body.topic : ""}\n${body.source ? "Исходный текст:\n" + String(body.source).slice(0, 6000) + "\n" : ""}\nРабота ученика (${w.words || "?"} слов):\n${String(w.body || "").slice(0, 8000)}`);
       await admin.from("writings").update({ ai: res }).eq("student_id", st.id).eq("lesson_id", body.lesson_id);
       return json(res);
+    }
+
+    if (action === "ocr_work") {
+      const st = await own(body.student_id);
+      const { data: w } = await admin.from("writings").select("*").eq("student_id", st.id).eq("lesson_id", body.lesson_id).single();
+      if (!w?.photos?.length) return json({ error: "У работы нет фото" }, 404);
+      const text = await askVision("Ты распознаёшь рукописные работы школьников на русском языке. Перепиши текст с фото дословно, сохраняя ВСЕ ошибки ученика (орфографию, пунктуацию, слова) и деление на абзацы. Ничего не исправляй и не комментируй. Неразборчивое слово пиши в квадратных скобках со знаком вопроса: [слово?]. Страницы идут по порядку.",
+        "Перепиши текст работы ученика с фотографий.", w.photos);
+      const words = (text.match(/[A-Za-zА-Яа-яЁё0-9]+(?:-[A-Za-zА-Яа-яЁё0-9]+)*/g) || []).length;
+      await admin.from("writings").update({ body: text, words }).eq("student_id", st.id).eq("lesson_id", body.lesson_id);
+      return json({ text, words });
+    }
+
+    if (action === "edit_lesson") {
+      // kind: "theory" – блок теории {h,t,list,ex,mini:[{q,a}]}; "practice" – задания [{t,key,items?}]
+      const isTh = body.kind === "theory";
+      const r = await ask(`Ты – методист и учитель русского языка. Пиши по-русски, грамотно, для ${body.grade || 9} класса${body.exam ? ", с прицелом на " + body.exam : ""}. Примеры – свои, без копирования сборников. Тире – среднее (–). Не смешивай правила других тем.
+${isTh ? 'Верни строго JSON: {"blocks":[{"h":"заголовок","t":"объяснение 1–3 предложения","list":["пункт правила"],"ex":["пример"],"mini":[{"q":"короткий вопрос","a":"ответ|вариант ответа"}]}]}. В каждом блоке 2–4 пункта list, 2–3 примера, 1–2 вопроса mini.'
+        : 'Верни строго JSON: {"tasks":[{"t":"формулировка задания (если ученик пишет ответ – «Запишите в поле»)","key":"ключ – полный ответ с пояснением","items":["предложение или слово для работы на листе (необязательно)"]}]}. В items предложения пиши без знаков препинания, которые ученик должен расставить; пропуски букв обозначай «..».'}`,
+        `Урок: «${body.title || ""}». ${body.current ? "Сейчас в уроке:\n" + String(body.current).slice(0, 5000) + "\n" : ""}Запрос учителя: ${String(body.request || "").slice(0, 1500)}. Количество: ${Math.min(Math.max(+body.count || 1, 1), 8)}.`, 2600);
+      return json(r);
     }
 
     if (action === "analyze_student") {

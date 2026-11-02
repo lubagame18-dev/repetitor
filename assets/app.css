@@ -155,7 +155,7 @@ label{font-weight:800;font-size:.88rem}
 .event.exam{color:var(--pink)}
 
 /* ---------- окно папки ---------- */
-.window{border-radius:26px;padding:0;overflow:hidden}
+.window{border-radius:26px;padding:0;overflow:hidden;overflow:clip}
 .window .tabs{display:flex;gap:4px;padding:10px 12px 0;overflow-x:auto;scrollbar-width:none;align-items:flex-end}
 .window .tabs::-webkit-scrollbar{display:none}
 .window .lights{display:flex;gap:6px;padding:0 8px 12px 4px;flex:none}
@@ -248,7 +248,24 @@ tr.ev td{font-weight:700;background:var(--chip)}
 .bd-bar button[aria-pressed="true"]{background:var(--ink);color:var(--base)}
 .bd-color{width:30px;height:30px;min-width:30px!important;padding:0!important;border-radius:50%!important;background:var(--bc)!important;border:3px solid #fff!important;box-shadow:0 0 0 1px var(--hair)}
 .bd-color[aria-pressed="true"]{box-shadow:0 0 0 3px var(--sun)}
-.bd-stage{position:relative;width:100%}
+.bd-body{display:flex;align-items:flex-start;gap:0}
+.bd-side{flex:none;width:54px;align-self:stretch;background:var(--glass-2);border-right:1px solid var(--line)}
+.bd-side .bd-tools{position:sticky;top:calc(122px + env(safe-area-inset-top,0px));flex-direction:column;flex-wrap:nowrap;gap:5px;padding:8px 6px;max-height:calc(100vh - 130px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+.bd-side .bd-tools::-webkit-scrollbar{display:none}
+.bd-side button{border:0;border-radius:10px;padding:6px 0;width:40px;min-width:40px;font-weight:800;background:var(--chip);font-size:17px;line-height:1.2}
+.bd-side button[aria-pressed="true"]{background:var(--ink);color:var(--base)}
+.bd-side .bd-color{width:30px;min-width:30px;height:30px;margin:0 5px}
+.bd-stage{position:relative;flex:1;min-width:0;width:100%}
+.bd-menu{position:fixed;z-index:1000;background:var(--base,#fff);color:var(--ink);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(36,24,61,.22);padding:8px;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:260px}
+.bd-menu[hidden]{display:none}
+.bd-mrow{display:flex;gap:4px;flex-wrap:wrap}
+.bd-mrow button{border:0;border-radius:9px;min-width:36px;height:36px;font-weight:800;background:var(--chip);font-size:16px}
+.bd-mrow button[aria-pressed="true"]{background:var(--ink);color:var(--base)}
+.bd-mrow .bd-color{width:28px;min-width:28px;height:28px;margin:4px 2px}
+.bd-mlist{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:6px}
+.bd-mlist button{border:0;background:none;text-align:left;padding:8px 10px;border-radius:9px;font-weight:700;color:inherit;font-size:15px}
+.bd-mlist button:hover,.bd-mlist button:focus-visible{background:var(--chip)}
+@media (max-width:560px){.bd-side{width:46px}.bd-side button{width:36px;min-width:36px}.bd-side .bd-color{width:26px;min-width:26px;height:26px}}
 .bd-wrap{position:relative;overflow:hidden;background:#fff;border-radius:0 0 var(--r) var(--r);-webkit-user-select:none;user-select:none}
 .bd-bg{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;color:#24183d}
 .bd-cv{position:absolute;left:0;top:0}
@@ -524,3 +541,16 @@ body.play-open{overflow:hidden}
 .pl-card:hover{transform:translateY(-2px);border-color:var(--violet)}
 .pl-emo{font-size:2rem}
 @media (max-width:560px){.mt-grid{grid-template-columns:1fr 1fr}.st-word,.st-v{font-size:1.7rem}}
+/* «Мой ОГЭ» */
+.oge-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:12px}
+.oge-task{display:flex;flex-direction:column}
+.oge-task .bar{grid-template-columns:1fr auto}
+.oge-n{font-weight:900;font-size:1.25rem;color:var(--accent,#7b4cf5)}
+.oge-rate{display:inline-flex;gap:2px;margin-left:4px;vertical-align:middle}
+.oge-rate button,.oge-rate i{background:none;border:0;padding:0 1px;font-size:1.15rem;line-height:1;color:var(--line);cursor:pointer;font-style:normal}
+.oge-rate i{cursor:default}
+.oge-rate .on{color:#f5b301}
+
+/* правка урока поверх доски */
+.ce-modal-back{position:fixed;inset:0;z-index:1001;background:rgba(20,12,40,.35);display:flex;justify-content:flex-end}
+.ce-modal{width:min(560px,100%);height:100%;overflow-y:auto;padding:16px;background:var(--base,#fff);border-left:1px solid var(--line);box-shadow:-12px 0 30px rgba(36,24,61,.18)}

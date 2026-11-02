@@ -570,6 +570,19 @@ returns json language sql security definer set search_path = public stable as $$
 $$;
 
 drop function if exists public.student_submit_result(text, text, int, int, jsonb, text);
+
+-- успеваемость по всем предметам ученика (тесты на уроках, ДЗ-тесты, проверенные письменные работы) – для графика по предметам
+create or replace function public.student_progress(p_code text)
+returns json language sql security definer set search_path = public stable as $$
+  with me as (select * from students where id = student_id_by_code(p_code)),
+       sib as (select o.* from students o, me where coalesce(o.person_id, o.id) = coalesce(me.person_id, me.id) and o.registered_at is not null)
+  select coalesce(json_agg(json_build_object('id', sib.id, 'subject', sib.subject, 'course', sib.course, 'grade', sib.grade,
+    'results', coalesce((select json_agg(json_build_object('lesson_id', r.lesson_id, 'kind', r.kind, 'score', r.score, 'total', r.total, 'created_at', r.created_at) order by r.created_at)
+                         from results r where r.student_id = sib.id and r.kind in ('lesson','hw')), '[]'::json),
+    'writings', coalesce((select json_agg(json_build_object('lesson_id', w.lesson_id, 'total', w.total, 'max', w.max, 'submitted_at', w.submitted_at))
+                          from writings w where w.student_id = sib.id and w.max > 0), '[]'::json))), '[]'::json)
+  from sib;
+$$;
 create or replace function public.student_submit_result(p_code text, p_lesson text, p_score int, p_total int, p_wrong jsonb, p_kind text default 'lesson', p_duration int default null)
 returns void language plpgsql security definer set search_path = public as $$
 declare sid uuid := student_id_by_code(p_code);
@@ -577,7 +590,7 @@ begin
   if sid is null then raise exception 'unknown code'; end if;
   if p_score < 0 or p_total <= 0 or p_score > p_total or p_total > 100 then raise exception 'bad score'; end if;
   insert into results(student_id, lesson_id, kind, score, total, wrong, duration_sec)
-  values (sid, left(p_lesson, 40), case when p_kind in ('hw','entry','mini') then p_kind else 'lesson' end, p_score, p_total, coalesce(p_wrong, '[]'::jsonb),
+  values (sid, left(p_lesson, 40), case when p_kind in ('hw','entry','mini','self','oge') then p_kind else 'lesson' end, p_score, p_total, coalesce(p_wrong, '[]'::jsonb),
           case when p_duration between 0 and 86400 then p_duration end);
 end $$;
 
@@ -676,7 +689,7 @@ do $$ declare f text; begin
     'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int)', 'public.student_ping(text, text, int)',
     'public.student_set_theme(text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
-    'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
+    'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])'] loop
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;

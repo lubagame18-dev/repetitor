@@ -6,12 +6,13 @@ window.Play = (() => {
   const mk = s => (window.U && U.mark) ? U.mark(s) : esc(s);
   const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const check = (ans, right) => (window.U && U.miniCheck) ? U.miniCheck(ans, right) : String(ans).trim().toLowerCase() === String(right).split("|")[0].toLowerCase();
-  let ov = null, onDone = null, timers = [];
+  let ov = null, onDone = null, timers = [], missed = [];
+  const miss = t => { if (t && missed.length < 40) missed.push(String(t).replace(/\s+/g, " ").slice(0, 140)); };
   const clearTimers = () => { timers.forEach(t => clearInterval(t)); timers = []; };
 
   /* ---------- оболочка ---------- */
   function shell(title, sub){
-    close(true);
+    close(true); missed = [];
     ov = document.createElement("div"); ov.className = "play-ov"; ov.setAttribute("role", "dialog"); ov.setAttribute("aria-modal", "true");
     ov.innerHTML = `<div class="play-box"><div class="play-head"><div style="min-width:0"><div class="kicker">${esc(sub || "Самообучение")}</div><h2 class="play-title">${esc(title)}</h2></div>
       <div class="row" style="gap:8px;align-items:center"><span class="play-stat small"></span><button class="iconbtn play-x" aria-label="Закрыть">✕</button></div></div>
@@ -30,7 +31,8 @@ window.Play = (() => {
     const pct = n ? Math.round(ok / n * 100) : 0, star = pct >= 90 ? "🏆" : pct >= 70 ? "🌟" : pct >= 40 ? "👍" : "💪";
     body.innerHTML = `<div class="play-end"><div class="play-emo">${star}</div><h3>${ok} из ${n}${n ? ` · ${pct}%` : ""}</h3><p class="muted">${pct >= 90 ? "Отлично! Тема усвоена." : pct >= 70 ? "Хорошо! Повтори ошибки – и будет отлично." : "Повтори теорию и попробуй ещё раз."}</p>${extra || ""}
       <div class="row" style="gap:8px;justify-content:center;margin-top:12px"><button class="btn" data-again>Ещё раз</button><button class="btn ghost" data-close>Закрыть</button></div></div>`;
-    try { onDone && onDone({title, ok, n}); } catch(_) {}
+    try { onDone && onDone({title, ok, n, wrong: [...new Set(missed)]}); } catch(_) {}
+    missed = [];
     return new Promise(res => { body.querySelector("[data-again]").onclick = () => res("again"); body.querySelector("[data-close]").onclick = () => { close(); res("close"); }; });
   }
 
@@ -92,6 +94,7 @@ window.Play = (() => {
       const done = (ok, given) => {
         box.querySelectorAll("button.play-opt, .play-inp input, .play-inp button").forEach(b => b.disabled = true);
         const right = choiceOk(q) ? q.o[q.a] : String(q.a).split("|")[0];
+        if (!ok) miss(q.tag && q.tag !== q.q ? `(${q.tag}) ${q.q} → ${right}` : `${q.q} → ${right}`);
         fb.innerHTML = `<div class="play-res ${ok ? "ok" : "bad"}"><b>${ok ? "Верно!" : "Неверно."}</b>${ok ? "" : ` Правильный ответ: <b>${esc(right)}</b>.`}${q.e ? `<div class="small" style="margin-top:4px">${mk(q.e)}</div>` : ""}</div><button class="btn play-next" style="margin-top:10px">Дальше →</button>`;
         fb.querySelector(".play-next").onclick = () => res({ok, given}); fb.querySelector(".play-next").focus();
       };
@@ -134,10 +137,10 @@ window.Play = (() => {
   }
 
   /* ---------- вопросы подряд (тест для самопроверки) ---------- */
-  async function quizRun(title, qs, sub){
+  async function quizRun(title, qs, sub, max, keepOrder){
     const body = shell(title, sub || "Тест для самопроверки");
     if (!qs.length){ body.innerHTML = `<p class="muted">Вопросов пока нет.</p>`; return; }
-    const run = async () => { let ok = 0; const list = shuffle(qs).slice(0, 15);
+    const run = async () => { let ok = 0; const list = (keepOrder ? qs : shuffle(qs)).slice(0, max || 15);
       for (let i = 0; i < list.length; i++){ prog(i, list.length); stat(`${i + 1} из ${list.length}`); if ((await ask(body, list[i])).ok) ok++; }
       if ((await finish(body, title, ok, list.length)) === "again") run(); };
     run();
@@ -152,7 +155,7 @@ window.Play = (() => {
         prog(i, list.length); stat(`${i + 1} из ${list.length}`); const it = list[i];
         const r = await new Promise(res => {
           body.innerHTML = `<div class="tf-card"><p class="play-q">${mk(it.s)}</p><div class="tf-claim">${esc(it.c)}</div></div><div class="row tf-btns"><button class="btn tf-yes">✓ Верно</button><button class="btn ghost tf-no">✕ Неверно</button></div><div class="play-fb"></div>`;
-          const go = ans => { const good = ans === it.ok; body.querySelectorAll(".tf-btns button").forEach(b => b.disabled = true);
+          const go = ans => { const good = ans === it.ok; if (!good) miss(`${it.s || it.q || ""}${it.r ? " → " + it.r : ""}`); body.querySelectorAll(".tf-btns button").forEach(b => b.disabled = true);
             body.querySelector(".play-fb").innerHTML = `<div class="play-res ${good ? "ok" : "bad"}"><b>${good ? "Да!" : "Нет."}</b> ${it.ok ? "Это верно." : `Верно: <b>${esc(it.r)}</b>.`}${it.e ? `<div class="small">${mk(it.e)}</div>` : ""}</div><button class="btn play-next" style="margin-top:10px">Дальше →</button>`;
             body.querySelector(".play-next").onclick = () => res(good); body.querySelector(".play-next").focus(); };
           body.querySelector(".tf-yes").onclick = () => go(true); body.querySelector(".tf-no").onclick = () => go(false);
@@ -192,7 +195,7 @@ window.Play = (() => {
       const w = list[i], right = [...w].findIndex(ch => /[АЕЁИОУЫЭЮЯ]/.test(ch) || ch === "ё"), low = w.toLowerCase();
       body.innerHTML = `<p class="play-q">Нажми на ударную гласную:</p><div class="st-word">${[...low].map((ch, k) => V.test(ch) ? `<button class="st-v" data-k="${k}">${ch}</button>` : `<span>${ch}</span>`).join("")}</div><div class="play-fb"></div>`;
       body.querySelectorAll(".st-v").forEach(b => b.onclick = () => {
-        const good = +b.dataset.k === right; if (good) ok++;
+        const good = +b.dataset.k === right; if (good) ok++; else miss("ударение: " + w);
         body.querySelectorAll(".st-v").forEach(x => { x.disabled = true; if (+x.dataset.k === right) x.classList.add("ok"); });
         if (!good) b.classList.add("bad");
         const shown = [...low].map((ch, k) => k === right ? ch + "́" : ch).join("");
@@ -213,7 +216,7 @@ window.Play = (() => {
       const [w, a, opts, rule] = list[i], vs = shuffle(opts.split("|"));
       body.innerHTML = `<div class="sp-word">${esc(w).replace("..", '<span class="sp-gap">?</span>')}</div><div class="play-opts">${vs.map(v => `<button class="play-opt" data-v="${esc(v)}">${v === "–" ? "ничего" : esc(v)}</button>`).join("")}</div><div class="play-fb"></div>`;
       body.querySelectorAll(".play-opt").forEach(b => b.onclick = () => {
-        const good = b.dataset.v === a; if (good) ok++;
+        const good = b.dataset.v === a; if (good) ok++; else miss(`${w.replace("..", a === "–" ? "" : a.toUpperCase())} – ${rule}`);
         body.querySelectorAll(".play-opt").forEach(x => { x.disabled = true; if (x.dataset.v === a) x.classList.add("ok"); }); if (!good) b.classList.add("bad");
         body.querySelector(".sp-gap").textContent = a === "–" ? "" : a; body.querySelector(".sp-gap").classList.add("done");
         body.querySelector(".play-fb").innerHTML = `<div class="play-res ${good ? "ok" : "bad"}"><b>${good ? "Верно!" : "Неверно."}</b> ${esc(rule)}</div><button class="btn play-next" style="margin-top:10px">Дальше →</button>`;

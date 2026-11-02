@@ -27,6 +27,40 @@ window.U = (() => {
     return out;
   }
 
+  /* оценки по пятибалльной шкале: за урок – по первой попытке теста на уроке; за ДЗ – оценка учителя, иначе ДЗ-тест и письмо */
+  const grade5 = p => p == null ? null : p >= 85 ? 5 : p >= 65 ? 4 : p >= 45 ? 3 : 2;
+  function lessonGrades(l, results, hwres, hw, writings){
+    const r = results?.[l.id], hr = hwres?.[l.id], h = hw?.[l.id], w = writings?.[l.id];
+    const first = r ? pct(r.history?.[0] || r.last) : null;
+    const lesson = r ? {g: grade5(first), p: first, best: pct(r.best), retake: r.attempts > 1} : null;
+    const tg = h?.status === "accepted" && /^[2-5]$/.test(String(h.grade || "").trim()) ? +String(h.grade).trim() : null;
+    const parts = [hr ? pct(hr.history?.[0] || hr.last) : null, w?.max ? Math.round(w.total / w.max * 100) : null].filter(x => x != null);
+    const hp = parts.length ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) : null;
+    const home = tg != null ? {g: tg, p: hp, by: "учитель"} : hp != null ? {g: grade5(hp), p: hp, by: [hr && "ДЗ-тест", w?.max && "письмо"].filter(Boolean).join(" + ")} : null;
+    return {lesson, home};
+  }
+  const gradeChip = (x, label) => x?.g ? `<span class="chip ${x.g >= 4 ? "good" : x.g === 3 ? "mid" : "bad"} tnum" title="${esc(label)}${x.p != null ? " · " + x.p + "%" : ""}${x.by ? " · " + esc(x.by) : ""}">${esc(label)}: <b>${x.g}</b></span>` : "";
+  /* успеваемость по предмету «на сейчас»: среднее по последним 8 оценённым работам (первая попытка теста на уроке, ДЗ-тест, письмо) */
+  function subjectNow(rows, writings){
+    const seen = new Set(), items = [];
+    (rows || []).filter(r => (r.kind === "lesson" || r.kind === "hw") && !/^(self|oge):/.test(r.lesson_id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .forEach(r => { const k = r.kind + r.lesson_id; if (seen.has(k)) return; seen.add(k); items.push({at: new Date(r.created_at), p: r.score / r.total * 100}); });
+    (writings || []).filter(w => w.max > 0).forEach(w => items.push({at: new Date(w.submitted_at || Date.now()), p: w.total / w.max * 100}));
+    items.sort((a, b) => a.at - b.at);
+    const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y.p, 0) / a.length) : null;
+    const monthAgo = Date.now() - 30 * 864e5;
+    return {now: avg(items.slice(-8)), prev: avg(items.filter(x => x.at < monthAgo).slice(-8)), n: items.length};
+  }
+  function progressHTML(list){
+    if (!list.length) return "";
+    return `<div class="card"><div class="kicker">Успеваемость по предметам – сейчас</div>
+      <p class="small muted" style="margin:4px 0 10px">Средний процент по последним 8 работам: тесты на уроках, ДЗ-тесты, письменные работы. Пройдённость тем – в карте ниже.</p>
+      <div class="bars">${list.map(x => { const v = x.now, d = v != null && x.prev != null ? v - x.prev : null;
+        return `<div class="bar"><span>${subj(x.subject).e} <b>${esc(subj(x.subject).n)}</b> <span class="small muted">${x.n ? x.n + " работ" : "пока нет оценок"}</span></span>
+          <span class="tnum" style="text-align:right;font-weight:800;color:${v != null ? lvlColor(v) : "var(--muted)"}">${v != null ? v + "%" : "–"}${d ? ` <span class="small" style="color:${d > 0 ? "var(--good)" : "var(--bad)"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>` : ""}</span>
+          <span class="track"><i style="width:${v || 0}%;background:${lvlColor(v)}"></i></span></div>`; }).join("")}</div>
+      <p class="small muted" style="margin-top:6px">▲▼ – изменение по сравнению с тем, что было месяц назад.</p></div>`;
+  }
   function recText(res){
     if (!res) return null;
     const p = pct(res), tags = [...new Set(res.wrong || [])];
@@ -155,7 +189,8 @@ window.U = (() => {
       ${w.max ? `<div class="row between"><b>Оценка: ${w.total} из ${w.max}</b><span class="chip ${lvl(Math.round(w.total / w.max * 100))}">${Math.round(w.total / w.max * 100)}%</span></div>` : `<b>${w.status === "redo" ? "На доработку" : "Проверено"}</b>`}
       ${crit.length ? `<ul style="margin:8px 0 0;padding-left:18px">${crit.map(([k, n, m]) => `<li>${k} – ${esc(n)}: <b>${w.scores?.[k] ?? "–"}</b> из ${m}</li>`).join("")}</ul>` : ""}
       ${errs.length ? `<p class="small" style="margin-top:6px">Ошибки: ${errs.map(([k, n]) => `${n} – ${w.errors[k]}`).join(", ")}</p>` : ""}
-      ${w.comment ? `<p style="margin-top:6px"><b>Комментарий:</b> ${esc(w.comment)}</p>` : ""}</div>`;
+      ${w.comment ? `<p style="margin-top:6px"><b>Комментарий:</b> ${esc(w.comment)}</p>` : ""}
+      ${w.scores?._fix?.length ? `<div style="margin-top:8px"><b>Что доработать:</b><ul style="margin:4px 0 0;padding-left:18px">${w.scores._fix.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}</div>`;
   }
   function writingStats(course, writings){
     const list = course.lessons.map(l => ({l, w: writings[l.lesson_id || l.id]})).filter(x => x.w && x.w.max);
@@ -268,8 +303,15 @@ window.U = (() => {
     let lessons = base.lessons.map((l, i) => ({...l, date: start ? iso(new Date(start.getTime() + i * 7 * 864e5)) : (l.date || iso(new Date(Date.now() + i * 7 * 864e5)))}));
     /* правка тестов учителем: материал «tasks» с data.kind = "test-edit" заменяет тест и ДЗ-тест урока (свой – важнее общего) */
     const edits = mats.filter(m => m.kind === "tasks" && m.data?.kind === "test-edit").sort((a, b) => (a.shared ? 0 : 1) - (b.shared ? 0 : 1) || a.id - b.id);
-    const editOf = id => edits.filter(m => m.lesson_id === id).pop();
-    lessons = [...lessons, ...own].map(l => { const ed = editOf(l.id); return {...l, ...(ed?.data?.test ? {test: ed.data.test} : {}), ...(ed?.data?.hwtest ? {hwtest: ed.data.hwtest} : {}), edited: !!ed, date: ov[l.id] || l.date, materials: mats.filter(m => m.kind !== "lesson" && m.lesson_id === l.id && !(m.kind === "tasks" && m.data?.kind === "test-edit"))}; })
+    const by = new Map(); mats.forEach(m => { const a = by.get(m.lesson_id); if (a) a.push(m); else by.set(m.lesson_id, [m]); });
+    const editOf = id => edits.length ? edits.filter(m => m.lesson_id === id).pop() : null;
+    /* правка теории и практики: data.kind = "content-edit" (общая → своя → для конкретного ученика) */
+    const cedits = mats.filter(m => m.kind === "tasks" && m.data?.kind === "content-edit").sort((a, b) => (a.shared ? 0 : 1) - (b.shared ? 0 : 1) || (a.student_id ? 1 : 0) - (b.student_id ? 1 : 0) || a.id - b.id);
+    const cOf = (id, k) => cedits.length ? cedits.filter(m => m.lesson_id === id && m.data?.[k]).pop() : null;
+    const SYS = m => m.kind === "tasks" && (m.data?.kind === "test-edit" || m.data?.kind === "content-edit");
+    lessons = [...lessons, ...own].map(l => { const ed = editOf(l.id), th = cOf(l.id, "theory"), pr = cOf(l.id, "practice");
+      return {...l, ...(ed?.data?.test ? {test: ed.data.test} : {}), ...(ed?.data?.hwtest ? {hwtest: ed.data.hwtest} : {}), ...(th ? {theory: th.data.theory} : {}), ...(pr ? {practice: pr.data.practice, pEdited: true} : {}),
+        edited: !!ed, cEdited: !!(th || pr), date: ov[l.id] || l.date, materials: (by.get(l.id) || []).filter(m => m.kind !== "lesson" && !SYS(m))}; })
       .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
     return {...base, events: start ? (base.events || []).filter(e => e.kind === "exam") : base.events, lessons};
   }
@@ -338,5 +380,5 @@ window.U = (() => {
     return window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {realtime: {params: {eventsPerSecond: 50}}});
   };
 
-  return {hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
+  return {subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();

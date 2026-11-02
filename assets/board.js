@@ -20,7 +20,9 @@ window.Board = (() => {
     root.innerHTML = `
       <div class="bd-bar">
         <div class="bd-pages" role="group" aria-label="Лист доски"><button data-pstep="-1" title="Предыдущий лист" aria-label="Предыдущий лист">‹</button>${o.pages.map(p => `<button data-bpage="${p.key}">${esc(p.label)}</button>`).join("")}<button data-pstep="1" title="Следующий лист" aria-label="Следующий лист">›</button></div>
-        <div class="bd-tools" role="group" aria-label="Инструменты">
+        <div class="bd-who small muted" aria-live="polite"></div>
+      </div>
+      <div class="bd-body"><div class="bd-side"><div class="bd-tools" role="group" aria-label="Инструменты">
           <button data-tool="pen" title="Ручка">✎</button>
           <button data-tool="hl" title="Маркер">▮</button>
           <button data-tool="text" title="Текст">T</button>
@@ -32,19 +34,20 @@ window.Board = (() => {
           <button data-act="embed" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…">🌐</button>
           <button data-act="camera" title="Фото с камеры">📷</button>
           <button data-act="undo" title="Отменить своё последнее">↶</button>
-          ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">Очистить</button>` : ""}
-        </div>
-        <div class="bd-who small muted" aria-live="polite"></div>
-      </div>
+          ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">🧹</button>` : ""}
+        </div></div>
       <div class="bd-stage"><div class="bd-wrap">
         <div class="bd-bg"></div>
         <canvas class="bd-cv"></canvas>
         <div class="bd-cursors"></div>
-      </div></div>`;
+      </div></div></div>
+      <div class="bd-menu" hidden role="menu" aria-label="Быстрые действия"></div>`;
     const $ = s => root.querySelector(s);
     const stage = $(".bd-stage"), wrap = $(".bd-wrap"), bg = $(".bd-bg"), cv = $(".bd-cv"), ctx = cv.getContext("2d"), curLayer = $(".bd-cursors");
 
     function layout(){
+      const bar = root.querySelector(".bd-bar"), side = root.querySelector(".bd-side .bd-tools");
+      if (bar && side){ const top = 66 + bar.offsetHeight + 6; side.style.top = `calc(${top}px + env(safe-area-inset-top,0px))`; side.style.maxHeight = `calc(100vh - ${top + 10}px)`; }
       const w = stage.clientWidth; scale = w / W;
       bg.style.width = W + "px"; bg.style.transform = `scale(${scale})`;
       const bgH = bg.scrollHeight;
@@ -186,35 +189,80 @@ window.Board = (() => {
       send("remove", {ids});
     }
 
+    /* рисует только один указатель: второй палец, ладонь при стилусе и правая кнопка мыши не дают «зигзагов» */
+    let penSeen = 0, lp = null;
+    const lpClear = () => { if (lp){ clearTimeout(lp.timer); lp = null; } };
+    cv.addEventListener("contextmenu", e => { e.preventDefault(); openMenu(e.clientX, e.clientY); });
     cv.addEventListener("pointerdown", e => {
+      closeMenu();
+      if (e.pointerType === "pen") penSeen = Date.now();
+      if (e.button === 2 || (e.buttons & 2) || (e.pointerType === "pen" && (e.buttons & 32))){ e.preventDefault(); end(); openMenu(e.clientX, e.clientY); return; }
+      if (e.pointerType === "touch" && Date.now() - penSeen < 4000) return;   // ладонь, пока пишут стилусом
+      if (drawing && drawing.pid !== e.pointerId){ end(); return; }         // второй палец – это не рисунок
       if (tool === "hand") return;
       const p = pos(e);
-      if (tool === "text"){ placeText(p); return; }
-      cv.setPointerCapture(e.pointerId);
-      if (tool === "erase"){ const id = hitTest(p); if (id) removeIds([id]); drawing = {erase:true}; return; }
-      drawing = {t:"s", c: tool === "hl" ? "#ffd23f" : color, w: tool === "hl" ? 18 : 3, h: tool === "hl", p:[p]};
+      lpClear();
+      if (e.pointerType !== "mouse"){ const x = e.clientX, y = e.clientY; lp = {x, y, timer: setTimeout(() => { lp = null; cancelStroke(); openMenu(x, y); }, 550)}; }
+      if (tool === "text"){ lpClear(); placeText(p); return; }
+      try { cv.setPointerCapture(e.pointerId); } catch(_) {}
+      if (tool === "erase"){ const id = hitTest(p); if (id) removeIds([id]); drawing = {erase:true, pid:e.pointerId}; return; }
+      drawing = {t:"s", c: tool === "hl" ? "#ffd23f" : color, w: tool === "hl" ? 18 : 3, h: tool === "hl", p:[p], pid:e.pointerId, sid: Math.random().toString(36).slice(2, 8)};
       draftBuf = [p];
     });
     cv.addEventListener("pointermove", e => {
       const p = pos(e), now = performance.now();
-      if (now - lastCursor > 45){ lastCursor = now; send("cursor", {x:p[0], y:p[1]}); }
-      if (!drawing) return;
+      if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 8) lpClear();
+      if (now - lastCursor > 45 && (!drawing || drawing.pid === e.pointerId)){ lastCursor = now; send("cursor", {x:p[0], y:p[1]}); }
+      if (!drawing || drawing.pid !== e.pointerId) return;
       if (drawing.erase){ const id = hitTest(p); if (id) removeIds([id]); return; }
-      const last = drawing.p[drawing.p.length - 1];
-      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.5) return;
-      drawing.p.push(p); draftBuf.push(p);
-      drawSeg(last, p, drawing);
-      if (drawing.p.length > 1200) drawing.p = drawing.p.filter((_, i2) => i2 % 2 === 0);
-      if (now - lastDraft > 60){ lastDraft = now; send("draft", {c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf}); draftBuf = [p]; }
+      const pts = (e.getCoalescedEvents ? e.getCoalescedEvents() : []).map(pos); if (!pts.length) pts.push(p);
+      for (const q of pts){
+        const last = drawing.p[drawing.p.length - 1];
+        if (Math.hypot(q[0] - last[0], q[1] - last[1]) < 1.5) continue;
+        if (Math.hypot(q[0] - last[0], q[1] - last[1]) > 260) continue;      // случайный скачок указателя – пропускаем
+        drawing.p.push(q); draftBuf.push(q); drawSeg(last, q, drawing);
+      }
+      if (drawing.p.length > 1500) drawing.p = drawing.p.filter((_, i2) => i2 % 2 === 0 || i2 === drawing.p.length - 1);
+      if (now - lastDraft > 50 && draftBuf.length > 1){ lastDraft = now; send("draft", {sid:drawing.sid, c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf}); draftBuf = [draftBuf[draftBuf.length - 1]]; }
     });
-    const end = () => {
+    function cancelStroke(){ if (drawing && !drawing.erase) send("draft", {sid:drawing.sid, p:[], end:true, drop:true}); drawing = null; redraw(); }
+    function end(e){
+      if (e && drawing && drawing.pid !== e.pointerId) return;
+      lpClear();
       if (!drawing) return;
       const d = drawing; drawing = null;
       if (d.erase) return;
-      send("draft", {c:d.c, w:d.w, h:d.h, p:draftBuf, end:true});
+      send("draft", {sid:d.sid, c:d.c, w:d.w, h:d.h, p:draftBuf, end:true});
+      delete d.pid; delete d.sid;
       if (d.p.length) addItem(d);
-    };
-    cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end); cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") end(); });
+    }
+    cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end); cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") end(e); });
+
+    /* ---------- быстрая панель: правая кнопка мыши, кнопка стилуса или долгое нажатие ---------- */
+    const menu = root.querySelector(".bd-menu");
+    function openMenu(x, y){
+      const extra = typeof o.menu === "function" ? (o.menu() || []) : [];
+      menu.innerHTML = `<div class="bd-mrow">${["pen","hl","text","erase","hand"].map(t => `<button data-mtool="${t}" aria-pressed="${tool === t}" title="${{pen:"Ручка", hl:"Маркер", text:"Текст", erase:"Ластик", hand:"Листать"}[t]}">${{pen:"✎", hl:"▮", text:"T", erase:"⌫", hand:"✋"}[t]}</button>`).join("")}</div>
+        <div class="bd-mrow">${COLORS.map(c => `<button class="bd-color" data-mcolor="${c}" style="--bc:${c}" aria-pressed="${color === c}" aria-label="Цвет"></button>`).join("")}</div>
+        <div class="bd-mlist"><button data-mact="undo">↶ Отменить</button><button data-mact="blank">📄 Чистый лист</button>${extra.map((m, i) => `<button data-mext="${i}">${esc(m.label)}</button>`).join("")}</div>`;
+      if (menu.parentElement !== document.body) document.body.appendChild(menu);   // над всеми окнами (у «стеклянных» окон свой слой)
+      menu.hidden = false;
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      menu.style.left = Math.max(4, Math.min(x, innerWidth - mw - 4)) + "px";
+      menu.style.top = Math.max(4, Math.min(y, innerHeight - mh - 4)) + "px";
+      menu.onclick = ev => {
+        const b = ev.target.closest("button"); if (!b) return;
+        if (b.dataset.mtool) setTool(b.dataset.mtool);
+        if (b.dataset.mcolor){ setColor(b.dataset.mcolor); if (tool !== "pen" && tool !== "text") setTool("pen"); }
+        if (b.dataset.mact === "undo") root.querySelector('[data-act="undo"]')?.click();
+        if (b.dataset.mact === "blank"){ const bl = pagesArr.find(p => p.key === "blank") || pagesArr.find(p => p.key === "p1"); if (bl){ openPage(bl.key); if (o.role === "teacher") send("page", {page: bl.key}); } }
+        if (b.dataset.mext != null){ try { extra[+b.dataset.mext].run(); } catch(_) {} }
+        closeMenu();
+      };
+    }
+    function closeMenu(){ if (menu && !menu.hidden){ menu.hidden = true; menu.innerHTML = ""; } }
+    const onDocDown = e => { if (menu && !menu.hidden && !menu.contains(e.target)) closeMenu(); };
+    document.addEventListener("pointerdown", onDocDown, true);
 
     function placeText(p){
       const box = document.createElement("textarea");
@@ -235,8 +283,8 @@ window.Board = (() => {
       if (b.dataset.color){ setColor(b.dataset.color); if (tool === "hl" || tool === "erase" || tool === "hand") setTool("pen"); }
       if (b.dataset.act === "undo"){ const id = mine.pop(); if (id) removeIds([id]); }
       if (b.dataset.act === "clear"){
-        if (b.dataset.sure){ await o.api.clear(page); items.clear(); redraw(); send("clear", {}); b.textContent = "Очистить"; delete b.dataset.sure; }
-        else { b.dataset.sure = "1"; b.textContent = "Точно очистить?"; setTimeout(() => { b.textContent = "Очистить"; delete b.dataset.sure; }, 3000); }
+        if (b.dataset.sure){ await o.api.clear(page); items.clear(); redraw(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
+        else { b.dataset.sure = "1"; b.textContent = "✔?"; b.title = "Нажмите ещё раз, чтобы очистить лист"; setTimeout(() => { b.textContent = "🧹"; delete b.dataset.sure; }, 3000); }
       }
     });
 
@@ -433,10 +481,12 @@ window.Board = (() => {
           p.el.querySelector("span").dataset.n = p.name || "";
         }
         if (m.type === "draft"){
-          const d = drafts.get(m.from) || {t:"s", c:m.c, w:m.w, h:m.h, p:[]};
-          d.p.push(...m.p); drafts.set(m.from, d); if (m.end) setTimeout(() => { drafts.delete(m.from); redraw(); }, 1500); redraw();
+          const k = m.from + ":" + (m.sid || "");
+          if (m.drop){ drafts.delete(k); redraw(); return; }
+          const d = drafts.get(k) || {t:"s", c:m.c, w:m.w, h:m.h, p:[]};
+          d.p.push(...m.p); drafts.set(k, d); if (m.end) setTimeout(() => { drafts.delete(k); redraw(); }, 1500); redraw();
         }
-        if (m.type === "add"){ drafts.delete(m.from); items.set(m.id, m.item); redraw(); }
+        if (m.type === "add"){ [...drafts.keys()].forEach(k => { if (k.startsWith(m.from + ":") && drafts.get(k).p.length >= (m.item.p?.length || 0) - 2) drafts.delete(k); }); items.set(m.id, m.item); redraw(); }
         if (m.type === "remove"){ m.ids.forEach(id => items.delete(id)); redraw(); }
         if (m.type === "clear"){ items.clear(); redraw(); }
       });
@@ -462,7 +512,7 @@ window.Board = (() => {
         if (added){ renderPageButtons(); if (!pagesArr.some(x => x.key === page) || o.page === page) openPage(o.page && pagesArr.some(x => x.key === o.page) ? o.page : page); }
       } catch(_) {}
     })();
-    return { destroy(){ ro.disconnect(); document.removeEventListener("keydown", onKey); document.removeEventListener("paste", onPaste); if (channel) o.sb.removeChannel(channel); }, relayout(){ layout(); }, page: () => page };
+    return { setMenu(fn){ o.menu = fn; }, destroy(){ ro.disconnect(); menu?.remove(); document.removeEventListener("pointerdown", onDocDown, true); document.removeEventListener("keydown", onKey); document.removeEventListener("paste", onPaste); if (channel) o.sb.removeChannel(channel); }, relayout(){ layout(); }, page: () => page };
   }
 
   /* хранилище: Supabase (ученик – через функции, учитель – напрямую) или браузер */
@@ -516,7 +566,7 @@ window.Board = (() => {
   let kept = null;
   function keep(container, key, opts){
     if (!container) return null;
-    if (kept && kept.key === key){ container.replaceChildren(kept.holder); requestAnimationFrame(() => kept && kept.inst.relayout()); return kept.inst; }
+    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); container.replaceChildren(kept.holder); requestAnimationFrame(() => kept && kept.inst.relayout()); return kept.inst; }
     release();
     const holder = document.createElement("div"); holder.className = "bd-holder"; container.replaceChildren(holder);
     const inst = mount(holder, opts); kept = {key, holder, inst}; return inst;
