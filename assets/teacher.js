@@ -50,7 +50,7 @@ async function loadAll(){
   T.students = st.data || []; T.rows = rs.data || []; T.hw = hw.data || []; T.writings = wr.data || []; T.sheets = sh.data || [];
   T.mats = mt.data || []; T.act = ac.data || []; T.reports = ar.data || []; T.works = wk.data || [];
   await ensureCourses([...new Set([...T.students.map(x => x.course), curCourse()])]);
-  T.loading = false; render();
+  T.loading = false; render(); onlineNow(); paintOnline();
 }
 function sData(s){
   const rows = T.rows.filter(r => r.student_id === s.id);
@@ -1133,7 +1133,7 @@ function liveChan(id){
   const ch = sb.channel(`live-${id}`, {config:{presence:{key:"t-" + T.session.user.id}, broadcast:{self:false}}});
   T.live.chans.set(id, ch);
   ch.on("presence", {event:"sync"}, () => {
-    T.online = {}; Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role === "student") T.online[p.id] = p; });
+    onlineNow();
     paintOnline();
   }).on("broadcast", {event:"act"}, ({payload:m}) => {
     if (!m?.act) return;
@@ -1161,6 +1161,14 @@ function liveChan(id){
     T.feed.unshift({...m, at: Date.now()}); T.feed = T.feed.slice(0, 30);
     toast(`${m.name.split(" ")[0]}: ${m.text}`); refreshSoon();
   }).subscribe(st => { if (st === "SUBSCRIBED"){ T.liveOk = true; roomTrack(); } });
+}
+/* кто онлайн: ученик может войти под любым своим предметом – онлайн считаются все его записи (один человек) */
+function onlineNow(){
+  T.online = {}; if (!T.live) return;
+  const person = x => x.person_id || x.id;
+  Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role !== "student") return;
+    T.online[p.id] = p; const me = T.students.find(x => x.id === p.id);
+    if (me) T.students.filter(x => person(x) === person(me)).forEach(x => { if (!T.online[x.id]) T.online[x.id] = p; }); });
 }
 /* точечно обновляем значки «онлайн», не перерисовывая страницу (чтобы не сбить ввод и доску) */
 function paintOnline(){
