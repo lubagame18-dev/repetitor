@@ -486,6 +486,24 @@ body.in-call .main{padding-bottom:230px}
 .bd-slide-txt h2{font-size:28px;margin:0 0 12px}.bd-slide-txt p{font-size:19px;margin:6px 0}
 .bd-embed{padding:12px}
 .bd-embedform{margin:8px 0;padding:12px 14px}
+/* окошко-редактор текста поверх листа, с ручкой изменения размера */
+.bd-editor{position:absolute;z-index:4;display:flex;flex-direction:column;min-width:140px;min-height:70px;background:#fff;color:#24183d;border:2px solid var(--violet);border-radius:10px;box-shadow:0 14px 34px -14px rgba(36,24,61,.55);overflow:hidden}
+.bd-editor textarea{flex:1 1 auto;width:100%;min-height:0;margin:0;padding:8px 10px;border:0;outline:0;resize:none;background:#fff;color:#24183d;font:600 16px/1.45 Manrope,system-ui,sans-serif;-webkit-user-select:text;user-select:text;touch-action:auto}
+.bd-editor textarea::placeholder{color:#9a90b5;font-weight:600}
+.bd-editor-tools{display:flex;justify-content:flex-end;gap:6px;padding:4px 6px;border-top:1px solid #e6e2f2;background:#faf8ff;flex:none}
+.bd-editor-tools button{border:0;border-radius:8px;padding:5px 12px;background:var(--violet);color:#fff;font:800 .82rem/1 Manrope,system-ui,sans-serif;cursor:pointer}
+.bd-editor-handle{position:absolute;right:0;bottom:0;width:18px;height:18px;z-index:2;cursor:nwse-resize;touch-action:none;border-bottom-right-radius:9px;background:linear-gradient(135deg,transparent 0 50%,var(--violet) 50% 100%)}
+/* диалог «Куда выгрузить материал?» */
+.bd-dialog{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(36,24,61,.45)}
+.bd-dialog[hidden]{display:none}
+.bd-dialog-card{width:min(440px,100%);padding:18px 20px;border-radius:16px;background:#fff;color:#24183d;font-family:Manrope,system-ui,sans-serif;box-shadow:0 24px 60px -20px rgba(0,0,0,.55)}
+.bd-dialog-card h3{margin:0 0 6px;font-size:1.05rem}
+.bd-dialog-note{margin:0 0 10px;font-size:.9rem;line-height:1.45;color:#6a5f84}
+.bd-dialog-files{margin:0 0 14px;max-height:110px;overflow:auto;font-size:.82rem;color:#6a5f84;word-break:break-word}
+.bd-dialog-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.bd-dialog-actions button{border:0;border-radius:10px;padding:9px 14px;background:#f0ecfb;color:#24183d;font:800 .9rem/1.2 Manrope,system-ui,sans-serif;cursor:pointer}
+.bd-dialog-actions button[data-bd-dest="inline"],.bd-dialog-actions button[data-bd-dest="pages"]{background:var(--violet);color:#fff}
+.bd-dialog-actions .bd-dialog-cancel{background:transparent;color:#6a5f84}
 
 .mnemo{border-left:4px solid var(--violet)}
 .mn-list{display:grid;gap:8px;margin-top:6px}

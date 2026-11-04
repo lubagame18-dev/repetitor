@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Стенд доски v54 — проверки</title>
+<link rel="stylesheet" href="../assets/app.css">
+<style>
+  html,body{margin:0;background:var(--base);color:var(--ink);font-family:Manrope,system-ui,sans-serif}
+  .bd-test{display:flex;gap:12px;padding:10px;align-items:flex-start}
+  .bd-pane{flex:0 0 auto}
+  .bd-pane-t{font-size:12px;font-weight:800;color:var(--muted);padding:2px 4px 6px}
+  #pane-teacher{width:1100px}
+  #pane-student{width:380px}
+  #pane-teacher .board{width:1100px}
+  #pane-student .board{width:380px}
+  #bd-status{position:fixed;right:8px;bottom:8px;font-size:11px;background:#fff;border:1px solid #ddd;border-radius:8px;padding:4px 8px;opacity:.85;z-index:2000}
+</style>
+</head>
+<body>
+<div class="bd-test">
+  <div class="bd-pane" id="pane-teacher">
+    <div class="bd-pane-t">Учитель — доска 1100px</div>
+    <div id="bd-teacher" class="board"></div>
+  </div>
+  <div class="bd-pane" id="pane-student">
+    <div class="bd-pane-t">Ученик — доска 380px</div>
+    <div id="bd-student" class="board"></div>
+  </div>
+</div>
+<div id="bd-status">стенд доски v54</div>
+
+<script>
+/* Заглушка pdfjs (CDN в песочнице закрыт): выдаёт 2 страницы для потока «Отдельными листами».
+   Стенд не должен зависеть от сети. */
+window.pdfjsLib = {
+  getDocument() {
+    return {
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage: async (num) => ({
+          getViewport: () => ({ width: 600, height: 800, scale: 1.4 }),
+          render: ({ canvasContext, viewport }) => ({
+            promise: (async () => {
+              canvasContext.fillStyle = "#ffffff";
+              canvasContext.fillRect(0, 0, viewport.width, viewport.height);
+              canvasContext.fillStyle = "#24183d";
+              canvasContext.font = "bold 30px system-ui, sans-serif";
+              canvasContext.fillText("Страница PDF " + num, 40, 90);
+              canvasContext.font = "20px system-ui, sans-serif";
+              canvasContext.fillText("Тестовый документ для проверки доски", 40, 140);
+            })(),
+          }),
+        }),
+      }),
+    };
+  },
+};
+/* Заглушка html2canvas (кнопка 📸 в стенде не нажимается, но пусть не тянет сеть). */
+window.html2canvas = window.html2canvas || (() => Promise.reject(new Error("html2canvas stub")));
+</script>
+<script src="../assets/board.js"></script>
+<script src="board-harness.js"></script>
+<script>
+  try {
+    window.__board.mountBoth();
+    document.getElementById("bd-status").textContent =
+      "стенд доски v54: " + (window.__board.pageButtons("teacher").length) + " листа(ов)";
+  } catch (e) {
+    window.__standError = String(e && e.message || e);
+    document.getElementById("bd-status").textContent = "ОШИБКА: " + window.__standError;
+    console.error(e);
+  }
+</script>
+</body>
+</html>
