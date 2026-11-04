@@ -48,8 +48,21 @@ class CDP {
   on(fn){ this.handlers.add(fn); return () => this.handlers.delete(fn); }
 }
 
+/** свободный CDP-порт: если базовый занят чужим Chrome (параллельный прогон) — берём следующий.
+    Иначе стенд молча подключался бы к чужому браузеру и получал «CDP timeout: Runtime.evaluate». */
+async function freeCdpPort(base){
+  for (let i = 0; i < 20; i++){
+    const p = base + i;
+    let busy = false;
+    try { const r = await fetch(`http://127.0.0.1:${p}/json/version`); busy = !!(r && r.ok); } catch (_) { busy = false; }
+    if (!busy) return p;
+  }
+  throw new Error("CDP-порты " + base + "…" + (base + 19) + " заняты: остановите лишний Chrome или задайте CDP_PORT");
+}
+
 export async function launch({ port = 9333, width = 1440, height = 1000, headless = true, userDataDir, extraArgs = [] } = {}){
   const chrome = findChrome();
+  port = await freeCdpPort(port);
   const dir = userDataDir || fs.mkdtempSync(path.join(os.tmpdir(), "dsh-cdp-"));
   const args = [
     `--remote-debugging-port=${port}`,

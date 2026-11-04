@@ -11,14 +11,22 @@
      Q2) ручное «пройдено»: covered + covered_manual, колонка «Выполнено» не меняется, снятие;
      Q3) ученик проходит тест по прямой ссылке: неверно → объяснение + повтор, повторно неверно →
          «Дальше» и тема needs_work; финиш .quiz-result + rpc quiz_submit;
-     Q4) карта тем у учителя (#qz-map .qz-topic.bad) и у ученика (раздел «Тесты»).
+     Q4) карта тем у учителя (#qz-map .qz-topic.bad) и у ученика (раздел «Тесты»);
+     S1) самообучение, блок ударений: ошибка → подсказка/повтор, 15/15; works self:stress + result kind self;
+     S2) ошибка возвращает слово (+2 повтора), оно не освоено и попадает в errors (Play.stressState);
+     S3) карточки: «Показать ответ» → «Знаю»/«Ещё учить» (возврат карточки) до всех карточек;
+         works self:deck + result kind self (self:cards);
+     S4) «Мои ошибки» собираются из ошибок тренажёров, проход уменьшает items; прогресс подхватывается
+         после перезагрузки; блок «Что подтянуть» (.self-prep).
    Доска в реальном приложении проверяется отдельно стендом _test/board.mjs (board.html).
 
    Запуск: node _test/e2e.mjs            (headless)
            E2E_HEADLESS=0 node _test/e2e.mjs
-           E2E_ONLY=a,b1,Q1 node _test/e2e.mjs
+           E2E_ONLY=a,b1,Q1 node _test/e2e.mjs    (S1–S4 можно гонять отдельно: E2E_ONLY=S)
    Мок Supabase внедряется до скриптов страницы (addScriptToEvaluateOnNewDocument).
-   Порты: 8766 (статика) / 9334 (CDP), чтобы не пересекаться с board.mjs (8765/9333). */
+   Порты: 8766 (статика) / 9334 (CDP), чтобы не пересекаться с board.mjs (8765/9333).
+   Если порт занят другим прогоном — задайте PORT/CDP_PORT (иначе можно подключиться к чужому Chrome
+   и получить серию «CDP timeout: Runtime.evaluate»). */
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -183,6 +191,130 @@ const coveredRow = (page, lid) => page.eval(`(() => {
   const cells = [...tr.children].map(td => (td.textContent || "").trim());
   return { lid: ${JSON.stringify(lid)}, covered: cells[4] || "", done: cells[6] || "", on: b.dataset.on, hasChip: /✓/.test(cells[4] || "") };
 })()`);
+
+/* ---------- самообучение: SELF_DATA, тренажёры Play (оверлей .play-ov) ---------- */
+const ST_VOWELS = "аеёиоуыэюя";
+/** индекс ударной буквы ровно как Play.stParse: заглавная гласная, иначе «ё», иначе 0 */
+function stressIdx(raw){
+  const chars = [...String(raw || "")];
+  let idx = -1;
+  chars.forEach((ch, i) => { const lc = ch.toLowerCase(); if (ST_VOWELS.includes(lc) && ch !== lc) idx = i; });
+  if (idx < 0){ idx = chars.findIndex(c => c.toLowerCase() === "ё"); if (idx < 0) idx = 0; }
+  return idx;
+}
+const stressPlain = raw => [...String(raw || "").toLowerCase()].join("");
+const selfWords = (page, b) => page.eval(`(window.SELF_DATA && window.SELF_DATA.stress.blocks[${b}] && window.SELF_DATA.stress.blocks[${b}].words) || []`);
+const selfDeckData = (page, d) => page.eval(`(window.SELF_DATA && window.SELF_DATA.decks[${d}]) || null`);
+const stressDone = page => page.eval(`!!document.querySelector('.play-ov .play-end')`);
+
+async function selfOpen(page){
+  await page.eval(`(() => { const b = document.querySelector('[data-go="self"]'); if (b) b.click(); return !!b; })()`);
+  await page.waitFor(`document.querySelectorAll('[data-act="self-stress-block"]').length >= 10 ? 1 : 0`,
+    { timeout: 15000, label: "экран самообучения (>=10 блоков ударений)" });
+}
+async function openStressBlock(page, b){
+  await page.eval(`(() => { const x = document.querySelector('[data-act="self-stress-block"][data-b="${b}"]'); if (x) x.click(); return !!x; })()`);
+  await page.waitFor(`document.querySelector('.play-ov .play-body .st-word .st-v') ? 1 : 0`,
+    { timeout: 15000, label: "тренажёр ударений: блок " + b });
+}
+async function waitStressReady(page, timeout = 8000){
+  await page.waitFor(`(() => { const ov = document.querySelector('.play-ov'); if (!ov) return 1; if (ov.querySelector('.play-res')) return 0; return (ov.querySelector('.play-end') || ov.querySelector('.st-word')) ? 1 : 0; })()`,
+    { timeout, label: "следующее слово/финал ударений" });
+}
+async function closePlay(page){
+  await page.eval(`(() => { const ov = document.querySelector('.play-ov'); if (!ov) return false; const x = ov.querySelector('.play-end [data-close]') || ov.querySelector('.play-x'); if (x) x.click(); return true; })()`);
+  await page.waitFor(`!document.querySelector('.play-ov') ? 1 : 0`, { timeout: 6000, label: "оверлей Play закрыт" });
+}
+/** пройти блок ударений кликами по гласным; firstWrong — первый ответ заведомо неверный */
+async function runStressMastery(page, b, { firstWrong = false, maxSteps = 320 } = {}){
+  const words = await selfWords(page, b);
+  assert(Array.isArray(words) && words.length >= 10, "в блоке " + b + " меньше 10 слов: " + JSON.stringify(words));
+  const meta = new Map(words.map(w => [stressPlain(w), { raw: w, idx: stressIdx(w), plain: stressPlain(w) }]));
+  const seen = new Map(); let steps = 0, firstBad = null, wrongDone = false, retryFeedback = false, stateAfterWrong = null;
+  while (steps++ < maxSteps) {
+    if (await stressDone(page)) break;
+    const cur = await page.eval(`(() => { const w = document.querySelector('.play-ov .play-body .st-word'); return w ? w.textContent : null; })()`);
+    assert(cur, "нет текущего слова в тренажёре ударений");
+    const m = meta.get(cur);
+    assert(m, "слово «" + cur + "» не найдено в SELF_DATA блока " + b);
+    seen.set(cur, (seen.get(cur) || 0) + 1);
+    if (!wrongDone && firstWrong) {
+      const k = await page.eval(`[...document.querySelectorAll('.play-ov .st-v')].map(x => +x.dataset.k).find(k => k !== ${m.idx})`);
+      assert(k != null, "не нашли неверную гласную для слова «" + cur + "»");
+      await page.eval(`document.querySelector('.play-ov .st-v[data-k="${k}"]').click(); true`);
+      const bad = await page.waitFor(`(() => { const f = document.querySelector('.play-ov .play-res.bad'); return f ? f.textContent : null; })()`,
+        { timeout: 6000, label: "неверный ответ: подсказка .play-res.bad" });
+      assert(bad.includes(m.raw), "в подсказке нет правильного ударения «" + m.raw + "»: " + JSON.stringify(bad));
+      firstBad = m.plain; wrongDone = true;
+      /* state-хук Play.stressState(): слово не освоено, ошибка записана, повторов +2 (reps = 3) */
+      stateAfterWrong = await page.eval(`(() => { const s = window.Play && Play.stressState && Play.stressState(); return s ? {mastered: s.mastered, errors: s.errors, reps: s.reps, left: s.left, attempts: s.attempts} : null; })()`);
+    } else {
+      await page.eval(`document.querySelector('.play-ov .st-v[data-k="${m.idx}"]').click(); true`);
+      const okText = await page.waitFor(`(() => { const f = document.querySelector('.play-ov .play-res.ok'); return f ? f.textContent : null; })()`,
+        { timeout: 6000, label: "верный ответ: .play-res.ok" });
+      if (firstBad === m.plain && /ещё раз|закрепим/i.test(okText)) retryFeedback = true;
+    }
+    await waitStressReady(page);
+  }
+  assert(await stressDone(page), "тренажёр ударений не дошёл до финала за " + maxSteps + " шагов");
+  return { seen, firstBad, retryFeedback, stateAfterWrong };
+}
+/** пройти колоду карточек (или тренажёр «Мои ошибки»): Показать ответ → Знаю / Ещё учить */
+async function runDeckLoop(page, { firstAgain = false, maxSteps = 400 } = {}){
+  const seen = new Map(); let steps = 0, learnFront = null, backShown = 0;
+  while (steps++ < maxSteps) {
+    if (await page.eval(`!!document.querySelector('.play-ov .play-end')`)) break;
+    const front = await page.eval(`(() => { const f = document.querySelector('.play-ov .play-body .self-front'); return f ? f.textContent : null; })()`);
+    assert(front, "нет .self-front в тренажёре карточек");
+    seen.set(front, (seen.get(front) || 0) + 1);
+    if (await page.eval(`!!document.querySelector('.play-ov [data-show]')`)) {
+      await page.eval(`document.querySelector('.play-ov [data-show]').click(); true`);
+      const back = await page.waitFor(`(() => { const b = document.querySelector('.play-ov .self-back'); return b ? b.textContent : null; })()`,
+        { timeout: 6000, label: "карточка: показан ответ ([data-show])" });
+      assert(back && back.trim().length > 2, "пустой ответ на карточке «" + front + "»");
+      backShown++;
+    }
+    if (!learnFront && firstAgain) { learnFront = front; await page.eval(`document.querySelector('.play-ov [data-again]').click(); true`); }
+    else await page.eval(`document.querySelector('.play-ov [data-know]').click(); true`);
+    await page.waitFor(`(() => { const ov = document.querySelector('.play-ov'); if (!ov) return 1; return (ov.querySelector('.play-end') || ov.querySelector('[data-show]')) ? 1 : 0; })()`,
+      { timeout: 6000, label: "следующая карточка" });
+  }
+  assert(await page.eval(`!!document.querySelector('.play-ov .play-end')`), "колода не дошла до финала за " + maxSteps + " шагов");
+  return { seen, learnFront, backShown };
+}
+/** дождаться строки в mock-БД (прогресс сохраняется с дебаунсом ~700 мс) */
+async function waitMockRow(teacher, table, pred, timeout = 15000){
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    const rows = await teacherDB(teacher, table);
+    const row = rows.find(pred);
+    if (row) return row;
+    await sleep(150);
+  }
+  return null;
+}
+/** вкладка ученика rowA для S-сценариев (в полном прогоне её создаёт Q3) */
+async function ensureSelfStudent({ browser, baseUrl }){
+  if (W.quizTab) return W.quizTab;
+  const page = await browser.newPage("about:blank");
+  W.quizTab = page;
+  await page.inject(seedScript({ db: null, session: null, studentSession: W.studentSession(ROW_A), joinHow: null }), "seed-self.js");
+  await page.inject(MOCK_SRC, "mock-supabase.js");
+  await blockUrls(page);
+  await page.goto(baseUrl + "/index.html");
+  await page.waitFor(`window.__app && window.__app.S && window.__app.S.profile ? 1 : 0`, { timeout: 25000, label: "вкладка ученика rowA (самообучение)" });
+  return page;
+}
+/** дождаться прогресса на КАРТОЧКЕ блока (.self-blocks; в .self-prep такая же кнопка — не путать) */
+async function waitBlockProgress(page, b, want = "15/15", timeout = 8000){
+  const t0 = Date.now(); let last = "";
+  while (Date.now() - t0 < timeout) {
+    last = await page.eval(`(() => { const el = document.querySelector('.self-blocks [data-act="self-stress-block"][data-b="${b}"]'); return el ? (el.getAttribute('data-self-progress') || el.textContent || "") : ""; })()`);
+    if (String(last).includes(want)) return last;
+    await sleep(150);
+  }
+  throw new Error("карточка блока " + b + " не показывает «" + want + "» (сейчас: " + JSON.stringify(last) + ")");
+}
 
 let W = null; // world (db+lessons) — заполняется в runE2E
 
@@ -534,6 +666,111 @@ test("Q4", "Карта тем: у учителя #qz-map .qz-topic.bad с тем
   await page.waitFor(`document.querySelector("#qz-map .qz-topic.bad") ? 1 : 0`, { timeout: 10000, label: "у ученика карта тем с .qz-topic.bad" });
   const sBad = await page.eval(`document.querySelector("#qz-map .qz-topic.bad").textContent`);
   assert(sBad.includes(topic), "у ученика в карте тема не совпала: " + JSON.stringify(sBad) + ", ожидали " + JSON.stringify(topic));
+});
+
+/* ---------- S1–S4: самообучение (блоки ударений, карточки, ошибки, прогресс) ---------- */
+test("S1", "Самообучение: блок ударений — ошибка с подсказкой, повтор, 15/15; прогресс works и результат self сохраняются", async ({ teacher, browser, baseUrl }) => {
+  const page = await ensureSelfStudent({ browser, baseUrl });
+  await selfOpen(page);
+  const blocks = await page.eval(`document.querySelectorAll('[data-act="self-stress-block"]').length`);
+  assert(blocks >= 10, "блоков ударений меньше 10: " + blocks);
+  await openStressBlock(page, 0);
+  const res = await runStressMastery(page, 0, { firstWrong: true });
+  assert(res.firstBad, "не удалось сделать ошибку в блоке: нет .play-res.bad");
+  await page.waitFor(`!!document.querySelector('.play-ov .play-end') ? 1 : 0`, { timeout: 12000, label: "финал блока ударений (.play-end)" });
+  const work = await waitMockRow(teacher, "works", w => w.lesson_id === "self:stress" && +w.task === 0 && w.data && w.data.done === true);
+  assert(work, "не сохранился прогресс works self:stress task=0 done=true: " + JSON.stringify(await teacherDB(teacher, "works")).slice(0, 400));
+  const mastered = work.data.mastered || [];
+  eq(mastered.length, 15, "works self:stress p_data.mastered.length");
+  assert(mastered.every(x => typeof x === "string"), "mastered должен быть массивом слов: " + JSON.stringify(mastered).slice(0, 200));
+  const errs = work.data.errors || {};
+  assert((+errs[res.firstBad] || 0) >= 1, "в p_data.errors нет ошибки «" + res.firstBad + "»: " + JSON.stringify(errs).slice(0, 200));
+  eq(work.data.total, 15, "works self:stress p_data.total");
+  const result = await waitMockRow(teacher, "results", r => r.kind === "self" && String(r.lesson_id).startsWith("self:stress"));
+  assert(result, "нет результата kind self lesson_id self:stress: " + JSON.stringify(await teacherDB(teacher, "results")).slice(0, 400));
+  eq(result.score, 15, "results.score блока ударений");
+  await closePlay(page);
+  await waitBlockProgress(page, 0, "15/15");
+});
+
+test("S2", "Самообучение: ошибка возвращает слово (+2), оно не освоено и попадает в errors; после верного ответа слово ещё раз", async ({ teacher, browser, baseUrl }) => {
+  const page = await ensureSelfStudent({ browser, baseUrl });
+  await selfOpen(page);
+  await openStressBlock(page, 1);
+  const res = await runStressMastery(page, 1, { firstWrong: true });
+  assert(res.firstBad, "нет ошибочного ответа в блоке 1");
+  assert(res.stateAfterWrong, "Play.stressState() не вернул состояние (нет state-хука)");
+  const stWrong = res.stateAfterWrong || {};
+  assert(!((stWrong.mastered || []).map(x => String(x)).includes(res.firstBad)), "после ошибки слово «" + res.firstBad + "» уже освоено: " + JSON.stringify(stWrong.mastered).slice(0, 200));
+  assert((+((stWrong.errors || {})[res.firstBad]) || 0) >= 1, "в Play.stressState().errors нет ошибки «" + res.firstBad + "»: " + JSON.stringify(stWrong.errors).slice(0, 200));
+  assert((+(stWrong.reps || {})[res.firstBad] || 0) >= 3, "после ошибки у слова не +2 повтора (reps=" + JSON.stringify((stWrong.reps || {})[res.firstBad]) + ", ожидали >=3)");
+  assert((res.seen.get(res.firstBad) || 0) >= 2, "слово «" + res.firstBad + "» не появилось повторно (ожидали +2): " + JSON.stringify([...res.seen.entries()].slice(0, 5)));
+  assert(res.retryFeedback, "после ошибки не было пометки «Слово встретится ещё раз – закрепим» (повтор +2)");
+  await page.waitFor(`!!document.querySelector('.play-ov .play-end') ? 1 : 0`, { timeout: 12000, label: "финал блока 1 (.play-end)" });
+  const work = await waitMockRow(teacher, "works", w => w.lesson_id === "self:stress" && +w.task === 1 && w.data && w.data.done === true);
+  assert(work, "не сохранился прогресс works self:stress task=1 done=true");
+  eq((work.data.mastered || []).length, 15, "works task=1 mastered.length");
+  assert((+((work.data.errors || {})[res.firstBad]) || 0) >= 1, "в p_data.errors нет слова с ошибкой «" + res.firstBad + "»: " + JSON.stringify(work.data.errors).slice(0, 200));
+  const result = await waitMockRow(teacher, "results", r => r.kind === "self" && String(r.lesson_id).startsWith("self:stress"));
+  assert(result, "нет результата kind self по блоку 1");
+  eq(result.total, 15, "results.total блока 1");
+  await closePlay(page);
+});
+
+test("S3", "Самообучение: карточки — «Показать ответ», «Ещё учить» возвращает карточку, «Знаю» до всех карточек; прогресс и результат", async ({ teacher, browser, baseUrl }) => {
+  const page = await ensureSelfStudent({ browser, baseUrl });
+  await selfOpen(page);
+  const hasDeck = await page.eval(`!!document.querySelector('[data-act="self-deck"][data-d="0"]')`);
+  assert(hasDeck, "нет колоды «Паронимы» ([data-act=self-deck][data-d=0])");
+  await page.eval(`document.querySelector('[data-act="self-deck"][data-d="0"]').click(); true`);
+  await page.waitFor(`document.querySelector('.play-ov .play-body .self-front') ? 1 : 0`, { timeout: 15000, label: "тренажёр карточек открыт" });
+  const deck = await selfDeckData(page, 0);
+  assert(deck && Array.isArray(deck.cards) && deck.cards.length, "нет SELF_DATA.decks[0]");
+  const total = deck.cards.filter(c => c && c.f).length;
+  const res = await runDeckLoop(page, { firstAgain: true });
+  assert(res.learnFront, "не удалось нажать «Ещё учить» на первой карточке");
+  assert((res.seen.get(res.learnFront) || 0) >= 2, "карточка «Ещё учить» не вернулась в очередь: " + res.learnFront);
+  assert(res.backShown >= total, "карточки показывали ответ реже, чем карточек: " + res.backShown + " из " + total);
+  await page.waitFor(`!!document.querySelector('.play-ov .play-end') ? 1 : 0`, { timeout: 12000, label: "финал колоды (.play-end)" });
+  const work = await waitMockRow(teacher, "works", w => w.lesson_id === "self:deck" && +w.task === 0 && w.data && w.data.done === true);
+  assert(work, "не сохранился прогресс works self:deck task=0 done=true: " + JSON.stringify(await teacherDB(teacher, "works")).slice(0, 400));
+  eq((work.data.mastered || []).length, total, "works self:deck p_data.mastered.length (=все карточки)");
+  const result = await waitMockRow(teacher, "results", r => r.kind === "self" && String(r.lesson_id).startsWith("self:cards"));
+  assert(result, "нет результата kind self lesson_id self:cards (колода): " + JSON.stringify(await teacherDB(teacher, "results")).slice(0, 400));
+  await closePlay(page);
+});
+
+test("S4", "Самообучение: прогресс подхватывается после перезагрузки, «Мои ошибки» собираются и уменьшаются, есть «Что подтянуть»", async ({ teacher, browser, baseUrl }) => {
+  const page = await ensureSelfStudent({ browser, baseUrl });
+  // перезагрузка: прогресс и ошибки должны прийти из student_state.works
+  await page.goto(baseUrl + "/index.html");
+  await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="self"]') ? 1 : 0`,
+    { timeout: 25000, label: "ученик после перезагрузки" });
+  await selfOpen(page);
+  const prep = await page.eval(`(() => { const p = document.querySelector('.self-prep'); return p ? p.textContent : null; })()`);
+  assert(prep && /подтянуть/i.test(prep), "нет блока рекомендаций «Что подтянуть» (.self-prep): " + JSON.stringify(prep));
+  assert(await page.eval(`!!document.querySelector('.self-prep [data-act="self-stress-block"]')`), "в рекомендациях нет кнопки «ударения»");
+  assert(await page.eval(`!!document.querySelector('.self-prep [data-act="self-deck"]')`), "в рекомендациях нет кнопки «карточки»");
+  const label0 = await page.eval(`(() => { const b = document.querySelector('.self-blocks [data-act="self-stress-block"][data-b="0"]'); return b ? (b.getAttribute('data-self-progress') || b.textContent || "") : ""; })()`);
+  assert(/15\s*\/\s*15/.test(label0), "после перезагрузки карточка блока 0 не показывает 15/15 (прогресс не подхватился): " + JSON.stringify(label0));
+  const left0 = +(await page.eval(`(() => { const b = document.querySelector('[data-act="self-errors"]'); if (!b) return 0; return b.getAttribute('data-self-errors-left') || 0; })()`)) || 0;
+  assert(left0 >= 2, "в «Моих ошибках» меньше 2 элементов (ожидали ошибку блока и карточку): " + left0);
+  // проходим «Мои ошибки» (cardDeck по items): все «Знаю»
+  await page.eval(`document.querySelector('[data-act="self-errors"]').click(); true`);
+  await page.waitFor(`document.querySelector('.play-ov .play-body .self-front') ? 1 : 0`, { timeout: 15000, label: "тренажёр «Мои ошибки» открыт (карточки)" });
+  await runDeckLoop(page);
+  const errWork = await waitMockRow(teacher, "works", w => w.lesson_id === "self:errors" && +w.task === 0 && Array.isArray(w.data && w.data.items) && w.data.items.length < left0);
+  assert(errWork, "в works self:errors не уменьшился список items (было " + left0 + "): " + JSON.stringify(await teacherDB(teacher, "works")).slice(0, 500));
+  await closePlay(page);
+  /* после закрытия оверлея счётчик ошибок на экране уменьшился/исчез */
+  const t0 = Date.now();
+  let leftAfter = left0;
+  while (Date.now() - t0 < 8000) {
+    leftAfter = +(await page.eval(`(() => { const b = document.querySelector('[data-act="self-errors"]'); if (!b) return 0; return b.getAttribute('data-self-errors-left') || 0; })()`)) || 0;
+    if (leftAfter < left0) break;
+    await sleep(200);
+  }
+  assert(leftAfter < left0, "после прохождения «Моих ошибок» счётчик data-self-errors-left не уменьшился: было " + left0 + ", стало " + leftAfter);
 });
 
 /* ================= запуск ================= */

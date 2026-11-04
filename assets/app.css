@@ -663,3 +663,17 @@ body.play-open{overflow:hidden}
 .quiz-topics{display:flex;flex-wrap:wrap;gap:6px}
 .quiz-list{display:flex;flex-direction:column;gap:8px}
 .quiz-list .qz-item{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--glass-2);flex-wrap:wrap}
+/* ---------- самообучение: блоки ударений и карточки с повторами ---------- */
+.st-meta{display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;margin:2px 0 6px;letter-spacing:.01em}
+.st-meta b,.self-bar b{font-variant-numeric:tabular-nums;color:var(--ink)}
+.st-tip{text-align:center;margin:0 0 8px}
+.st-acc{color:var(--violet);font-weight:900;letter-spacing:.02em}
+.st-word .st-v:disabled{opacity:1}
+.self-bar{display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;align-items:center;margin:0 0 10px}
+.self-card{border:2px solid var(--hair);border-radius:22px;background:linear-gradient(135deg,color-mix(in srgb,var(--violet) 10%,var(--glass-2)),var(--glass-2));padding:20px 18px;text-align:center;min-height:180px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.self-card.on{background:var(--glass-2);text-align:left}
+.self-front{font-size:1.35rem;font-weight:800;line-height:1.4}
+.self-back{margin-top:6px;border-top:1px dashed var(--line);padding-top:10px}
+.self-answer{font-size:1.05rem;line-height:1.6;white-space:pre-line}
+.self-note{margin-top:6px}
+@media (max-width:560px){.self-front{font-size:1.15rem}.st-word,.st-v{font-size:1.8rem}}

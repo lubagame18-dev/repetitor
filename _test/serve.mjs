@@ -1,7 +1,9 @@
 /* Статический сервер каталога repetitor для проверок (без npm).
    Использование:
-     node _test/serve.mjs            – сервер на http://127.0.0.1:8765
-     import { startServer } from "./serve.mjs" – для run.mjs/board.mjs/e2e.mjs */
+     node _test/serve.mjs            – сервер на http://127.0.0.1:8765 (если занят – следующий свободный)
+     import { startServer } from "./serve.mjs" – для run.mjs/board.mjs/e2e.mjs
+   Если базовый порт занят другим прогоном (например, параллельно запущен run.mjs), сервер
+   автоматически берёт следующий свободный порт (до +20) — так прогоны не мешают друг другу. */
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,8 +36,8 @@ const MIME = {
   ".map": "application/json; charset=utf-8",
 };
 
-export function startServer({ root = REPO_ROOT, port = 8765, host = "127.0.0.1" } = {}) {
-  const server = http.createServer((req, res) => {
+export function startServer({ root = REPO_ROOT, port = 8765, host = "127.0.0.1", autoPort = true, maxTries = 20 } = {}) {
+  const handle = (req, res) => {
     let p;
     try {
       p = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -60,19 +62,33 @@ export function startServer({ root = REPO_ROOT, port = 8765, host = "127.0.0.1" 
     } catch (e) {
       res.writeHead(500); res.end("server error: " + e.message);
     }
-  });
+  };
   return new Promise((resolve, reject) => {
-    server.once("error", err => {
-      if (err && err.code === "EADDRINUSE") reject(new Error(`Порт ${port} занят: остановите старый сервер или задайте PORT`));
-      else reject(err);
-    });
-    server.listen(port, host, () => {
-      const url = `http://${host}:${port}`;
-      resolve({
-        url, server, port,
-        close: () => new Promise(r => server.close(() => r())),
+    let attempt = 0;
+    const tryListen = () => {
+      const want = port + attempt;
+      const server = http.createServer(handle);
+      const onError = err => {
+        if (err && err.code === "EADDRINUSE" && autoPort && attempt < maxTries) {
+          attempt++;
+          setTimeout(tryListen, 25);
+          return;
+        }
+        if (err && err.code === "EADDRINUSE") reject(new Error(`Порт ${want} занят: остановите старый сервер или задайте PORT`));
+        else reject(err);
+      };
+      server.once("error", onError);
+      server.listen(want, host, () => {
+        server.removeListener("error", onError);
+        const actual = server.address().port;
+        const url = `http://${host}:${actual}`;
+        resolve({
+          url, server, port: actual,
+          close: () => new Promise(r => server.close(() => r())),
+        });
       });
-    });
+    };
+    tryListen();
   });
 }
 

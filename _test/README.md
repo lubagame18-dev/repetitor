@@ -1,13 +1,13 @@
-# Стенд проверок repetitor (v57) — `_test/`
+# Стенд проверок repetitor (v58) — `_test/`
 
 Офлайн-проверки актуальной версии сайта «репетитор» (ветка `fix/board-live`) в реальном
 Chrome, без npm и без сети. Три набора идут последовательно:
 
 | набор | файл | что проверяет | браузер |
 |-------|------|---------------|---------|
-| Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `functions.invoke("ai", generate_tasks)` | нет |
+| Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai", generate_tasks)` | нет |
 | Доска | `board.mjs` + `board.html` | 15 сценариев доски: якоря, вложения, текст, живой фон, якоря в пустоте | да |
-| E2E | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q4** | да |
+| E2E | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q4**, **S1–S4** | да |
 
 ## Запуск
 
@@ -16,7 +16,8 @@ cd repetitor-live
 node _test/run.mjs              # всё: mock-selftest + доска + e2e
 node _test/mock-selftest.mjs    # только мок (быстро, Chrome не нужен)
 node _test/board.mjs            # только доска (15/15)
-node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4)
+node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4,S1–S4)
+E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 ```
 
 Полезные переменные окружения:
@@ -24,7 +25,7 @@ node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4)
 | Переменная      | По умолчанию | Что делает                                    |
 |-----------------|--------------|-----------------------------------------------|
 | `BOARD_ONLY`    | (все)        | фильтр сценариев доски: `C`, `F`, `D2,E1`, `G`|
-| `E2E_ONLY`      | (все)        | фильтр e2e: `a,b1`, `Q`, `Q3`                 |
+| `E2E_ONLY`      | (все)        | фильтр e2e: `a,b1`, `Q`, `Q3`, `S`            |
 | `BOARD_HEADLESS`| `1`          | `0` — показать окно браузера (доска)          |
 | `E2E_HEADLESS`  | `1`          | `0` — показать окно браузера (e2e)            |
 | `PORT`          | `8765`/`8766`| статика доски / e2e                           |
@@ -33,10 +34,14 @@ node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4)
 
 Код выхода: `0` — всё прошло, `1` — есть падения, `2` — стенд не поднялся.
 Скриншоты падений — `_test/artifacts/` (создаётся только при падении).
+Порты `PORT`/`CDP_PORT` могут быть заняты параллельным прогоном — стенд автоматически берёт
+следующий свободный (и для статики, и для CDP, до +20) и печатает фактический URL. Это
+исключает прежнюю проблему, когда стенд молча подключался к чужому Chrome и получал серию
+«CDP timeout: Runtime.evaluate».
 
 **Ограничение:** в части сессий субагента Chrome не стартует (mojo/named pipes). В этом
-окружении прогоны из subagent-сессии проходят: **mock-selftest 44/44, доска 15/15, e2e 8/8**,
-три полных прогона `run.mjs` подряд (2026-11-04, v57 + тесты по темам). Если Chrome не
+окружении прогоны из subagent-сессии проходят: **mock-selftest 54/54, доска 15/15, e2e 12/12**,
+три полных прогона `run.mjs` подряд (2026-11-04, v58 + самообучение). Если Chrome не
 поднимается — `node --check _test/*.mjs` и запуск обычной командой из консоли.
 
 ## E2E-сценарии (`e2e.mjs`)
@@ -56,6 +61,10 @@ node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4)
 | **Q2** | **ручное «пройдено»**: `[data-act="covered-toggle"][data-lid][data-on="1"]` → в mock-БД `students.covered[lid]` **и** `covered_manual[lid]`; в карточке чип «✓»; колонка «Выполнено» не изменилась; повторное нажатие (`data-on=0`) снимает обе метки |
 | **Q3** | **ученик проходит тест по прямой ссылке** `index.html?quiz=КОД` (сессия rowA, новая вкладка): тест открывается сам (`S.view="quiz"`), даже если у учителя идёт урок (presence не выдёргивает в комнату); неверный ответ → `.quiz-fb.no` с объяснением + `[data-qretry]`; повторно неверно → `[data-qnext]`, тема в `needsWork`; остальные верно → `.quiz-result[data-qresult]`, `.quiz-score` (score/total/%), «Надо доработать» с `.chip.bad`, `#qz-map .qz-topic.bad`; mock-БД `topic_quiz_results` (score/total, `details.topics[].needsWork`, `needs_work[]`, `details.questions[0].attempts=2`), rpc `quiz_submit` с параметрами ровно `p_code,p_token,p_score,p_total,p_details,p_needs_work` |
 | **Q4** | **карта тем**: у учителя в карточке rowA `#qz-map .qz-topic.bad` с названием заваленной темы и блок `.qz-need` «Надо доработать» (после живого обновления; при необходимости — кнопка «Обновить»); у ученика раздел «Тесты» (`[data-go="quizzes"]`) → `.quiz-list`, `[data-quiz]`, `#qz-map .qz-topic.bad` по `student_quizzes` |
+| **S1** | **блок ударений**: экран `[data-go="self"]` → ≥10 блоков `[data-act="self-stress-block"]`; блок 0 → оверлей Play (`.play-ov .st-word`), клик по заведомо неверной гласной `.st-v[data-k]` → `.play-res.bad` с правильным ударением (`.st-acc`); затем все 15 слов верно; mock-БД `works self:stress` task=0, `data.done=true`, `mastered.length=15`, `errors[слово]>=1`; результат `kind=self`, lesson_id начинается с `self:stress`; после закрытия кнопка блока показывает 15/15 |
+| **S2** | **ошибка = повтор (+2)**: блок 1, первый ответ неверный; `Play.stressState()`: слово НЕ в mastered, `errors[слово]>=1`, `reps[слово]>=3`; фидбек при возврате — «Слово встретится ещё раз – закрепим»; слово появляется ≥2 раз; в works task=1 `done/mastered=15/errors` |
+| **S3** | **карточки**: колода «Паронимы» (`[data-act="self-deck"][data-d="0"]`) → `[data-show]` «Показать ответ» → `.self-back`; «Ещё учить» `[data-again]` возвращает карточку; дальше «Знаю» `[data-know]` до всех карточек; works `self:deck` task=0 `done`, `mastered.length = всех карточек`; результат `kind=self` с `self:cards` |
+| **S4** | **прогресс и «Мои ошибки»**: перезагрузка `index.html` → прогресс подхвачен (кнопка блока 0 = 15/15); блок `.self-prep` «Что подтянуть» с кнопками ударений/карточек; `[data-act="self-errors"][data-self-errors-left=N]` N≥2 (ошибки блоков + карточки); тренажёр «Мои ошибки» (cardDeck по items) пройден → works `self:errors` `items.length` уменьшился, DOM-счётчик уменьшился |
 
 Важные детали e2e:
 - все вкладки одного origin делят `localStorage`, поэтому mock-БД пишется только в пустое
@@ -84,6 +93,11 @@ track/presenceState/subscribe/removeChannel`. Общее состояние вк
   `{quizzes:[{id,title,created_at,topics,questions,last}], results:[{quiz_id,title,score,total,details,needs_work,created_at}]}`;
 - `functions.invoke("ai", {body:{action:"generate_tasks",topic,count,grade}})` → детерминированные
   2–3 вопроса `{q,o:[4],a,e,tag}` в `data.test` (+ `title`/`mini`), как ждёт `teacher.ai()`;
+- **самообучение**: `student_save_work({p_code,p_lesson,p_task,p_data})` — настоящий upsert
+  `works(student_id, lesson_id, task)` (как в schema.sql; тест проверяет дебаунс и повторную
+  запись), `student_submit_result(...)` пишет строку в `results` (`kind="self"` для тренажёров,
+  валидация score/total как в схеме); `student_state` возвращает формы схемы:
+  `works:[{lesson_id,task,data}]`, `results:[{lesson_id,kind,score,total,wrong,created_at,duration_sec}]`;
 - хелперы `window.__MOCK`: `dbTable(name)`, `tables()`, `tokens()`, `reset(seed)`,
   `broadcastLog()`, `cmdList()`, `lastRpc(name)`, `rpcNames()`, `involveLog()`, `channels()`,
   `presenceOf(name)`.
@@ -125,8 +139,8 @@ DOM-селекторы стенда и устройство `board-harness.js` �
 
 - `run.mjs` — полный прогон трёх наборов, итог PASS/FAIL, exit code;
 - `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz);
-- `mock-selftest.mjs` — самопроверка мока без браузера (44 проверки);
-- `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q4;
+- `mock-selftest.mjs` — самопроверка мока без браузера (54 проверки);
+- `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q4,S1–S4;
 - `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 15 сценариев;
 - `cdp.mjs` — мини-драйвер CDP (Chrome, мышь/клавиатура, `Runtime.evaluate`, скриншоты);
 - `serve.mjs` — статический сервер корня worktree (без кэша);

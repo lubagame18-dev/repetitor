@@ -945,15 +945,181 @@ function viewEntry(){
 function selfLessons(){ return (S.course?.lessons || []).filter(l => isOpen(l) && !l.custom); }
 function selfLesson(){ const L = selfLessons(); return L.find(l => l.id === S.selfL) || lastPast() || L[L.length - 1] || null; }
 function selfGames(){ return (S.course?.lessons || []).flatMap(l => (l.materials || []).filter(m => m.kind === "tasks" && m.data?.kind === "game").map(m => ({m, l}))); }
+/* ---------- глубокая база: блоки ударений, колоды карточек, «Мои ошибки» ---------- */
+function selfData(){ return window.SELF_DATA || {stress:{blocks:[]}, decks:[]}; }
+function selfBlocks(){ return selfData().stress?.blocks || []; }
+const selfIsHist = () => { const c = String(S.course?.course || S.profile?.course || ""); return (S.course?.subject || U.subjectOf(c)) === "hist" || c.startsWith("hist"); };
+function selfProg(kind){ return (S.works && S.works["self:" + kind]) || {}; }
+const selfSaveT = {}, selfSaveFailed = {};
+/* прогресс самообучения: сразу в S.works, запись в localStorage и на сервер – с дебаунсом */
+function selfSave(kind, task, data){
+  const lid = "self:" + kind;
+  (S.works[lid] = S.works[lid] || {})[task] = data;
+  const key = lid + ":" + task;
+  const flush = () => {
+    clearTimeout(selfSaveT[key]);
+    try { LS.set("works", S.works); } catch(_){}
+    if (!sb) return;
+    const fail = () => { if (!selfSaveFailed[key]){ selfSaveFailed[key] = true; toast("Прогресс сохранится, когда появится связь."); } };
+    try { sb.rpc("student_save_work", {p_code:S.token, p_lesson:lid, p_task:task, p_data:data}).then(({error}) => { if (error) fail(); }, fail); } catch(_){ fail(); }
+  };
+  clearTimeout(selfSaveT[key]);
+  if (data && data.done) flush();                        // завершение блока/колоды сохраняем сразу
+  else selfSaveT[key] = setTimeout(flush, 700);
+}
+function selfStressState(b){
+  const block = selfBlocks()[b] || {words:[]}, p = selfProg("stress")[b] || {};
+  const mastered = Array.isArray(p.mastered) ? p.mastered : [], errors = p.errors && typeof p.errors === "object" ? p.errors : {};
+  const total = block.words?.length || 0;
+  return {p, mastered, errors, count: mastered.length, total, errTotal: Object.values(errors).reduce((a, x) => a + (+x || 0), 0), done: !!p.done || (total > 0 && mastered.length >= total)};
+}
+function selfDeckState(d){
+  const deck = selfData().decks?.[d] || {cards:[]}, p = selfProg("deck")[d] || {};
+  const mastered = Array.isArray(p.mastered) ? p.mastered : [], errors = p.errors && typeof p.errors === "object" ? p.errors : {};
+  const total = deck.cards?.length || 0;
+  return {p, mastered, errors, count: mastered.length, total, errTotal: Object.values(errors).reduce((a, x) => a + (+x || 0), 0), done: !!p.done || (total > 0 && mastered.length >= total)};
+}
+const selfPlain = w => String(w ?? "").toLowerCase();
+/* колоды: русские всегда, исторические – только на историческом курсе */
+function selfDecks(){
+  const hist = selfIsHist();
+  return (selfData().decks || []).map((d, i) => ({d, i})).filter(x => (x.d.subject || "rus") !== "hist" || hist);
+}
+function selfErrorsItems(){ const d = selfProg("errors")[0]; return d && Array.isArray(d.items) ? d.items : []; }
+/* «Мои ошибки»: объединяем по key, храним не больше 60, свежие – выше */
+function selfErrAdd(items){
+  const list = selfErrorsItems().slice(), at = Date.now();
+  items.forEach(it => {
+    if (!it || !it.key) return;
+    const i = list.findIndex(x => x.key === it.key);
+    if (i >= 0) list[i] = {...list[i], ...it, count: Math.max(+list[i].count || 0, +it.count || 0), at};
+    else list.push({...it, count: +it.count || 1, at});
+  });
+  list.sort((a, b) => (b.at || 0) - (a.at || 0));
+  const out = list.slice(0, 60);
+  selfSave("errors", 0, {items: out, updatedAt: at});
+  return out;
+}
+/* ошибки из onProgress: у ударений ключи – слова, у колод – индексы карточек */
+function selfRemember(kind, source, data){
+  const errs = data?.errors;
+  if (!errs || typeof errs !== "object") return;
+  const items = [];
+  if (kind === "stress"){
+    const words = source?.words || [];
+    Object.keys(errs).forEach(k => {
+      const c = +errs[k] || 0; if (c <= 0) return;
+      const word = words.find(w => selfPlain(w) === selfPlain(k)) || String(k);
+      items.push({kind:"stress", key:"s:" + selfPlain(k), label:selfPlain(word), detail:word, count:c});
+    });
+  } else {
+    const cards = source?.cards || [], id = source?.id || "deck";
+    Object.keys(errs).forEach(k => {
+      const c = +errs[k] || 0, i = +k;
+      if (c <= 0 || !Number.isInteger(i) || i < 0) return;
+      const card = cards[i] || {};
+      items.push({kind:"card", key:"d:" + id + ":" + i, label:String(card.f || ("Карточка " + (i + 1))), detail:String(card.b || ""), count:c});
+    });
+  }
+  if (items.length) selfErrAdd(items);
+}
+function selfBlockHTML(i, block, st){
+  const pctv = st.total ? Math.round(st.count / st.total * 100) : 0;
+  const state = st.done ? "✓ пройден" : st.count ? "продолжить" : "начать";
+  return `<button class="pl-card self-block" data-act="self-stress-block" data-b="${i}" data-self-progress="${st.count}/${st.total}">
+    <div class="row between" style="width:100%;gap:8px"><b style="min-width:0">${esc(block.title)}</b><span class="chip ${st.done ? "good" : ""}">${st.done ? "✓ " : ""}${st.count}/${st.total}</span></div>
+    <div class="progress self-bar" style="margin:8px 0 2px"><i style="width:${pctv}%"></i></div>
+    <span class="small muted">${st.errTotal ? "ошибок: " + st.errTotal : "15 слов в блоке"} · ${state}</span></button>`;
+}
+function selfDeckHTML(i, deck, st){
+  const pctv = st.total ? Math.round(st.count / st.total * 100) : 0;
+  return `<button class="pl-card self-deck" data-act="self-deck" data-d="${i}" data-self-progress="${st.count}/${st.total}">
+    <span class="pl-emo">${esc(deck.emoji || "🃏")}</span><b>${esc(deck.title)}</b><span class="small muted">${esc(deck.note || "")}</span>
+    <div class="progress self-bar" style="margin:8px 0 2px"><i style="width:${pctv}%"></i></div>
+    <span class="row" style="gap:4px;flex-wrap:wrap"><span class="chip ${st.done ? "good" : ""}">${st.done ? "✓ " : ""}${st.count}/${st.total}</span>${st.errTotal ? `<span class="chip bad">ошибок: ${st.errTotal}</span>` : ""}</span></button>`;
+}
+function selfStartStress(b, blocks){
+  const block = (blocks || selfBlocks())[b];
+  if (!block) return;
+  if (!window.Play || typeof Play.stressMastery !== "function"){ toast("Тренажёр ударений обновится после обновления страницы."); return; }
+  const st = selfStressState(b), done = selfDone("self-stress", "");
+  Play.onDone = r => { done(r); setTimeout(() => { if (S.view === "self") render(); }, 150); };
+  Play.stressMastery(block, {
+    progress: {mastered: st.mastered.slice(), errors: {...st.errors}},
+    onProgress: d => { selfSave("stress", b, d); selfRemember("stress", block, d); }
+  });
+}
+function selfStartDeck(d, decks){
+  const deck = (decks || selfData().decks || [])[d];
+  if (!deck) return;
+  if (!window.Play || typeof Play.cardDeck !== "function"){ toast("Карточки обновятся после обновления страницы."); return; }
+  const st = selfDeckState(d), done = selfDone("self-cards", "");
+  Play.onDone = r => { done(r); setTimeout(() => { if (S.view === "self") render(); }, 150); };
+  Play.cardDeck(deck, {
+    progress: {mastered: st.mastered.slice(), errors: {...st.errors}},
+    onProgress: data => { selfSave("deck", d, data); selfRemember("deck", deck, data); }
+  });
+}
+function selfStartErrors(){
+  const items = selfErrorsItems();
+  if (!items.length){ toast("Моих ошибок пока нет – отлично!"); return; }
+  if (!window.Play || typeof Play.cardDeck !== "function"){ toast("Тренажёр обновится после обновления страницы."); return; }
+  const deck = {id:"errors", title:"Мои ошибки", emoji:"🩹", note:"Повтори то, где ошибался.", cards: items.map(it => ({f:String(it.label || ""), b:String(it.detail || "")}))};
+  const done = selfDone("self-cards", "");
+  Play.onDone = r => { done(r); setTimeout(() => { if (S.view === "self") render(); }, 150); };
+  Play.cardDeck(deck, {
+    progress: {mastered: [], errors: {}},
+    onProgress: data => {
+      /* освоенные карточки сразу убираем из «Моих ошибок» (пункт закрыт) */
+      const mastered = Array.isArray(data.mastered) ? data.mastered : [];
+      const left = items.filter((_, i) => !mastered.includes(i));
+      selfSave("errors", 0, {items: left, mastered, errors: {...(data.errors || {})}, attempts: data.attempts, done: !!data.done, at: Date.now()});
+    }
+  });
+}
 function viewSelf(){
   if (!S.course) return noCourse();
   const L = selfLessons(), l = selfLesson(), best = LS.get("self-best", {}) || {};
   const card = (act, emo, h, d, extra = "") => `<button class="pl-card" data-act="${act}" ${extra}><span class="pl-emo">${emo}</span><b>${h}</b><span class="small muted">${d}</span>${best[act] ? `<span class="chip" style="margin-top:4px">лучший: ${esc(best[act])}</span>` : ""}</button>`;
   const games = selfGames(), themes = (window.PLAY_BANKS?.themes || []);
+  const blocks = selfBlocks();
+  const blockStates = blocks.map((b, i) => ({b, i, st: selfStressState(i)}));
+  const nextBlock = blockStates.find(x => !x.st.done) || null;
+  const deckStates = selfDecks().map(x => ({...x, st: selfDeckState(x.i)}));
+  const nextDeck = deckStates.find(x => !x.st.done) || null;
+  const errorsN = selfErrorsItems().length;
+  const OG = window.OGE;
+  let recs = `<p class="small muted">Тренируй базу: ударения и карточки пригодятся на экзамене.</p>`;
+  if (OG && OG.isOge(S.course)){
+    let st = null; try { st = OG.stats(S.course, S.rows, S.writings); } catch(_){}
+    const weak = st ? OG.TASKS.map(([n, name]) => ({n, name, p: st.by[n]?.p})).filter(x => x.p != null && x.p < 75).sort((a, b) => a.p - b.p).slice(0, 3) : [];
+    recs = weak.length
+      ? `<div class="row self-recs" style="gap:6px;flex-wrap:wrap">${weak.map(x => `<button class="btn ghost sm" data-oge-drill="${x.n}">Задание ${x.n}: ${esc(x.name)} — ${x.p}%</button>`).join("")}</div>`
+      : `<p class="small muted">${st ? "Слабых заданий не видно – закрепи результат пробным вариантом." : "Пройди тест или отработку – подскажем слабые задания."}</p>`;
+  }
+  const prep = `<div class="card stack self-prep" style="gap:10px">
+    <div class="kicker">Подготовка к ОГЭ</div>
+    <h3 style="margin:0">Что подтянуть</h3>
+    ${recs}
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      ${nextBlock ? `<button class="btn sm" data-act="self-stress-block" data-b="${nextBlock.i}">${nextBlock.st.count ? "Продолжить ударения" : "Начать ударения"}: ${esc(nextBlock.b.title)}</button>` : blocks.length ? `<span class="chip good">Все блоки ударений пройдены ✓</span>` : ""}
+      ${nextDeck ? `<button class="btn ghost sm" data-act="self-deck" data-d="${nextDeck.i}">Карточки: ${esc(nextDeck.d.title)}</button>` : ""}
+      ${OG && OG.isOge(S.course) ? `<button class="btn ghost sm" data-go="oge">Мой ОГЭ</button>` : ""}
+    </div></div>`;
+  const stressSection = blocks.length ? `<h3 style="margin:18px 0 10px">Ударения ОГЭ</h3>
+    <p class="small muted" style="margin-bottom:10px">Блок закончен, когда все 15 слов отвечены верно; ошибся – слово вернётся ещё два раза. Прогресс сохраняется.</p>
+    <div class="pl-grid self-blocks">${blockStates.map(x => selfBlockHTML(x.i, x.b, x.st)).join("")}</div>` : "";
+  const deckSection = deckStates.length ? `<h3 style="margin:18px 0 10px">Карточки-запоминалки</h3>
+    <p class="small muted" style="margin-bottom:10px">Открывай карточку, вспоминай ответ и отмечай «Знаю» или «Ещё учить». Колода освоена, когда все карточки отмечены «Знаю».</p>
+    <div class="pl-grid self-decks">${deckStates.map(x => selfDeckHTML(x.i, x.d, x.st)).join("")}
+      ${errorsN ? `<button class="pl-card self-errors" data-act="self-errors" data-self-errors-left="${errorsN}"><span class="pl-emo">🩹</span><b>Мои ошибки</b><span class="small muted">Слова и карточки, где ты ошибался – повтори и закрой их</span><span class="chip bad">${errorsN}</span></button>` : ""}</div>` : "";
   return `<div class="section-title" style="margin-top:6px"><h2>Самообучение</h2></div>
-    <p class="muted" style="margin-bottom:12px">Тренируйся сам: повторяй теорию, проверяй себя, играй. Учитель видит, что ты занимался.</p>
-    ${L.length ? `<div class="card" style="margin-bottom:14px"><label for="self-l" class="small"><b>Урок для тренировки</b></label>
-      <select id="self-l" style="width:100%;margin-top:6px">${L.map(x => `<option value="${x.id}" ${x === l ? "selected" : ""}>${esc(x.title)}</option>`).join("")}</select></div>` : `<div class="card" style="margin-bottom:14px"><p class="muted">Уроки откроются в дни занятий – а пока можно тренировать ударения, орфографию и играть.</p></div>`}
+    <p class="muted" style="margin-bottom:12px">Глубокая подготовка: блоки ударений, карточки-запоминалки и работа над своими ошибками. Учитель видит, что ты занимался.</p>
+    ${prep}
+    ${stressSection}
+    ${deckSection}
+    ${L.length ? `<div class="card" style="margin:16px 0 14px"><label for="self-l" class="small"><b>Урок для тренировки</b></label>
+      <select id="self-l" style="width:100%;margin-top:6px">${L.map(x => `<option value="${x.id}" ${x === l ? "selected" : ""}>${esc(x.title)}</option>`).join("")}</select></div>` : `<div class="card" style="margin:16px 0 14px"><p class="muted">Уроки откроются в дни занятий – а пока тренируй ударения, карточки и играй.</p></div>`}
     <h3 style="margin:6px 0 10px">По уроку</h3>
     <div class="pl-grid" style="margin-bottom:18px">
       ${l ? card("self-trainer", "🎯", "Тренажёр урока", "Теория по шагам, вопросы с подсказками и работа над ошибками") : ""}
@@ -965,7 +1131,7 @@ function viewSelf(){
     </div>
     <h3 style="margin:6px 0 10px">Тренировки</h3>
     <div class="pl-grid" style="margin-bottom:18px">
-      ${card("self-stress", "🔊", "Карточки ударений", "Нажми на ударную гласную: звони́т, то́рты, щаве́ль…")}
+      ${card("self-stress", "🔊", "Ударения: быстрый режим", "Случайные слова из базы – на скорость")}
       ${card("self-spell", "✍️", "Вставь букву", "Орфография: корни, приставки, суффиксы, Н и НН, Ь")}
     </div>
     ${games.length ? `<h3 style="margin:6px 0 10px">Игры от учителя</h3><div class="pl-grid" style="margin-bottom:18px">${games.map(({m, l: gl}) => `<button class="pl-card" data-play-game="${m.id}"><span class="pl-emo">🎮</span><b>${esc(m.title || m.data.theme?.title || "Игра")}</b><span class="small muted">${esc(gl.title)}</span></button>`).join("")}</div>` : ""}
@@ -1005,6 +1171,10 @@ function selfDone(act, lid){
 function selfAct(a, t){
   const l = selfLesson();
   Play.onDone = selfDone(a, ["self-stress", "self-spell", "self-mix"].includes(a) ? "" : l?.id);
+  /* глубокое самообучение: блоки ударений, колоды карточек, «Мои ошибки» */
+  if (a === "self-stress-block"){ selfStartStress(+t.dataset.b); return; }
+  if (a === "self-deck"){ selfStartDeck(+t.dataset.d); return; }
+  if (a === "self-errors"){ selfStartErrors(); return; }
   if (a === "self-trainer") Play.trainer(l);
   if (a === "self-tf") Play.tfCards(l.title, Play.tfFromQuiz(Play.quizFromLessons([l])));
   if (a === "self-cards") Play.flashcards(l.title, Play.cardsFromLessons([l]));

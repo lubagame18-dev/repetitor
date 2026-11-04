@@ -217,5 +217,29 @@ ok(tqIns.data && tqIns.data.id === "qzmock02" && tqIns.data.teacher_id === TEACH
 const legacyQuizzes = await teacher.client.from("quizzes").select("*");
 ok(!legacyQuizzes.error && Array.isArray(legacyQuizzes.data) && legacyQuizzes.data.length === 0, "legacy-таблица quizzes мок-БД не затрагивается (пустая)", legacyQuizzes.data);
 
+// 12. самообучение: student_save_work (works upsert) и student_submit_result (kind self), как в schema.sql
+const STRESS_DATA = { done: true, mastered: ["аэропОрты", "бАнты"], errors: { "дОговор": 2 }, at: "2026-11-04T20:00:00.000Z" };
+const sw1 = await student.client.rpc("student_save_work", { p_code: TOKEN_B, p_lesson: "self:stress", p_task: 0, p_data: STRESS_DATA });
+ok(!sw1.error && sw1.data === null, "student_save_work self:stress принят (void)", sw1);
+const worksRows = student.win.__MOCK.dbTable("works");
+ok(worksRows.length === 1 && worksRows[0].lesson_id === "self:stress" && +worksRows[0].task === 0 && worksRows[0].data.done === true && worksRows[0].data.mastered.length === 2, "student_save_work записал works self:stress", worksRows);
+const sw2 = await student.client.rpc("student_save_work", { p_code: TOKEN_B, p_lesson: "self:stress", p_task: 0, p_data: { ...STRESS_DATA, done: false } });
+ok(!sw2.error && student.win.__MOCK.dbTable("works").length === 1 && student.win.__MOCK.dbTable("works")[0].data.done === false, "повторный student_save_work обновляет ту же строку (upsert)", sw2.error);
+const stSelf = await student.client.rpc("student_state", { p_code: TOKEN_B });
+const savedWork = stSelf.data && (stSelf.data.works || []).find(w => w.lesson_id === "self:stress" && +w.task === 0);
+ok(savedWork && savedWork.data && Array.isArray(savedWork.data.mastered), "student_state.works возвращает прогресс самообучения", savedWork);
+const sr = await student.client.rpc("student_submit_result", { p_code: TOKEN_B, p_lesson: "self:stress:0", p_score: 15, p_total: 15, p_wrong: ["дОговор"], p_kind: "self" });
+ok(!sr.error && sr.data === null, "student_submit_result kind self принят (void)", sr);
+const resRows = student.win.__MOCK.dbTable("results");
+ok(resRows.length === 1 && resRows[0].lesson_id === "self:stress:0" && resRows[0].kind === "self" && resRows[0].score === 15 && resRows[0].total === 15 && resRows[0].wrong[0] === "дОговор", "result kind self записан в results", resRows);
+const stSelf2 = await student.client.rpc("student_state", { p_code: TOKEN_B });
+ok(stSelf2.data && stSelf2.data.results.some(r => r.kind === "self" && r.lesson_id === "self:stress:0" && r.score === 15), "student_state.results содержит результат self", stSelf2.data && stSelf2.data.results);
+const tRes = await teacher.client.from("results").select("*").eq("student_id", ROW_B).eq("kind", "self");
+ok(tRes.data && tRes.data.length === 1 && tRes.data[0].lesson_id === "self:stress:0", "учитель видит self-результат через from(results)", tRes.data);
+const swBad = await student.client.rpc("student_save_work", { p_code: TOKEN_B, p_lesson: "self:stress", p_task: 1, p_data: { big: "x".repeat(51000) } });
+ok(!!swBad.error, "student_save_work слишком большие data → error (too big)", swBad.error);
+const srBad = await student.client.rpc("student_submit_result", { p_code: TOKEN_B, p_lesson: "self:stress:0", p_score: 5, p_total: 3, p_kind: "self" });
+ok(!!srBad.error, "student_submit_result score > total → error (bad score)", srBad.error);
+
 console.log(`\nИтог self-test мока: ${passed}/${passed + failed} PASS, ${Date.now() - t0} мс`);
 process.exit(failed ? 1 : 0);

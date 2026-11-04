@@ -333,14 +333,19 @@
       const row = rowByToken(p_code);
       if (!row) return null;
       const profile = profileOf(row);
+      /* формы как в schema.sql (student_state): works -> [{lesson_id,task,data}],
+         results -> [{lesson_id,kind,score,total,wrong,created_at,duration_sec}] */
       return {
         profile,
-        results: table("results").filter(r => eq(r.student_id, row.id)),
+        results: table("results").filter(r => eq(r.student_id, row.id)).map(r => ({
+          lesson_id: r.lesson_id, kind: r.kind || "lesson", score: r.score, total: r.total,
+          wrong: r.wrong || [], created_at: r.created_at, duration_sec: r.duration_sec == null ? null : r.duration_sec,
+        })),
         homework: table("homework").filter(r => eq(r.student_id, row.id)),
         sheets: table("sheets").filter(r => eq(r.student_id, row.id)),
         writings: table("writings").filter(r => eq(r.student_id, row.id)),
         materials: table("materials"),
-        works: table("works").filter(r => eq(r.student_id, row.id)),
+        works: table("works").filter(r => eq(r.student_id, row.id)).map(w => ({ lesson_id: w.lesson_id, task: +w.task || 0, data: w.data || {} })),
         course_data: courseDataFor(profile.course),
       };
     },
@@ -428,8 +433,35 @@
       return { quizzes, results };
     },
     student_ping: () => true,
-    student_save_work: () => true,
-    student_submit_result: () => true,
+    /* прогресс самообучения/уроков: upsert works(student_id, lesson_id, task), как в schema.sql */
+    student_save_work: ({ p_code, p_lesson, p_task, p_data }) => {
+      const row = rowByToken(p_code);
+      if (!row) throw new Error("unknown code");
+      const data = p_data && typeof p_data === "object" ? p_data : {};
+      if (JSON.stringify(data).length > 50000) throw new Error("too big");
+      const lesson = String(p_lesson == null ? "" : p_lesson).slice(0, 40);
+      const task = +p_task || 0;
+      const rec = { student_id: row.id, lesson_id: lesson, task, data, updated_at: new Date().toISOString() };
+      const ex = table("works").find(w => eq(w.student_id, row.id) && w.lesson_id === lesson && (+w.task || 0) === task);
+      if (ex) Object.assign(ex, rec); else { rec.id = nextId(); table("works").push(rec); }
+      saveDB();
+      return null;                                              // функция возвращает void
+    },
+    /* результат тренажёра/теста: строка в results (kind 'self' для самообучения), как в schema.sql */
+    student_submit_result: ({ p_code, p_lesson, p_score, p_total, p_wrong, p_kind, p_duration, p_answers }) => {
+      const row = rowByToken(p_code);
+      if (!row) throw new Error("unknown code");
+      const score = +p_score, total = +p_total;
+      if (!(Number.isFinite(score) && Number.isFinite(total) && score >= 0 && total > 0 && total <= 100 && score <= total)) throw new Error("bad score");
+      table("results").push({
+        id: nextId(), student_id: row.id, lesson_id: String(p_lesson == null ? "" : p_lesson).slice(0, 40),
+        kind: String(p_kind || "lesson"), score, total,
+        wrong: Array.isArray(p_wrong) ? p_wrong : [], duration_sec: p_duration == null ? null : +p_duration,
+        answers: p_answers == null ? null : p_answers, created_at: new Date().toISOString(),
+      });
+      saveDB();
+      return null;
+    },
     student_submit_homework: () => true,
     student_submit_writing: () => true,
     student_set_mascot: () => true,

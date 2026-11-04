@@ -6,7 +6,7 @@ window.Play = (() => {
   const mk = s => (window.U && U.mark) ? U.mark(s) : esc(s);
   const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const check = (ans, right) => (window.U && U.miniCheck) ? U.miniCheck(ans, right) : String(ans).trim().toLowerCase() === String(right).split("|")[0].toLowerCase();
-  let ov = null, onDone = null, timers = [], missed = [];
+  let ov = null, onDone = null, timers = [], missed = [], stSnap = null, cdSnap = null;
   const miss = t => { if (t && missed.length < 40) missed.push(String(t).replace(/\s+/g, " ").slice(0, 140)); };
   const clearTimers = () => { timers.forEach(t => clearInterval(t)); timers = []; };
 
@@ -208,6 +208,189 @@ window.Play = (() => {
     next();
   }
 
+  /* ---------- ударения по блокам: блок пройден, когда все слова отвечены верно ---------- */
+  const ST_VOWELS = "аеёиоуыэюя";
+  function stParse(word){
+    const chars = [...String(word || "")], low = chars.map(c => c.toLowerCase());
+    let idx = -1;
+    chars.forEach((ch, i) => { const lc = ch.toLowerCase(); if (ST_VOWELS.includes(lc) && ch !== lc) idx = i; });
+    if (idx < 0){ idx = low.findIndex(c => c === "ё"); if (idx < 0) idx = 0; }
+    return {word: chars.join(""), plain: low.join(""), chars: low, idx};
+  }
+  const stErrCount = errors => Object.values(errors || {}).reduce((a, b) => a + (+b || 0), 0);
+  function stressMastery(block, o){
+    o = o || {};
+    const title = (block && block.title) || "Ударения";
+    const body = shell(title, "Ударения ОГЭ");
+    const words = ((block && block.words) || []).map(stParse).filter(w => w.plain);
+    const total = words.length;
+    if (!total){ body.innerHTML = `<p class="muted">В этом блоке пока нет слов.</p>`; return; }
+    const valid = new Set(words.map(w => w.plain));
+    let mastered = new Set(((o.progress && o.progress.mastered) || []).map(String).filter(p => valid.has(p)));
+    let errors = {...((o.progress && o.progress.errors) || {})};
+    let attempts = 0, queue = [], finished = false, advance = 0;
+    stSnap = () => ({block: block ? {id: block.id, title: block.title, size: total} : null, mastered: [...mastered], left: queue.length,
+      queue: queue.map(x => x.plain), reps: Object.fromEntries(queue.map(x => [x.plain, x.reps])), errors: {...errors}, attempts, total,
+      done: finished || (total > 0 && mastered.size >= total)});
+    const report = done => { try { o.onProgress && o.onProgress({mastered: [...mastered], errors: {...errors}, attempts, done: !!done, total}); } catch(_){} };
+    const statLine = () => `освоено ${mastered.size} из ${total} · в очереди ${queue.length} · ошибок ${stErrCount(errors)}`;
+    const fill = () => shuffle(words.filter(w => !mastered.has(w.plain)).map(w => ({...w, reps: 1})));
+    const counters = () => {
+      const put = (sel, v) => { const el = body.querySelector(sel); if (el) el.textContent = String(v); };
+      put("[data-st-mastered]", mastered.size); put("[data-st-left]", queue.length); put("[data-st-errors]", stErrCount(errors));
+      put("[data-st-queue]", queue.length); put("[data-st-round]", attempts);
+    };
+    function finishRun(){
+      if (finished) return;
+      finished = true;
+      report(true);
+      const wrong = [...new Set(missed)].filter(Boolean);
+      const extra = wrong.length ? `<p class="small" style="margin-top:6px">Повторим: ${wrong.map(esc).join(", ")}</p>` : "";
+      finish(body, title, total, total, extra).then(r => {
+        if (r === "again"){ mastered = new Set(); errors = {}; attempts = 0; finished = false; queue = fill(); next(); }
+      });
+    }
+    function next(){
+      if (finished) return;
+      if (!ov || ov.querySelector(".play-body") !== body) return;
+      clearTimeout(advance); advance = 0;
+      if (!queue.length){
+        if (attempts > 0 && mastered.size >= total){ finishRun(); return; }
+        prog(total, total); stat(`освоено ${mastered.size} из ${total} · в очереди 0 · ошибок ${stErrCount(errors)}`);
+        body.innerHTML = `<div class="play-end"><div class="play-emo">🏆</div><h3>Блок уже освоен</h3><p class="muted">Все ${total} слов этого блока отвечены верно.</p>
+          <div class="st-meta small muted" style="justify-content:center"><span>освоено <b data-st-mastered>${mastered.size}</b> из ${total}</span><span>в очереди <b data-st-left>0</b></span><span>ошибок <b data-st-errors>${stErrCount(errors)}</b></span></div>
+          <div class="row" style="gap:8px;justify-content:center;margin-top:12px"><button class="btn" data-start data-st-start>Пройти заново</button><button class="btn ghost" data-close>Закрыть</button></div></div>`;
+        body.querySelector("[data-start]").onclick = () => { mastered = new Set(); errors = {}; attempts = 0; finished = false; report(false); queue = fill(); next(); };
+        body.querySelector("[data-close]").onclick = () => close();
+        return;
+      }
+      const e = queue[0];
+      prog(mastered.size, total); stat(statLine());
+      body.innerHTML = `<div class="st-meta small muted"><span>освоено <b data-st-mastered>0</b> из ${total}</span><span>в очереди <b data-st-left>0</b></span><span>ошибок <b data-st-errors>0</b></span><span hidden data-st-queue>0</span><span hidden data-st-round>0</span></div>
+        <div class="st-meta small muted" style="text-align:center">Слово ${mastered.size + 1} из ${total}</div>
+        <p class="play-q">Нажми на ударную гласную:</p>
+        <div class="st-word">${e.chars.map((ch, k) => ST_VOWELS.includes(ch) ? `<button class="st-v" data-k="${k}" aria-label="буква ${k + 1}">${ch}</button>` : `<span>${esc(ch)}</span>`).join("")}</div>
+        <div class="st-tip small muted">Ударная – одна из гласных. Выбери её.</div>
+        <div class="play-fb" aria-live="polite"></div>`;
+      counters();
+      const fb = body.querySelector(".play-fb");
+      const answer = k => {
+        if (finished || queue[0] !== e) return;
+        attempts++;
+        const good = k === e.idx;
+        body.querySelectorAll(".st-v").forEach(b => { b.disabled = true; if (+b.dataset.k === e.idx) b.classList.add("ok"); });
+        if (!good){ const b = body.querySelector(`.st-v[data-k="${k}"]`); if (b) b.classList.add("bad"); }
+        queue.shift();
+        if (good){
+          if (e.reps > 1) queue.push({...e, reps: e.reps - 1});
+          else mastered.add(e.plain);
+        } else {
+          errors[e.plain] = (errors[e.plain] || 0) + 1;
+          miss(e.word);
+          queue.push({...e, reps: e.reps + 2});
+        }
+        report(false); prog(mastered.size, total); stat(statLine()); counters();
+        fb.innerHTML = (good
+          ? `<div class="play-res ok"><b>Верно!</b>${e.reps > 1 ? " Слово встретится ещё раз – закрепим." : ""}</div>`
+          : `<div class="play-res bad"><b>Неверно.</b> Правильно: <b class="st-acc">${esc(e.word)}</b><div class="small">Запомни: ударение на «${esc(e.chars[e.idx].toUpperCase())}».</div></div>`)
+          + `<button class="btn play-next" data-st-next style="margin-top:10px">Дальше →</button>`;
+        let gone = false;
+        const go = () => { if (gone) return; gone = true; clearTimeout(advance); advance = 0; if (ov && ov.querySelector(".play-body") === body) next(); };
+        fb.querySelector("[data-st-next]").onclick = go;
+        advance = setTimeout(go, good ? 900 : 1200);
+      };
+      body.querySelectorAll(".st-v").forEach(b => b.onclick = () => answer(+b.dataset.k));
+    }
+    report(false);
+    queue = fill();
+    next();
+  }
+  function stressState(){ return stSnap ? stSnap() : null; }
+
+  /* ---------- карточки с повторами: «Знаю / Ещё учить» ---------- */
+  function cardDeck(deck, o){
+    o = o || {};
+    const title = (deck && deck.title) || "Карточки";
+    const body = shell(title, "Карточки-запоминалки");
+    const cards = ((deck && deck.cards) || []).filter(c => c && c.f);
+    const total = cards.length;
+    if (!total){ body.innerHTML = `<p class="muted">В этой колоде пока нет карточек.</p>`; return; }
+    let mastered = new Set(((o.progress && o.progress.mastered) || []).map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < total));
+    let errors = {...((o.progress && o.progress.errors) || {})};
+    let attempts = 0, queue = [], finished = false;
+    cdSnap = () => ({deck: deck ? {id: deck.id, title: deck.title, size: total} : null, known: [...mastered], left: queue.length,
+      queue: queue.map(x => x.i), reps: Object.fromEntries(queue.map(x => [x.i, x.reps])), repeats: {...errors}, errors: {...errors},
+      attempts, total, done: finished || (total > 0 && mastered.size >= total)});
+    const report = done => { try { o.onProgress && o.onProgress({mastered: [...mastered], errors: {...errors}, attempts, done: !!done, total}); } catch(_){} };
+    const fill = () => shuffle(cards.map((_, i) => i).filter(i => !mastered.has(i)).map(i => ({i, reps: 1})));
+    const counters = () => {
+      const put = (sel, v) => { const el = body.querySelector(sel); if (el) el.textContent = String(v); };
+      put("[data-cd-known]", mastered.size); put("[data-cd-left]", queue.length); put("[data-cd-learn-count]", stErrCount(errors));
+    };
+    const bar = revealed => `<div class="self-bar small muted"><span>освоено <b data-cd-known>0</b> из ${total}</span><span>в очереди <b data-cd-left>0</b></span><span>ошибок <b data-cd-learn-count>0</b></span><span>Карточка ${mastered.size + 1} из ${total}</span></div>`;
+    function finishRun(){
+      if (finished) return;
+      finished = true;
+      report(true);
+      const wrong = [...new Set(missed)].filter(Boolean);
+      const extra = wrong.length ? `<p class="small" style="margin-top:6px">Повторим: ${wrong.map(esc).join("; ")}</p>` : "";
+      finish(body, title, total, total, extra).then(r => {
+        if (r === "again"){ mastered = new Set(); errors = {}; attempts = 0; finished = false; queue = fill(); next(); }
+      });
+    }
+    function show(entry, revealed){
+      const c = cards[entry.i];
+      prog(mastered.size, total);
+      stat(`освоено ${mastered.size} из ${total} · в очереди ${queue.length} · ошибок ${stErrCount(errors)}`);
+      body.innerHTML = `${bar(revealed)}
+        <div class="self-card cd-card ${revealed ? "on" : ""}"><div class="kicker">Вопрос</div><div class="self-front cd-front">${esc(c.f)}</div>
+          ${revealed ? `<div class="self-back cd-back"><div class="self-answer cd-answer">${esc(c.b || "")}</div>${c.e ? `<div class="self-note small muted">${esc(c.e)}</div>` : ""}</div>` : ""}</div>
+        ${revealed
+          ? `<div class="row" style="gap:8px;justify-content:center;margin-top:12px"><button class="btn" data-know data-cd-know>✓ Знаю</button><button class="btn ghost" data-again data-cd-learn>↻ Ещё учить</button></div>`
+          : `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" data-show data-cd-show>Показать ответ</button></div>`}`;
+      counters();
+      if (!revealed){
+        const sb = body.querySelector("[data-show]"); sb.onclick = () => show(entry, true); sb.focus(); return;
+      }
+      body.querySelector("[data-know]").onclick = () => answer(entry, true);
+      body.querySelector("[data-again]").onclick = () => answer(entry, false);
+    }
+    function answer(entry, know){
+      if (finished || queue[0] !== entry) return;
+      attempts++;
+      queue.shift();
+      if (know){
+        if (entry.reps > 1) queue.push({...entry, reps: entry.reps - 1});
+        else mastered.add(entry.i);
+      } else {
+        errors[entry.i] = (errors[entry.i] || 0) + 1;
+        miss(cards[entry.i].f);
+        queue.push({...entry, reps: entry.reps + 2});
+      }
+      report(false); counters();
+      next();
+    }
+    function next(){
+      if (finished) return;
+      if (!ov || ov.querySelector(".play-body") !== body) return;
+      if (!queue.length){
+        if (attempts > 0 && mastered.size >= total){ finishRun(); return; }
+        prog(total, total); stat(`освоено ${mastered.size} из ${total} · ошибок ${stErrCount(errors)}`);
+        body.innerHTML = `<div class="play-end"><div class="play-emo">🏆</div><h3>Колода уже освоена</h3><p class="muted">Все ${total} карточек отмечены «Знаю».</p>
+          <div class="self-bar small muted" style="justify-content:center"><span>освоено <b data-cd-known>${mastered.size}</b> из ${total}</span><span>в очереди <b data-cd-left>0</b></span><span>ошибок <b data-cd-learn-count>${stErrCount(errors)}</b></span></div>
+          <div class="row" style="gap:8px;justify-content:center;margin-top:12px"><button class="btn" data-start data-cd-start>Пройти заново</button><button class="btn ghost" data-close>Закрыть</button></div></div>`;
+        body.querySelector("[data-start]").onclick = () => { mastered = new Set(); errors = {}; attempts = 0; finished = false; report(false); queue = fill(); next(); };
+        body.querySelector("[data-close]").onclick = () => close();
+        return;
+      }
+      show(queue[0], false);
+    }
+    report(false);
+    queue = fill();
+    next();
+  }
+  function cardDeckState(){ return cdSnap ? cdSnap() : null; }
+
   /* ---------- орфография: вставь букву ---------- */
   function spell(items){
     const body = shell("Вставь букву", "Орфография");
@@ -315,6 +498,7 @@ window.Play = (() => {
 
   return {
     trainer, quizRun, tfCards, flashcards, stress, spell, game, chooseGame, close, GAMES, gamesFor, parseTheme,
+    stressMastery, cardDeck, stressState, cardDeckState,
     quizFromLessons, tfFromQuiz, cardsFromLessons, quizOf, pairsOf,
     set onDone(f){ onDone = f; }, get onDone(){ return onDone; }
   };
