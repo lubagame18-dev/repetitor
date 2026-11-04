@@ -7,7 +7,7 @@ const RECOVERY = /type=recovery/.test(location.hash), LINK_ERR = /error_descript
 const sb = U.supa();
 const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
-           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false};
+           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null};
 const $ = s => document.querySelector(s);
 const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
 const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered,school,avatar";
@@ -844,12 +844,15 @@ function viewRoom(){
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
       ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : ""}</div>
   ${r.take ? `<div class="card" style="margin-bottom:14px"><div class="kicker">Сегодня – урок из другого класса или предмета</div><p class="small muted">Урок встанет на сегодняшнее занятие, папки по плану сдвинутся на следующие.</p>${takePick(s, "room")}</div>` : ""}
-  <div class="room room-one">
+  <div class="room">
     <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head row between" style="gap:8px;flex-wrap:wrap"><h1 style="font-size:1.25rem">${esc(l.title)}</h1>
       <span class="row" style="gap:8px;align-items:center"><span class="small muted" data-where="${s.id}">${where ? `Ученик сейчас: ${esc(where.where || "")}` : "Ученик пока не на уроке"}</span>
       <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок и этот лист">➜ Перенести ученика сюда</button></span></div>
       <p class="small muted room-hint">Урок прямо на доске: листы вверху – теория, задания, тест, письмо. 👆 – работать с листом (нажимать, вписывать), ✎ – писать поверх. Ученик видит тот же лист.</p>
       <div class="pane"><div class="board glass" id="board"></div></div></article>
+    ${tabs.length ? `<article class="window glass room-side" style="--c:${blockOf(c, l).color}">
+      <div class="tabs" role="group" aria-label="Разделы урока">${tabs.map(([k, n]) => `<button data-act="room-tab" data-tab="${k}" aria-pressed="${tab === k}">${n}</button>`).join("")}</div>
+      <div class="pane"><p class="small muted" style="margin-bottom:8px">Заметки учителя: ключи, ответы, ход теста и подсказки. На доске слева – лист ученика (чтобы пометки совпадали).</p><div class="room-pane">${roomPane(s, c, l, tab)}</div></div></article>` : ""}
   </div>`;
 }
 function render(){
@@ -1229,7 +1232,16 @@ function onlineNow(){
   Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role !== "student") return;
     T.online[p.id] = p; const me = T.students.find(x => x.id === p.id);
     if (me) T.students.filter(x => person(x) === person(me)).forEach(x => { if (!T.online[x.id]) T.online[x.id] = p; }); });
+  /* «Показать ученику», нажатое пока ученик был не в сети: досылаем, как только он зашёл */
+  const now = new Set(Object.keys(T.online).filter(k => !k.startsWith("p:")));
+  if (T.lastShow && Date.now() - T.lastShow.at < 15 * 60e3){
+    [T.lastShow.id, T.lastShow.pair].filter(Boolean).forEach(id => {
+      if (now.has(id) && !showPrev.has(id)) cmd(id, "goto", T.lastShow.payload);
+    });
+  }
+  showPrev = now;
 }
+let showPrev = new Set();
 /* точечно обновляем значки «онлайн», не перерисовывая страницу (чтобы не сбить ввод и доску) */
 function paintOnline(){
   document.querySelectorAll("[data-where]").forEach(el => { const p = T.online[el.dataset.where]; el.textContent = p ? "Ученик сейчас: " + (p.where || "") : "Ученик пока не на уроке"; });
@@ -1402,9 +1414,12 @@ document.addEventListener("click", async e => {
   if (t.dataset.sub){ T.sub = t.dataset.sub; render(); return; }
   if (t.dataset.goto){
     const s = T.students.find(x => x.id === T.sel);
-    cmd(s.id, "goto", {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page});
-    if (s.pair_id) cmd(s.pair_id, "goto", {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page});
-    toast(T.online[s.id] ? "Урок открыт у ученика" : "Ученик сейчас не в сети – урок откроется, когда он зайдёт и вы нажмёте ещё раз"); return;
+    if (!s) return;
+    const payload = {lesson: t.dataset.goto, sub: t.dataset.sub2 || "theory", page: t.dataset.page};
+    cmd(s.id, "goto", payload);
+    if (s.pair_id) cmd(s.pair_id, "goto", payload);
+    T.lastShow = {at: Date.now(), id: s.id, pair: s.pair_id || null, payload};   // досылаем, если ученик зайдёт позже
+    toast(T.online[s.id] ? "Урок открыт у ученика" : "Ученик сейчас не в сети – урок откроется сам, как только он зайдёт"); return;
   }
   if (t.dataset.workfor){ T.workLesson = t.dataset.workfor; T.view = "work"; render(); scrollTo(0, 0); return; }
   if (t.dataset.boardfor === "free"){ cmd(T.sel, "goto", {lesson: "free"}); const s = T.students.find(x => x.id === T.sel); if (s?.pair_id) cmd(s.pair_id, "goto", {lesson: "free"}); }

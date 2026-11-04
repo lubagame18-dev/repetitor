@@ -1,4 +1,4 @@
-/* Простой запуск проверок доски v54.
+/* Простой запуск проверок доски v55.
    Использование: node _test/run.mjs   (то же, что node _test/board.mjs)
    Пробрасывает BOARD_ONLY/BOARD_HEADLESS/PORT/CDP_PORT из окружения. */
 import { runBoardStandalone } from "./board.mjs";

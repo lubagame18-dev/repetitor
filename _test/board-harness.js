@@ -19,6 +19,7 @@
   const HUB = (() => {
     const channels = new Set();
     let chSeq = 0;
+    const log = [];              // журнал доставленных broadcast-сообщений (для диагностики bg/bgreq)
 
     function makeChannel(name, cfg) {
       cfg = cfg || {};
@@ -59,6 +60,11 @@
     }
     function deliver(from, msg) {
       if (!msg || msg.type !== "broadcast") return;
+      /* журнал: тесты/диагностика видят, что реально ушло по каналу (bg/bgreq/ev …) */
+      try {
+        log.push({ at: Date.now(), event: msg.event, payload: clone(msg.payload) });
+        if (log.length > 400) log.splice(0, log.length - 400);
+      } catch (_) {}
       channels.forEach(ch => {
         if (ch === from || ch.name !== from.name) return;
         ch.handlers.filter(h => h.kind === "broadcast" && h.filter.event === msg.event)
@@ -69,8 +75,13 @@
       makeChannel,
       removeChannel: ch => channels.delete(ch),
       presenceState,
-      reset: () => channels.clear(),
+      reset: () => { channels.clear(); log.length = 0; },
       count: () => channels.size,
+      log,
+      clearLog: () => { log.length = 0; },
+      /** сообщения канала (опционально — только payload.type / event) */
+      messages: (type) => log.map(x => x.payload).filter(p => p && (type == null || p.type === type)),
+      sent: (type) => log.some(x => x.payload && x.payload.type === type),
     };
   })();
 
@@ -103,18 +114,63 @@
   function clearStore() { store.clear(); idSeq = 1; }
 
   /* ---------- листы доски для стенда ---------- */
+  /* ВАЖНО: у .sentence пустой «промежуток» снизу (margin-bottom:150px) — это нужно сценарию G
+     («якорь в пустом месте»): точка ниже текста не принадлежит ни одному дочернему элементу,
+     поэтому старый anchorAt() цеплялся к .bd-sheet и штрих «уезжал» при сдвиге макета. */
   function pagesFor() {
     return [
       {
         key: "theory", label: "Теория",
         html: '<div class="bd-sheet"><h2>Правило</h2>' +
           '<p>Первое предложение листа для проверки якоря.</p>' +
-          '<p class="sentence">Яблоко лежит на столе.</p>' +
+          '<p class="sentence" style="margin-bottom:150px">Яблоко лежит на столе.</p>' +
           '<p>Третье предложение.</p></div>',
       },
       { key: "p2", label: "Лист 2", html: '<div class="bd-sheet"><h2>Лист 2</h2><p>Текст второго листа.</p></div>' },
       { key: "blank", label: "Чистый лист", html: '<div class="bd-sheet bd-lined"></div>' },
     ];
+  }
+
+  /* ---------- «живой урок»: РАЗНЫЙ HTML листа у учителя и ученика ----------
+     В приложении teacher.js рисует живой лист через roomPane() (ключи/ответы — TEACHER-KEYS),
+     а student.js — через lessonPane() (STUDENT-SHEET). Раньше из-за этого совпадали только
+     абсолютные координаты, но не текст под штрихом. Стенд повторяет этот раскол: у учителя
+     лист заметно длиннее и с другими блоками, у ученика — свой набор/порядок и высота.
+     live-функции обязаны работать и на detached-элементе: board.js рисует в него лист,
+     отвечая на "bgreq", когда страница у ученика не открыта. */
+  const LIVE_PAGES = ["theory"];
+  function teacherLiveHtml(key) {
+    return '<div class="bd-sheet bd-live" data-live="teacher">' +
+      '<h2>TEACHER-KEYS · Теория</h2>' +
+      '<p id="teacher-note">Ключи и ответы учителя (roomPane, панель комнаты).</p>' +
+      '<div class="bd-live-keys"><p>1) Ответ A</p><p>2) Ответ B</p><p>3) Ответ C</p><p>4) Ответ D</p></div>' +
+      '<p>Длинный блок пояснений учителя, которого нет в листе ученика.</p>' +
+      '<p>Ещё один абзац учителя: у ученика такого блока нет.</p>' +
+      '<p>Комментарий к домашнему заданию и критерии оценивания.</p>' +
+      '</div>';
+  }
+  function studentLiveHtml(key) {
+    return '<div class="bd-sheet bd-live" data-live="student">' +
+      '<h2>STUDENT-SHEET · Теория</h2>' +
+      '<p id="student-sent" style="margin-bottom:130px">Предложение листа ученика для проверки.</p>' +
+      '<p>Второй абзац ученика.</p>' +
+      '<div class="bd-live-extra"><p>Пометка ученика в конце листа.</p></div>' +
+      '</div>';
+  }
+  function liveHtml(side, key) { return side === "teacher" ? teacherLiveHtml(key) : studentLiveHtml(key); }
+  /** карта live-функций для Board.mount: live[key] = host => host.innerHTML = ... */
+  function liveMap(side) {
+    const m = {};
+    LIVE_PAGES.forEach(key => {
+      m[key] = host => { host.innerHTML = liveHtml(side, key); };
+    });
+    return m;
+  }
+  /** отрисовать live-лист в detached-контейнер (эмуляция ответа на "bgreq", когда лист не открыт) */
+  function liveRenderDetached(side, key) {
+    const d = document.createElement("div");
+    liveMap(side)[key](d);
+    return d.innerHTML;
   }
 
   /* ---------- заглушка U (board.js ждёт U.toast/theoryHTML/practiceHTML) ---------- */
@@ -129,6 +185,7 @@
   /* ---------- монтирование досок ---------- */
   const ROOT_IDS = { teacher: "bd-teacher", student: "bd-student" };
   const handles = { teacher: null, student: null };
+  const mountOpts = { teacher: { live: false, page: "theory" }, student: { live: false, page: "theory" } };
   window.__boards = { teacher: null, student: null };
 
   function root(side) { return document.getElementById(ROOT_IDS[side]); }
@@ -167,19 +224,27 @@
     await sleep(150);
   }
 
-  function mountBoard(side) {
+  /** opts: { live:boolean, page:string, pages:[...] } — режим запоминается до remount */
+  function mountBoard(side, opts) {
     const el = root(side);
     if (!el) throw new Error("Нет контейнера " + ROOT_IDS[side]);
+    opts = opts || {};
+    const prev = mountOpts[side];
+    const live = opts.live != null ? !!opts.live : !!prev.live;
+    const page = opts.page ? String(opts.page) : (prev.page || "theory");
+    mountOpts[side] = { live, page };
     el.innerHTML = "";
-    const h = window.Board.mount(el, {
+    const cfg = {
       api,
       channelName: CHANNEL,
       sb: { channel: (n, c) => HUB.makeChannel(n, c), removeChannel: ch => HUB.removeChannel(ch) },
       role: side,
       name: side === "teacher" ? "Любовь Игоревна" : "Ученик",
-      pages: pagesFor(),
-      page: "theory",
-    });
+      pages: opts.pages || pagesFor(),
+      page,
+    };
+    if (live) cfg.live = liveMap(side);
+    const h = window.Board.mount(el, cfg);
     if (!h) throw new Error("Board.mount(«" + side + "») вернул пустое значение");
     handles[side] = h;
     window.__boards[side] = h;
@@ -192,10 +257,66 @@
     const el = root(side);
     if (el) el.innerHTML = "";
   }
-  function mountBoth() { destroyBoard("teacher"); destroyBoard("student"); mountBoard("teacher"); mountBoard("student"); return true; }
-  async function mountBothReady() { mountBoth(); await settle(["teacher", "student"]); return true; }
+  /** opts: { live:boolean, pages:{teacher,student}, page:{teacher,student} } — по умолчанию статический режим */
+  function mountBoth(opts) {
+    opts = opts || {};
+    const pp = opts.page || {};
+    const pages = opts.pages || {};
+    const live = opts.live != null ? !!opts.live : false;
+    destroyBoard("teacher"); destroyBoard("student");
+    mountBoard("teacher", { live, page: pp.teacher || "theory", pages: pages.teacher });
+    mountBoard("student", { live, page: pp.student || "theory", pages: pages.student });
+    return true;
+  }
+  async function mountBothReady(opts) { mountBoth(opts); await settle(["teacher", "student"]); return true; }
+  /** «живой урок»: обе доски с РАЗНЫМ live-HTML (teacher TEACHER-KEYS / student STUDENT-SHEET) */
+  async function mountLiveBoth(opts) {
+    opts = opts || {};
+    mountBoth({ live: true, page: { teacher: opts.teacherPage || "theory", student: opts.studentPage || "theory" } });
+    await settle(["teacher", "student"]);
+    return true;
+  }
+  /** только учитель в live-режиме (вариант F4 «без ученика») */
+  async function mountLiveTeacher(opts) {
+    opts = opts || {};
+    destroyBoard("teacher"); destroyBoard("student");
+    mountBoard("teacher", { live: true, page: opts.page || "theory" });
+    await settle(["teacher"]);
+    return true;
+  }
+  /** досадить ученика в live-режиме, НЕ трогая уже смонтированного учителя (сценарий «учитель открыл первым») */
+  async function mountLiveStudent(opts) {
+    opts = opts || {};
+    destroyBoard("student");
+    mountBoard("student", { live: true, page: opts.page || "theory" });
+    await settle(["student"]);
+    return true;
+  }
   function remount(side) { destroyBoard(side); mountBoard(side); return true; }
   async function remountReady(side) { remount(side); await settle([side]); return true; }
+
+  /** SMOKE: проверить, что Board.keep() переиспользует тот же инстанс и release() его убирает */
+  function keepProbe(side) {
+    if (typeof window.Board.keep !== "function" || typeof window.Board.release !== "function") {
+      return { ok: false, hasKeep: typeof window.Board.keep === "function", hasRelease: typeof window.Board.release === "function", err: "Board.keep/release отсутствуют" };
+    }
+    const host = document.createElement("div");
+    host.className = "bd-keep-probe";
+    host.style.cssText = "position:absolute;left:-3000px;top:0;width:420px;height:300px;overflow:hidden";
+    document.body.appendChild(host);
+    const opts = {
+      api, channelName: CHANNEL + "-probe",
+      sb: { channel: (n, c) => HUB.makeChannel(n, c), removeChannel: ch => HUB.removeChannel(ch) },
+      role: side, name: "probe", pages: pagesFor(), page: "p2",
+    };
+    let a = null, b = null, err = null;
+    try { a = window.Board.keep(host, "probe-" + side, opts); b = window.Board.keep(host, "probe-" + side, opts); }
+    catch (e) { err = String(e && e.message || e); }
+    const same = !!(a && b && a === b);
+    try { window.Board.release(); } catch (_) {}
+    try { host.remove(); } catch (_) {}
+    return { ok: !err, same, err, hasKeep: true, hasRelease: true };
+  }
 
   /* ---------- геометрия (логические координаты листа) ---------- */
   function cvRect(side) { const c = cv(side); return c ? c.getBoundingClientRect() : null; }
@@ -276,6 +397,19 @@
   function toolbarText(side) {
     const r = root(side);
     return [...(r ? r.querySelectorAll("button") : [])].map(textOf);
+  }
+  /** выбрать инструмент по data-tool (например "pen"); учтите: live-лист по умолчанию включает 👆 touch */
+  function setTool(side, name) {
+    const r = root(side);
+    const b = r && r.querySelector('[data-tool="' + name + '"]');
+    if (!b) return false;
+    b.click();
+    return true;
+  }
+  function currentTool(side) {
+    const r = root(side);
+    const b = r && r.querySelector('[data-tool][aria-pressed="true"]');
+    return b ? b.dataset.tool : null;
   }
 
   /* ---------- окошко-редактор текста (.bd-editor) ---------- */
@@ -402,6 +536,121 @@
   }
   async function whenIdle(side) { await idleOf(handles[side]); return true; }
 
+  /* ---------- единый фон «живого» листа (bg / bgreq) ---------- */
+  function bgEl(side) {
+    const r = root(side);
+    return r ? r.querySelector(".bd-bg") : null;
+  }
+  /** HTML фона доски (то, что реально нарисовано под canvas) */
+  function bgHtml(side) {
+    const el = bgEl(side);
+    return el ? el.innerHTML : "";
+  }
+  /** "remote" (лист ученика), "own" (свой live-лист) или "static" (обычный лист) */
+  function bgSource(side) {
+    const i = info(side);
+    return i && i.bgSource != null ? String(i.bgSource) : null;
+  }
+  function bgDebug(side) {
+    const d = debug(side);
+    return d && d.remoteBgPages != null ? d.remoteBgPages : null;
+  }
+  function waitBgSource(side, want, timeout) {
+    const t0 = Date.now(), lim = timeout || 6000;
+    return (async () => {
+      while (Date.now() - t0 < lim) {
+        if (bgSource(side) === want) return true;
+        await sleep(80);
+      }
+      throw new Error("bgSource(«" + side + "») не стал «" + want + "» за " + lim + "мс (сейчас: " + String(bgSource(side)) + ")");
+    })();
+  }
+  function waitBgContains(side, text, timeout) {
+    const t0 = Date.now(), lim = timeout || 6000;
+    return (async () => {
+      while (Date.now() - t0 < lim) {
+        const h = bgHtml(side);
+        if (h.indexOf(text) >= 0) return true;
+        await sleep(80);
+      }
+      throw new Error("в фоне «" + side + "» нет «" + text + "» за " + lim + "мс (html " + bgHtml(side).length + " симв.)");
+    })();
+  }
+  /** дождаться, пока доска откроет лист key */
+  function waitPage(side, key, timeout) {
+    const t0 = Date.now(), lim = timeout || 6000;
+    return (async () => {
+      while (Date.now() - t0 < lim) {
+        const i = info(side);
+        if (i && i.page === key) return true;
+        await sleep(60);
+      }
+      throw new Error("доска «" + side + "» не открыла лист «" + key + "» за " + lim + "мс (page=" + JSON.stringify(info(side) && info(side).page) + ")");
+    })();
+  }
+  /** что за элемент листа закреплён якорем i (data-bd) на этой стороне */
+  function elementAtAnchor(side, i) {
+    if (i == null || i === "") return null;
+    const r0 = root(side), els = r0 && [...r0.querySelectorAll("[data-bd]")];
+    const el = els && els.find(e => +e.getAttribute("data-bd") === +i);
+    if (!el) return null;
+    const c = cvRect(side), s = scaleOf(side);
+    const rr = el.getBoundingClientRect();
+    return {
+      tag: el.tagName,
+      cls: String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || ""),
+      id: el.id || "",
+      text: (el.textContent || "").trim().slice(0, 80),
+      x: c && s ? (rr.left - c.left) / s : null,
+      y: c && s ? (rr.top - c.top) / s : null,
+      w: s ? rr.width / s : null,
+      h: s ? rr.height / s : null,
+    };
+  }
+  /** какой элемент листа лежит под логической точкой: для проверки «в каком элементе штрих».
+     Считаем геометрически (самый маленький содержащий элемент), как anchorAt в board.js:
+     так результат не зависит от прокрутки/pointer-events и одинаков на обеих досках. */
+  const CONTENT_TAGS = { P: 1, LI: 1, TD: 1, TH: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, TABLE: 1, IMG: 1, PRE: 1, BLOCKQUOTE: 1, FIGCAPTION: 1, IFRAME: 1, VIDEO: 1 };
+  function elementUnderPoint(side, lx, ly) {
+    const c = cvRect(side), s = scaleOf(side), r0 = root(side);
+    if (!c || !s || !r0) return null;
+    let best = null, area = Infinity;
+    r0.querySelectorAll(".bd-bg [data-bd]").forEach(el => {
+      const r = el.getBoundingClientRect();
+      const x = (r.left - c.left) / s, y = (r.top - c.top) / s, w = r.width / s, h = r.height / s;
+      if (w <= 0 && h <= 0) return;
+      if (lx >= x && lx <= x + w && ly >= y && ly <= y + h) {
+        const a = w * h;
+        if (a < area) { area = a; best = { el, box: { x, y, w, h } }; }
+      }
+    });
+    if (!best) return { tag: "(ничего)", cls: "", id: "", text: "", insideGap: true };
+    const el = best.el;
+    const cls = String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || "");
+    const isRoot = /(^|\s)(bd-sheet|bd-live|bd-bg)(\s|$)/.test(cls);
+    return {
+      tag: el.tagName, cls, id: el.id || "", text: (el.textContent || "").trim().slice(0, 60),
+      box: best.box,
+      /* пустое место: под точкой только корневая обёртка листа, а не абзац/текст */
+      insideGap: isRoot || (!CONTENT_TAGS[el.tagName] && !el.children.length && !(el.textContent || "").trim()),
+    };
+  }
+  /** журнал сообщений fake-канала (payloads), можно фильтровать по payload.type */
+  function channelLog(type) { return HUB.messages(type == null ? null : type); }
+  function channelHas(type) { return HUB.log.some(x => x.payload && x.payload.type === type); }
+  function channelClear() { HUB.clearLog(); return true; }
+  /** подождать, пока по каналу уйдёт сообщение типа type */
+  function waitChannel(type, timeout) {
+    const t0 = Date.now(), lim = timeout || 6000;
+    return (async () => {
+      while (Date.now() - t0 < lim) {
+        if (channelHas(type)) return true;
+        await sleep(60);
+      }
+      throw new Error("по каналу не ушло сообщение «" + type + "» за " + lim + "мс");
+    })();
+  }
+
   /* ---------- вложения: File в странице + attach(files) ---------- */
   function makeFile(f) {
     const bin = atob(f.b64 || "");
@@ -432,14 +681,18 @@
   }
 
   window.__board = {
-    LESSON, CHANNEL, W, PAGE_HTML_MAX, PAGE_KEY, sleep, clone,
+    LESSON, CHANNEL, W, PAGE_HTML_MAX, PAGE_KEY, LIVE_PAGES, sleep, clone,
     HUB, api, store, dump, storeAll, seed, clearStore,
-    pagesFor, mountBoard, destroyBoard, mountBoth, mountBothReady, remount, remountReady, handles, toasts,
+    pagesFor, teacherLiveHtml, studentLiveHtml, liveHtml, liveMap, liveRenderDetached,
+    mountOpts, mountBoard, destroyBoard, mountBoth, mountBothReady, mountLiveBoth, mountLiveTeacher, mountLiveStudent,
+    remount, remountReady, keepProbe, handles, toasts,
     root, cv, scaleOf, cvRect, point, logicalRect, ink, canvasInk,
-    findButton, clickButton, toolbarText,
+    findButton, clickButton, toolbarText, setTool, currentTool,
     textEditor, editorBoxNow, editorFocused, isVisible,
-    shiftLayout, relayout, pageButtons, pageKeys, currentPage, openPage,
+    shiftLayout, relayout, pageButtons, pageKeys, currentPage, openPage, waitPage,
     info, debug, whenIdle, ready: () => Promise.all([readyOf(handles.teacher, "teacher"), readyOf(handles.student, "student")]),
+    bgEl, bgHtml, bgSource, bgDebug, waitBgSource, waitBgContains, elementAtAnchor, elementUnderPoint,
+    channelLog, channelHas, channelClear, waitChannel,
     makeFile, attachFiles,
   };
 })();

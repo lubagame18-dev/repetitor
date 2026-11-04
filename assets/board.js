@@ -10,7 +10,19 @@
    * вложения – диалог «Куда выгрузить материал?»: на этот лист (без наложений) или
      отдельными листами; html листа обрезается ≤55000, data-URL картинок ≤52000;
    * инструмент «Переместить» (✥) таскает картинки и надписи (api.add + api.remove + broadcast);
-   * хуки для тестов: mount() возвращает info/whenIdle/attach/addPage/openPage. */
+   * ЕДИНЫЙ ФОН ЖИВОГО ЛИСТА: на уроке живой лист у учителя и ученика собирается по-разному
+     (у учителя – ключи/ответы/заметки), поэтому одинаковые координаты штриха попадали в разные
+     места. Теперь ученик – источник правды для фона: он присылает html листа по каналу
+     ("bg" {page,html,rev}, дебаунс 240 мс, без повторов), учитель показывает ровно этот html
+     и просит лист через "bgreq" {page}, если ученик ещё не присылал (в т.ч. отрисовка в
+     detached div для не открытой у ученика страницы). Свои пометки учителя (штрихи/надписи)
+     остаются объектами доски и синхронизируются как раньше; ключи/ответы/заметки учитель
+     видит в панели урока. Без второго участника всё работает как раньше;
+   * ЯКОРЯ В ПУСТЫХ МЕСТАХ: если пометка стоит в пустоте (самый маленький содержащий элемент –
+     корневой .bd-sheet/обёртка > ~40% листа), якорь берётся у ближайшего содержательного блока
+     (p, li, td/th, h1-h4, table, img, div с текстом): предпочтительно выше точки, иначе ниже;
+   * хуки для тестов: mount() возвращает info/whenIdle/attach/addPage/openPage, info().bgSource
+     ("remote"|"own"|"static"), debug().remoteBgPages. */
 window.Board = (() => {
   const W = 800;                        // логическая ширина листа
   const COLORS = ["#24183d", "#7b4cf5", "#ee5fa8", "#1f9d55", "#d6334a"];
@@ -51,6 +63,20 @@ window.Board = (() => {
     const me = rid();
     let channel = null, lastCursor = 0, lastDraft = 0, draftBuf = [];
     const imgCache = new Map(); const pageCache = new Map();
+
+    /* ---------- общий фон «живого» листа: ученик – источник правды ----------
+       На уроке живой лист собирается по-разному: у учителя roomPane (ключи, ответы, подсказки,
+       заметки), у ученика lessonPane (пустые поля, задания). Поэтому одинаковые координаты штриха
+       попадали в разные места. Теперь ученик присылает свой html листа учителю, и учитель на доске
+       показывает ровно его. Свои пометки учителя (штрихи/надписи) остаются обычными объектами
+       доски и синхронизируются как раньше; ключи/ответы учитель видит в панели урока. */
+    const isTeacher = o.role === "teacher", isStudent = o.role === "student";
+    const remoteBg = new Map();        // page -> html, присланный учеником (только у учителя)
+    const liveBgCache = new Map();     // page -> html, отрисованный учеником для ответа на bgreq
+    const lastBgSent = new Map();      // page -> подпись уже отправленного html (без повторов)
+    const BG_MAX = 300000;             // предохранитель: слишком большой html не гоняем по каналу
+    let bgSource = "static";           // "remote" | "own" | "static" – что сейчас на фоне
+    let bgSendT = 0, bgReqT = 0, bgReqPage = "", bgReqAt = 0;
 
     root.innerHTML = `
       <div class="bd-bar">
@@ -97,7 +123,7 @@ window.Board = (() => {
       const br = bg.getBoundingClientRect();
       bdBoxes = bdEls.map(el => {
         const r = el.getBoundingClientRect();
-        const b = {el, x:(r.left - br.left) / scale, y:(r.top - br.top) / scale, w:r.width / scale, h:r.height / scale};
+        const b = {el, x:(r.left - br.left) / scale, y:(r.top - br.top) / scale, w:r.width / scale, h:r.height / scale, content:isContentBlock(el)};
         const i = +el.getAttribute("data-bd");
         if (Number.isFinite(i)) bdMap.set(i, b);
         return b;
@@ -119,6 +145,37 @@ window.Board = (() => {
       if (!dx && !dy) return s.p || [];
       return (s.p || []).map(([x, y]) => [x + dx, y + dy]);
     }
+    /* содержательный блок листа: к нему привязываем пометку, если она стоит «в пустоте».
+       Корневые обёртки (.bd-sheet, прямые дети фона) и пустые контейнеры сюда не входят. */
+    const CONTENT_TAGS = {P:1, LI:1, TD:1, TH:1, H1:1, H2:1, H3:1, H4:1, H5:1, H6:1, TABLE:1, IMG:1, PRE:1, BLOCKQUOTE:1, FIGCAPTION:1, IFRAME:1, VIDEO:1};
+    function isContentBlock(el){
+      if (!el || !el.tagName) return false;
+      if (el.parentElement === bg) return false;                        // корневая обёртка листа
+      const tag = el.tagName;
+      if (el.classList && (el.classList.contains("bd-sheet") || el.classList.contains("bd-embed"))) return false;
+      if (CONTENT_TAGS[tag]) return true;
+      if (tag === "DIV" || tag === "SECTION" || tag === "ARTICLE" || tag === "FIGURE"){
+        if (!oneLine(el.textContent)) return false;                     // пустая обёртка
+        return !el.querySelector("p,li,div,section,article,h1,h2,h3,h4,table,img,pre,blockquote,iframe,video");
+      }
+      return false;
+    }
+    /* ближайший по вертикали содержательный блок: предпочитаем тот, что выше точки, иначе ниже */
+    function nearestContent(p, skip){
+      let above = null, below = null;
+      for (const b of bdBoxes){
+        if (b === skip || !b.content || b.w <= 0 || b.h <= 0) continue;
+        const bottom = b.y + b.h, top = b.y;
+        if (bottom <= p[1] + 2){
+          const d = p[1] - bottom;
+          if (!above || d < above.d || (d === above.d && b.w * b.h < above.area)) above = {b, d, area:b.w * b.h};
+        } else if (top >= p[1] - 2){
+          const d = top - p[1];
+          if (!below || d < below.d || (d === below.d && b.w * b.h < below.area)) below = {b, d, area:b.w * b.h};
+        }
+      }
+      return above ? above.b : (below ? below.b : null);
+    }
     function anchorAt(p){
       let best = null, area = Infinity;
       for (const b of bdBoxes){
@@ -127,6 +184,13 @@ window.Board = (() => {
           const a = b.w * b.h;
           if (a < area){ area = a; best = b; }
         }
+      }
+      /* «в пустоте» самый маленький содержащий элемент – это весь лист или обёртка:
+         тогда привязываем пометку к ближайшему содержательному блоку (обычно к абзацу выше),
+         чтобы при сдвиге макета она осталась сразу после нужного текста, а не уехала от него */
+      if (best && !best.content){
+        const near = nearestContent(p, best);
+        if (near) best = near;
       }
       if (!best) return null;
       const i = +best.el.getAttribute("data-bd");
@@ -308,9 +372,130 @@ window.Board = (() => {
     /* «живые» листы: урок прямо на доске (теория, задания, тест, письмо) – отвечать можно в самом листе, рисовать – поверх */
     let live = o.live || {};
     function paintLive(force){
+      /* учитель: если ученик уже присылал этот лист – показываем ровно его html (один и тот же фон
+         у обеих сторон), а свои ключи/заметки учитель видит в панели урока */
+      if (isTeacher && remoteBg.has(page)){
+        const html = remoteBg.get(page);
+        const busy = !force && bg.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+        if (!busy && bg.innerHTML !== html){
+          const y = scrollY;
+          try { bg.innerHTML = html; } catch(e) { console.warn(e); }
+          if (scrollY !== y) scrollTo(0, y);
+          boxesDirty = true;
+        }
+        bgSource = "remote";
+        cancelBgReq();
+        return true;
+      }
       const fn = live[page]; if (!fn) return false;
       if (!force && bg.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return true;
-      const y = scrollY; try { fn(bg); } catch(e) { console.warn(e); } if (scrollY !== y) scrollTo(0, y); return true;
+      const y = scrollY; try { fn(bg); } catch(e) { console.warn(e); } if (scrollY !== y) scrollTo(0, y);
+      bgSource = "own";
+      if (isTeacher) requestBg(page);          // свой вариант – только до ответа ученика
+      else if (isStudent) bgSendSoon(page);    // ученик делится листом с учителем
+      return true;
+    }
+
+    /* ---------- общий фон живого листа: ученик присылает html, учитель просит его ---------- */
+    function bgSignature(html){
+      const s = String(html || "");
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+      return s.length + ":" + h;
+    }
+    /* html живого листа у ученика: текущая страница – как есть, другая – рисуем в detached div */
+    function liveHtmlFor(k){
+      k = String(k || page);
+      if (k === page) return bg.innerHTML;
+      const cached = liveBgCache.get(k);
+      if (cached != null) return cached;
+      const fn = live[k];
+      if (!fn) return null;
+      const d = document.createElement("div");
+      fn(d);
+      const html = d.innerHTML;
+      liveBgCache.set(k, html);
+      return html;
+    }
+    function bgSendSoon(k){
+      if (!isStudent || !channel) return;
+      k = String(k || page);
+      clearTimeout(bgSendT);
+      bgSendT = setTimeout(() => { bgSendT = 0; sendBgNow(k); }, 240);
+    }
+    /* ученик: после отрисовки живого листа отправляем его html учителю (без повторов) */
+    function sendBgNow(k){
+      if (!isStudent || !channel) return;
+      k = String(k || page);
+      if (!live[k]) return;                    // у статичных листов html и так одинаковый у обеих сторон
+      try {
+        const html = liveHtmlFor(k);
+        if (html == null || html.length > BG_MAX) return;
+        const sig = bgSignature(html);
+        if (lastBgSent.get(k) === sig) return;
+        lastBgSent.set(k, sig);
+        send("bg", {page:k, html, rev:Date.now()});
+      } catch(e) { try { console.warn("bg", e); } catch(_) {} }
+    }
+    /* ученик: учитель просит лист (bgreq) – отвечаем даже для не текущей страницы */
+    function answerBgReq(k){
+      if (!isStudent || !channel) return;
+      k = String(k || page);
+      try {
+        const html = liveHtmlFor(k);
+        if (html == null || html.length > BG_MAX) return;
+        lastBgSent.set(k, bgSignature(html));
+        send("bg", {page:k, html, rev:Date.now()});
+      } catch(e) { try { console.warn("bgreq", e); } catch(_) {} }
+    }
+    /* учитель: приняли лист ученика – сохраняем и, если он открыт, показываем */
+    function applyRemoteBg(k, html){
+      if (!isTeacher || typeof html !== "string" || !html) return;
+      k = String(k);
+      remoteBg.set(k, html);
+      if (k !== String(page)) return;          // не текущая страница – только запомнили
+      cancelBgReq();
+      if (bgSource === "remote" && bg.innerHTML === html) return;
+      const y = scrollY;
+      try { bg.innerHTML = html; } catch(e) { try { console.warn("bg", e); } catch(_) {} return; }
+      if (scrollY !== y) scrollTo(0, y);
+      bgSource = "remote";
+      boxesDirty = true;
+      afterSheet();
+      layout();
+    }
+    function sendBgReq(k){ if (!isTeacher || !channel) return; try { send("bgreq", {page:String(k || page)}); } catch(_) {} }
+    /* учитель: своего варианта листа мало – просим у ученика (и один повтор, если ответа нет) */
+    function requestBg(k){
+      if (!isTeacher || !channel) return;
+      k = String(k || page);
+      if (remoteBg.has(k) || k !== String(page)) return;
+      const now = Date.now();
+      if (bgReqPage === k && now - bgReqAt < 1200) return;
+      bgReqPage = k; bgReqAt = now;
+      sendBgReq(k);
+      clearTimeout(bgReqT);
+      bgReqT = setTimeout(() => {
+        bgReqT = 0;
+        if (!isTeacher || !channel || remoteBg.has(k) || String(page) !== k) return;
+        bgReqPage = k; bgReqAt = Date.now();
+        sendBgReq(k);
+      }, 900);
+    }
+    function cancelBgReq(){ if (bgReqT){ clearTimeout(bgReqT); bgReqT = 0; } }
+    function studentOnline(){
+      for (const p of peers.values()) if (p.online && p.role !== "teacher") return true;
+      return false;
+    }
+    function maybeRequestBg(){
+      if (!isTeacher || !channel) return;
+      if (remoteBg.has(page) || !live[page]) return;
+      if (studentOnline()){
+        /* ученик появился/сменил лист – просим фон заново, даже если недавно уже просили:
+           первое сообщение могло уйти до подписки канала */
+        bgReqAt = 0; bgReqPage = "";
+        requestBg(page);
+      }
     }
     async function openPage(key){
       if (!pagesArr.length) return;
@@ -323,7 +508,7 @@ window.Board = (() => {
       page = key;
       renderPageButtons();
       const pg = pagesArr.find(p => p.key === key);
-      if (!paintLive(true)) bg.innerHTML = pg ? pg.html : "";
+      if (!paintLive(true)){ bg.innerHTML = pg ? pg.html : ""; bgSource = "static"; }
       afterSheet();
       if (live[key]) setTool("touch");
       items = new Map(); mine = []; drafts.clear();
@@ -378,7 +563,7 @@ window.Board = (() => {
       try {
         /* html уже приведён к лимиту в addPageP; повторная проверка – на случай прямого вызова */
         const html = fitPageHtml(p.html);
-        if (html !== p.html){ p.html = html; if (page === p.key){ if (!paintLive(true)) bg.innerHTML = html; afterSheet(); layout(); } }
+        if (html !== p.html){ p.html = html; if (page === p.key){ if (!paintLive(true)){ bg.innerHTML = html; bgSource = "static"; } afterSheet(); layout(); } }
         try {
           const id = await o.api.add(PAGE_KEY, {t:"pg", key:p.key, label:p.label, html:p.html});
           p.saved = true; p.dbId = id;
@@ -387,7 +572,7 @@ window.Board = (() => {
           try {
             const id = await o.api.add(PAGE_KEY, {t:"pg", key:p.key, label:p.label, html:minimal});
             p.saved = true; p.dbId = id; p.html = minimal;
-            if (page === p.key){ if (!paintLive(true)) bg.innerHTML = minimal; afterSheet(); layout(); }
+            if (page === p.key){ if (!paintLive(true)){ bg.innerHTML = minimal; bgSource = "static"; } afterSheet(); layout(); }
             /* у второй стороны уже мог быть более полный html – синхронизируем тем же ключом */
             if (p.broadcast) send("addpage", {key:p.key, label:p.label, html:minimal, update:true});
             toast("Лист слишком большой: сохранена краткая версия.");
@@ -1104,7 +1289,13 @@ window.Board = (() => {
     });
 
     /* ---------- реальное время ---------- */
-    function send(type, payload){ if (channel) channel.send({type:"broadcast", event:"ev", payload:{type, from:me, page, ...payload}}); }
+    function send(type, payload){
+      if (!channel) return;
+      try {
+        const r = channel.send({type:"broadcast", event:"ev", payload:{type, from:me, page, ...payload}});
+        if (r && typeof r.catch === "function") r.catch(() => {});   // до подписки канал может отказать – не шумим
+      } catch (_) {}
+    }
     function sendPresence(){ if (channel) { try { const p = channel.track({id:me, name:o.name, role:o.role, page}); if (p && p.catch) p.catch(() => {}); } catch (_) {} } }
     function renderWho(){
       const list = [...peers.values()].filter(p => p.online);
@@ -1134,13 +1325,23 @@ window.Board = (() => {
       channel = o.sb.channel(o.channelName, {config:{broadcast:{self:false}, presence:{key:me}}});
       channel.on("broadcast", {event:"ev"}, ({payload:m}) => {
         if (!m || m.from === me) return;
+        /* общий фон живого листа: ученик присылает html, учитель просит его. Эти события
+           обрабатываем ДО раннего «не моя страница»: html храним всегда, bgreq – отвечаем всегда */
+        if (m.type === "bg"){
+          if (isTeacher) applyRemoteBg(m.page, m.html);
+          return;
+        }
+        if (m.type === "bgreq"){
+          if (isStudent) answerBgReq(m.page);
+          return;
+        }
         if (m.type === "addpage"){
           const ex = pagesArr.find(x => x.key === String(m.key));
           if (ex){
             /* сервер/вторая сторона могли сохранить усечённую версию – синхронизируем html по тому же ключу */
             if (typeof m.html === "string" && m.html !== ex.html){
               ex.html = m.html; ex.saved = true;
-              if (page === ex.key){ if (!paintLive(true)) bg.innerHTML = m.html; afterSheet(); layout(); }
+              if (page === ex.key){ if (!paintLive(true)){ bg.innerHTML = m.html; bgSource = "static"; } afterSheet(); layout(); }
             } else ex.saved = true;
           } else if (m.key){
             pagesArr.push({key:String(m.key), label:m.label || "Лист", html:m.html || "", saved:true});
@@ -1179,6 +1380,7 @@ window.Board = (() => {
         peers.forEach(p => { if (p.el) p.el.hidden = !p.online || p.page !== page; });
         placeCursors();
         renderWho();
+        maybeRequestBg();     // ученик появился – просим у него фон живого листа
       });
       channel.subscribe(s => { if (s === "SUBSCRIBED"){ sendPresence(); renderWho(); } });
     }
@@ -1213,12 +1415,14 @@ window.Board = (() => {
         items: list,
         pages: pagesArr.map(p => ({key:p.key, label:p.label, htmlLen:(p.html || "").length, saved:!!p.saved})),
         pageHtmlLen: cur ? (cur.html || "").length : 0,
+        bgSource,
         editor: editor ? {open:true, id:editor.id || null, text:editor.ta.value} : null
       };
     }
     function destroy(){
       try { ro.disconnect(); } catch (_) {}
       clearTimeout(roT);
+      clearTimeout(bgSendT); clearTimeout(bgReqT);
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onDocDown, true);
       document.removeEventListener("paste", onPaste);
@@ -1245,8 +1449,8 @@ window.Board = (() => {
     return {
       /* прежний контракт keep()/приложения */
       setMenu(fn){ o.menu = fn; },
-      setLive(map, pagesNew){ live = map || {}; if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.push(p); }); renderPageButtons(); } },
-      refresh(){ const painted = paintLive(false); if (painted || anchorsDirty){ afterSheet(); } boxesDirty = true; layout(); },
+      setLive(map, pagesNew){ live = map || {}; liveBgCache.clear(); if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.push(p); }); renderPageButtons(); } },
+      refresh(){ liveBgCache.clear(); const painted = paintLive(false); if (painted || anchorsDirty){ afterSheet(); } boxesDirty = true; layout(); },
       open(key){ if (key && key !== page && pagesArr.some(p => p.key === key)) openPage(key); },
       destroy(){ destroy(); },
       relayout(){ layout(); },
@@ -1263,6 +1467,8 @@ window.Board = (() => {
         const v = info();
         v.raw = Array.from(items.entries()).map(([id, it]) => ({id, item:it}));
         v.anchorBoxes = bdBoxes.map(b => ({i:+b.el.getAttribute("data-bd"), x:b.x, y:b.y, w:b.w, h:b.h}));
+        v.remoteBgPages = [...remoteBg.keys()];
+        v.bgSource = bgSource;
         return v;
       }
     };

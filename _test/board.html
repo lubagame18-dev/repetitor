@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Стенд доски v54 — проверки</title>
+<title>Стенд доски v55 — проверки</title>
 <link rel="stylesheet" href="../assets/app.css">
 <style>
   html,body{margin:0;background:var(--base);color:var(--ink);font-family:Manrope,system-ui,sans-serif}
@@ -28,7 +28,7 @@
     <div id="bd-student" class="board"></div>
   </div>
 </div>
-<div id="bd-status">стенд доски v54</div>
+<div id="bd-status">стенд доски v55</div>
 
 <script>
 /* Заглушка pdfjs (CDN в песочнице закрыт): выдаёт 2 страницы для потока «Отдельными листами».
@@ -65,7 +65,7 @@ window.html2canvas = window.html2canvas || (() => Promise.reject(new Error("html
   try {
     window.__board.mountBoth();
     document.getElementById("bd-status").textContent =
-      "стенд доски v54: " + (window.__board.pageButtons("teacher").length) + " листа(ов)";
+      "стенд доски v55: " + (window.__board.pageButtons("teacher").length) + " листа(ов)";
   } catch (e) {
     window.__standError = String(e && e.message || e);
     document.getElementById("bd-status").textContent = "ОШИБКА: " + window.__standError;

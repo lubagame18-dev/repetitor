@@ -7,7 +7,7 @@ const CFG = window.APP_CONFIG || {};
 const sb = U.supa();/* встроенные готовые материалы по классам (подгружаются лениво по предмету) */
 try { const k0 = (LS.get("session")?.profile?.course) || CFG.DEFAULT_COURSE; if (window.BuiltinLoader && k0) BuiltinLoader.ensure(k0); } catch (e) { }
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
-           rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set()};
+           rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set(), syncPending:false};
 const $ = s => document.querySelector(s);
 const LS = {get(k, def){ try{ return JSON.parse(localStorage.getItem("oge-" + k)) ?? def; }catch(e){ return def; } },
             set(k, v){ try{ localStorage.setItem("oge-" + k, JSON.stringify(v)); }catch(e){} }};
@@ -109,10 +109,19 @@ function uploadPhoto(lessonId){
 /* ---------- живая связь с учителем: где ученик сейчас, мгновенные обновления ---------- */
 let live = null, liveT = 0;
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || (S.view === "folder" && S.sub === "board") || S.view === "room";
+/* если обновление от учителя пришло, пока ученик печатал, – дорисовываем, когда закончит */
+document.addEventListener("focusout", () => {
+  if (!S.syncPending) return;
+  setTimeout(() => {
+    if (!S.syncPending) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return;
+    S.syncPending = false; render();
+  }, 150);
+});
 /* урок, который открыл учитель, может быть другого предмета (другая запись ученика) или только что добавлен – переключаемся и подгружаем */
 async function ensureLesson(m){
   const has = () => !m.lesson || m.lesson === "free" || !!S.course?.lessons.find(x => x.id === m.lesson);
-  if (has()) return;
+  if (has()) return true;
   if (sb && m.to && m.to !== "all" && m.to !== S.profile.id && (S.profile.subjects || []).some(x => x.id === m.to)){
     const {data} = await sb.rpc("student_switch", {p_code: S.token, p_target: m.to});
     if (data){ const was = S.profile.teacher; S.token = data.token; S.profile = data.profile; S.forced = new Set(); saveSession(); toast(`Учитель открыл урок по предмету «${subjName()}»`);
@@ -120,6 +129,21 @@ async function ensureLesson(m){
   }
   await load();
   if (!has()){ await new Promise(r => setTimeout(r, 1200)); await load(); }
+  return has();
+}
+/* общий показ урока по команде учителя: и в комнате (слева доска), и в папке (вне комнаты) */
+function showLessonView(l, m){
+  S.forced.add(l.id); S.open = l.id;
+  if (m && m.sub) S.sub = m.sub;
+  if (m && m.tab) S.sub = m.tab;
+  if (m && m.page) S.boardPage = m.page;
+  if (S.view === "room" || (S.joinHow && S.room)){        // ученик уже на уроке – не выкидываем из комнаты
+    S.room = {...(S.room || {}), lesson: l.id};
+    S.test = null; S.testInRoom = false; S.view = "room"; S.drawer = false;
+    render(); liveTrack();
+  } else {
+    S.view = "folder"; S.drawer = false; render(); scrollTo(0, 0);
+  }
 }
 function liveStart(){
   if (!sb || !S.profile?.teacher || live) return;
@@ -129,10 +153,25 @@ function liveStart(){
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
     if (m.type === "izlpick"){ S.labPick = m.key; LS.set("labPick", m.key); if (S.view === "folder" && S.course?.lessons.find(x => x.id === S.open)?.lab === "izl") S.sub = "lab"; render(); toast("Учитель выбрал текст для изложения: " + (m.title || "")); return; }
-    if (m.type === "refresh"){ await load(); if (!typing() || (S.view === "room" && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || ""))) render(); toast(m.msg || "Учитель обновил твои материалы"); }
-    if (m.type === "lesson"){ await ensureLesson(m); invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()}); return; }
+    if (m.type === "refresh"){
+      await load();
+      const focused = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+      if (!typing() || (S.view === "room" && !focused) || (S.view === "folder" && S.sub !== "board" && !focused)) render();
+      else S.syncPending = true;   // не сбрасываем ввод – отрисуем, когда ученик закончит печатать
+      toast(m.msg || "Учитель обновил твои материалы");
+      return;
+    }
+    if (m.type === "lesson"){
+      const ok = await ensureLesson(m);
+      if (!ok){ toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return; }
+      await load();               // свежие материалы и заметки учителя к моменту показа
+      invite({lesson: m.lesson, url: m.url, title: m.title, at: Date.now()});
+      return;
+    }
     if (m.type === "room-pull"){   // учитель позвал: сразу на урок, без окна-приглашения
-      await ensureLesson(m);
+      const ok = await ensureLesson(m);
+      if (!ok){ toast("Урок не загрузился – попросите учителя открыть ещё раз"); return; }
+      await load();
       if (S.view !== "room") S.preRoom = {view: S.view, open: S.open, sub: S.sub};
       S.room = {...(S.room || {}), lesson: m.lesson, url: m.url || S.room?.url || S.profile.call_url || "", at: Date.now()};
       if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
@@ -141,7 +180,10 @@ function liveStart(){
       const j = joinedNow(); applyJoin(S.joinHow || j?.how || LS.get("join-how", null) || "board", true); toast("Учитель позвал тебя на урок"); return;
     }
     if (m.type === "room-goto"){
-      await ensureLesson(m);
+      const changed = !S.room || S.room.lesson !== m.lesson;
+      const ok = await ensureLesson(m);
+      if (!ok){ toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return; }
+      if (changed) await load();   // новый урок – сразу свежие материалы; смена вкладки – без задержки
       if (!S.room) S.room = {lesson: m.lesson, at: Date.now()};
       if (S.joinHow === "call") return;
       if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
@@ -158,16 +200,37 @@ function liveStart(){
       bar.hidden = false; return;
     }
     if (m.type === "goto" && m.lesson === "free"){ S.view = "myboard"; S.drawer = false; if (m.page) S.boardPage = m.page; render(); toast("Учитель открыл личную доску"); return; }
-    if (m.type === "goto" && S.course){
-      const l = S.course.lessons.find(x => x.id === m.lesson); if (!l) return;
-      S.forced.add(l.id); S.open = l.id; S.sub = m.sub || "theory"; if (m.page) S.boardPage = m.page; S.view = "folder"; S.drawer = false;
-      render(); scrollTo(0, 0); toast(`Учитель открыл урок «${l.title}»`);
+    if (m.type === "goto"){
+      /* «Показать ученику»: сразу показываем урок (если он уже загружен), затем догружаем свежие материалы
+         и показываем заново – без обновления страницы и без молчаливого игнора для новых/других предметов */
+      const known = S.course?.lessons.find(x => x.id === m.lesson);
+      if (known) showLessonView(known, m);
+      else toast("Учитель открывает урок…");
+      const ok = await ensureLesson(m);
+      if (!ok){ toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return; }
+      await load();
+      const l = S.course?.lessons.find(x => x.id === m.lesson);
+      if (!l){ toast("Урок ещё не пришёл – обновите страницу и попросите открыть снова"); return; }
+      showLessonView(l, m);
+      toast(`Учитель открыл урок «${l.title}»`);
+      return;
     }
   });
-  live.on("presence", {event:"sync"}, () => {
+  let presenceBusy = false;
+  live.on("presence", {event:"sync"}, async () => {
+    if (presenceBusy) return;
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];
     const t = Object.values(live.presenceState()).flat().find(p => p.role === "teacher" && p.room && p.room.to?.some(id => mine.includes(id)));
-    if (t && (t.room.at || 0) > (S.roomEnded || 0) && (!S.room || S.room.lesson !== t.room.lesson)) invite({...t.room, title: S.course?.lessons.find(x => x.id === t.room.lesson)?.title || ""});
+    if (!(t && (t.room.at || 0) > (S.roomEnded || 0) && (!S.room || S.room.lesson !== t.room.lesson))) return;
+    presenceBusy = true;
+    try {
+      const myRow = (S.profile.subjects || []).find(x => (t.room.to || []).includes(x.id));
+      const ok = await ensureLesson({lesson: t.room.lesson, to: myRow?.id || S.profile.id});
+      if (!ok) return;
+      await load();   // свежие материалы к моменту приглашения/входа в комнату
+      const title = S.course?.lessons.find(x => x.id === t.room.lesson)?.title || t.room.title || "";
+      invite({...t.room, title});
+    } finally { presenceBusy = false; }
   });
   live.subscribe(st => { if (st === "SUBSCRIBED") liveTrack(true); });
 }
@@ -938,6 +1001,7 @@ function testLive(extra){
 function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"act", payload:{act:true, dev:DEV, id:S.profile.id, name:S.profile.name, text, ...extra}}).catch(() => {}); }
 /* ---------- отрисовка ---------- */
 function render(){
+  S.syncPending = false;
   const app = $("#app");
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }

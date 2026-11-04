@@ -1,4 +1,4 @@
-/* Проверки доски v54 (якоря, вложения, перемещение, текст, доп. листы) на стенде _test/board.html.
+/* Проверки доски v55 (якоря, вложения, перемещение, текст, доп. листы) на стенде _test/board.html.
    Запуск: node _test/board.mjs                    (headless; сам поднимает serve.mjs + Chrome через cdp.mjs)
            BOARD_HEADLESS=0 node _test/board.mjs   (видимое окно)
            BOARD_ONLY=C,D,E node _test/board.mjs   (фильтр по id)
@@ -15,7 +15,7 @@ import { startServer } from "./serve.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.join(__dirname, "artifacts");
 const B = "window.__board";
-const PAGE_KEY = "_pages";      // api-ключ доп. листов в v54
+const PAGE_KEY = "_pages";      // api-ключ доп. листов в v55
 const PAGE_HTML_MAX = 55000;    // лимит html одного листа
 
 /* ---------- фикстуры (без сети): png пишем сами, pdf — минимальный контейнер ---------- */
@@ -84,6 +84,51 @@ async function fresh(page) {
   await page.eval("document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true").catch(() => {});
   await sleep(150);
 }
+/** «живой урок»: у teacher свой HTML листа (TEACHER-KEYS), у student свой (STUDENT-SHEET) */
+async function freshLive(page, opts) {
+  await page.eval(`${B}.clearStore(); ${B}.HUB.clearLog(); true`);
+  await page.eval(`${B}.mountLiveBoth(${JSON.stringify(opts || {})})`);
+  await page.eval("document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true").catch(() => {});
+  await sleep(200);
+}
+const bgOf = (page, side) => page.eval(`${B}.bgHtml(${JSON.stringify(side)})`);
+const bgSourceOf = (page, side) => page.eval(`${B}.bgSource(${JSON.stringify(side)})`);
+async function waitBg(page, side, want = "remote", timeout = 8000) {
+  return page.eval(`${B}.waitBgSource(${JSON.stringify(side)}, ${JSON.stringify(want)}, ${timeout})`);
+}
+/** дождаться, что фон учителя стал HTML ученика (STUDENT-SHEET) и bgSource === "remote" */
+async function awaitUnifiedBg(page, timeout = 8000) {
+  try { await waitBg(page, "teacher", "remote", timeout); }
+  catch (e) {
+    throw new Error("у учителя не включился фон ученика: " + e.message +
+      "; bgSource=" + JSON.stringify(await bgSourceOf(page, "teacher")) +
+      "; bg=" + JSON.stringify(String(await bgOf(page, "teacher")).slice(0, 120)) +
+      "; канал bg=" + JSON.stringify(await page.eval(`${B}.channelLog("bg").length`)) +
+      ", bgreq=" + JSON.stringify(await page.eval(`${B}.channelLog("bgreq").length`)));
+  }
+  try { await page.eval(`${B}.waitBgContains("teacher", "STUDENT-SHEET", ${timeout})`); }
+  catch (e) { throw new Error("bgSource=remote, но в фоне учителя нет STUDENT-SHEET: " + e.message); }
+}
+const setToolOn = (page, side, tool) => page.eval(`${B}.setTool(${JSON.stringify(side)}, ${JSON.stringify(tool)})`);
+/** нарисовать горизонтальный штрих в пустом месте: ниже элемента refSel на dy логических px */
+async function drawStrokeInGap(page, side, refSel, dy, len) {
+  const r = await geometry(page, side, refSel);
+  if (!r) throw new Error("не нашли «" + refSel + "» на доске «" + side + "»");
+  const y = r.bottom + dy, x0 = r.x + 20, x1 = x0 + (len || 180);
+  const pts = [];
+  for (let i = 0; i <= 6; i++) pts.push([x0 + (x1 - x0) * i / 6, y]);
+  await setToolOn(page, side, "pen");
+  await drawStroke(page, side, pts);
+  return { x0, x1, y, ref: r };
+}
+/** дождаться появления штриха (t:"s") в базе листа и вернуть строку */
+async function waitStrokeRow(page, pageKey = "theory", timeout = 6000) {
+  return page.waitFor(`(() => { const rows = ${B}.dump(${JSON.stringify(pageKey)}); const s = rows.filter(r => r.item && r.item.t === "s"); return s.length ? s[s.length - 1] : null; })()`,
+    { timeout, label: "штрих сохранён в api (" + pageKey + ")" });
+}
+/** прямоугольник вокруг нарисованного в пустоте штриха (для ink()) */
+const gapBox = (g, pad = 40) => ({ x: g.x0 - pad, y: g.y - 28, w: (g.x1 - g.x0) + pad * 2, h: 56 });
+
 async function remount(page, side) {
   await page.eval(`${B}.remountReady(${JSON.stringify(side)})`);
   await sleep(80);
@@ -179,7 +224,7 @@ test("A0", "Стенд: обе доски монтируются, fake-кана�
     { timeout: 8000, label: "доски видят друг друга в присутствии (.bd-who)" });
 });
 
-test("SMOKE", "v54: доска монтируется без исключений, листы/инструменты рендерятся, ✥ есть", async ({ page }) => {
+test("SMOKE", "v55: доска монтируется без исключений, листы/инструменты рендерятся, ✥ есть", async ({ page }) => {
   await fresh(page);
   const st = await page.eval(`(() => {
     const b = ${B}; const h = b.handles.teacher; const r = b.root("teacher");
@@ -202,6 +247,42 @@ test("SMOKE", "v54: доска монтируется без исключени�
   if (!st.info.ready) throw new Error("info().ready не true после монтирования");
   if (st.info.width !== 800) throw new Error("info().width=" + st.info.width + " (ожидали 800)");
   if (!(st.info.anchors > 0)) throw new Error("якоря не размечены (info().anchors=" + st.info.anchors + ")");
+
+  /* --- сохранность: снимок 📸, Board.keep(), доска после включения bg-режима --- */
+  const snap = await page.eval(`(() => {
+    const r = ${B}.root("teacher"); const b = r.querySelector('[data-act="snap"]');
+    return { exists: !!b, text: b ? ((b.title || "") + " " + (b.getAttribute("aria-label") || "") + " " + b.textContent) : "", acts: [...r.querySelectorAll("[data-act]")].map(x => x.dataset.act) };
+  })()`);
+  if (!snap.exists) throw new Error("нет кнопки снимка 📸 [data-act=snap]; есть: " + JSON.stringify(snap.acts));
+  if (!/снимок|📸/i.test(snap.text)) throw new Error("кнопка [data-act=snap] не про снимок листа: " + JSON.stringify(snap.text));
+  const keep = await page.eval(`${B}.keepProbe("teacher")`);
+  if (!keep.hasKeep || !keep.hasRelease) throw new Error("нет Board.keep()/Board.release(): " + JSON.stringify(keep));
+  if (keep.err) throw new Error("Board.keep() упал: " + keep.err);
+  if (!keep.same) throw new Error("Board.keep() при повторном вызове создал новую доску вместо переиспользования инстанса");
+
+  /* включаем «живой урок» (bg-режим) — кнопки/инструменты/_pages должны остаться рабочими */
+  await freshLive(page);
+  const live = await page.eval(`(() => {
+    const b = ${B}; const r = b.root("teacher"); const i = b.info("teacher");
+    return { tools: [...r.querySelectorAll("[data-tool]")].map(x => x.dataset.tool),
+             acts: [...r.querySelectorAll("[data-act]")].map(x => x.dataset.act),
+             pages: b.pageButtons("teacher").length, width: i && i.width, ready: i && i.ready,
+             bgSource: b.bgSource("teacher"), snap: !!r.querySelector('[data-act="snap"]') };
+  })()`);
+  for (const t of ["pen", "hl", "text", "erase", "hand", "move", "touch"]) if (!live.tools.includes(t)) throw new Error("в bg-режиме пропал инструмент «" + t + "»; есть: " + JSON.stringify(live.tools));
+  for (const a of ["attach", "snap", "embed"]) if (!live.acts.includes(a)) throw new Error("в bg-режиме пропала кнопка [data-act=" + a + "]; есть: " + JSON.stringify(live.acts));
+  if (!live.snap) throw new Error("в bg-режиме пропала кнопка снимка 📸");
+  if (live.width !== 800 || !live.ready) throw new Error("в bg-режиме info() сломан: width=" + live.width + ", ready=" + live.ready);
+  if (!["remote", "own", "static"].includes(live.bgSource)) throw new Error("info().bgSource в bg-режиме = " + JSON.stringify(live.bgSource) + " (ожидали remote/own/static)");
+  const newKey = await page.eval(`(async () => {
+    const b = ${B}; const key = b.handles.teacher.addPage("SMOKE bg", "<div class='bd-sheet'><p>Лист из bg-режима</p></div>", true);
+    await b.handles.teacher.whenIdle(); return key;
+  })()`);
+  if (!newKey) throw new Error("addPage() в bg-режиме не вернул ключ листа");
+  await page.waitFor(`(() => ${B}.dump(${JSON.stringify(PAGE_KEY)}).some(r => r.item && r.item.t === "pg" && r.item.key === ${JSON.stringify(String(newKey))}) ? 1 : 0)()`,
+    { timeout: 6000, label: "лист, добавленный в bg-режиме, сохранён в \"" + PAGE_KEY + "\"" });
+  await page.waitFor(`(() => ${B}.pageButtons("teacher").length > ${live.pages} ? 1 : 0)()`, { timeout: 6000, label: "лист, добавленный в bg-режиме, появился в списке листов" });
+
   if (page.errors.length) throw new Error("исключения на странице: " + page.errors.join(" | ").slice(0, 800));
 });
 
@@ -333,7 +414,7 @@ test("D3", "Дополнительный лист («Отдельными лис
   // смотрим новый лист
   await page.eval(`(() => { const r = ${B}.root("student"); const bs = [...r.querySelectorAll("[data-bpage]")]; const b = bs[bs.length - 1]; if (b) b.click(); return !!b; })()`);
   await sleep(300);
-  // содержимое нового листа: текст или картинка/слайд (v54 pdf/pdf-заглушка могут дать .bd-slide с img)
+  // содержимое нового листа: текст или картинка/слайд (v55 pdf/pdf-заглушка могут дать .bd-slide с img)
   const content = await page.eval(`(() => {
     const s = ${B}.root("student").querySelector(".bd-bg .bd-sheet");
     if (!s) return "";
@@ -451,6 +532,172 @@ test("E2", "Текст: надпись сохраняется после remount
   await waitInk(page, "student", box, 0.0003, "после remount надпись снова на листе");
 });
 
+/* ---------- F: единый фон «живого» листа (ученик → учитель) ---------- */
+test("F1", "Единый фон: у учителя свой live-лист (TEACHER-KEYS), ученик отрисовал свой → фон учителя = HTML ученика (STUDENT-SHEET, bgSource=remote)", async ({ page }) => {
+  /* «учитель открыл лист первым»: сначала монтируем только учителя — он обязан показать СВОЙ live-лист */
+  await page.eval(`${B}.clearStore(); ${B}.HUB.clearLog(); true`);
+  await page.eval(`${B}.mountLiveTeacher()`);
+  const own = await bgOf(page, "teacher");
+  if (!/TEACHER-KEYS/.test(own)) throw new Error("учитель не нарисовал свой live-лист: в фоне нет TEACHER-KEYS — " + String(own).slice(0, 160));
+  if (/STUDENT-SHEET/.test(own)) throw new Error("без ученика у учителя уже лист ученика — стенд стартовал неверно");
+  const srcOwn = await bgSourceOf(page, "teacher");
+  if (srcOwn === "remote") throw new Error("bgSource=remote без ученика (свой live-лист должен быть own)");
+  /* теперь ученик отрисовал свой live-лист и поделился им */
+  await page.eval(`${B}.mountLiveStudent()`);
+  const stOwn = await bgOf(page, "student");
+  if (!/STUDENT-SHEET/.test(stOwn)) throw new Error("ученик не нарисовал свой live-лист: в фоне нет STUDENT-SHEET — " + String(stOwn).slice(0, 160));
+  await awaitUnifiedBg(page);
+  const th = await bgOf(page, "teacher");
+  if (!/STUDENT-SHEET/.test(th)) throw new Error("фон учителя не стал HTML ученика (нет STUDENT-SHEET)");
+  if (/TEACHER-KEYS/.test(th)) throw new Error("в фоне учителя остался его собственный лист (TEACHER-KEYS) — учитель должен предпочитать фон ученика");
+  const pages = await page.eval(`${B}.bgDebug("teacher")`);
+  if (!Array.isArray(pages) || !pages.includes("theory")) throw new Error("debug().remoteBgPages не содержит theory: " + JSON.stringify(pages));
+  const stSrc = await bgSourceOf(page, "student");
+  if (stSrc === "remote") throw new Error("ученик применил чужой фон (bgSource=remote) — ученик должен только отдавать свой лист");
+  if (page.errors.length) throw new Error("исключения на странице: " + page.errors.join(" | ").slice(0, 800));
+});
+
+test("F2", "Рисунок совпадает: ученик рисует в ПУСТОМ месте общего листа — у учителя тот же элемент и координаты, фон ученика", async ({ page }) => {
+  await freshLive(page);
+  await awaitUnifiedBg(page);
+  const g = await drawStrokeInGap(page, "student", "#student-sent", 80, 180);
+  const row = await waitStrokeRow(page);
+  if (!row || !row.item) throw new Error("штрих не сохранён");
+  const a = row.item.a;
+  if (!a) throw new Error("штрих в пустом месте сохранён без якоря: " + JSON.stringify(row.item).slice(0, 200));
+  const anchorS = await page.eval(`${B}.elementAtAnchor("student", ${JSON.stringify(a.i)})`);
+  const anchorT = await page.eval(`${B}.elementAtAnchor("teacher", ${JSON.stringify(a.i)})`);
+  if (!anchorS) throw new Error("якорь #" + a.i + " не найден на листе ученика");
+  if (!anchorT) throw new Error("якорь #" + a.i + " (из штриха ученика) не найден в фоне учителя — фоны не совпадают");
+  for (const [who, an] of [["ученик", anchorS], ["учитель", anchorT]]) {
+    const isPara = an.tag === "P" || /student-sent/.test(an.cls) || /Предложение листа ученика/.test(an.text);
+    if (!isPara) throw new Error("штрих в пустоте у " + who + " привязан к «" + an.tag + "." + an.cls + "» (id=" + JSON.stringify(an.id) + "), а не к ближайшему абзацу #student-sent");
+  }
+  const box = gapBox(g);
+  const inkS = await inkAt(page, "student", box);
+  const inkT = await inkAt(page, "teacher", box);
+  if (!inkS || !inkS.bbox) throw new Error("штрих не нарисовался у ученика: " + JSON.stringify(inkS));
+  if (!inkT || !inkT.bbox) throw new Error("у учителя нет штриха в том же месте: " + JSON.stringify(inkT));
+  const dx = Math.abs(inkS.bbox.cx - inkT.bbox.cx), dy = Math.abs(inkS.bbox.cy - inkT.bbox.cy);
+  if (dx > 8 || dy > 8) throw new Error("штрих ученика и учителя разошёлся: центр у ученика (" + inkS.bbox.cx.toFixed(1) + ", " + inkS.bbox.cy.toFixed(1) + "), у учителя (" + inkT.bbox.cx.toFixed(1) + ", " + inkT.bbox.cy.toFixed(1) + "), Δ=(" + dx.toFixed(1) + ", " + dy.toFixed(1) + ") логических px");
+  // «в каком элементе»: под центром краски на обеих досках — пустое место листа (не чужой текст)
+  const underS = await page.eval(`${B}.elementUnderPoint("student", ${inkS.bbox.cx}, ${inkS.bbox.cy})`);
+  const underT = await page.eval(`${B}.elementUnderPoint("teacher", ${inkT.bbox.cx}, ${inkT.bbox.cy})`);
+  if (underS && underT && (underS.tag !== underT.tag || underS.id !== underT.id || underS.cls !== underT.cls)) {
+    throw new Error("под штрихом у сторон разные элементы листа: ученик «" + underS.tag + "." + underS.cls + "#" + underS.id + "», учитель «" + underT.tag + "." + underT.cls + "#" + underT.id + "»");
+  }
+  const th = await bgOf(page, "teacher");
+  if (!/STUDENT-SHEET/.test(th) || /TEACHER-KEYS/.test(th)) throw new Error("фон учителя не равен фону ученика в момент штриха");
+});
+
+test("F3", "Обратная сторона: учитель рисует на общем фоне — у ученика те же координаты и тот же элемент", async ({ page }) => {
+  await freshLive(page);
+  await awaitUnifiedBg(page);
+  if ((await bgSourceOf(page, "teacher")) !== "remote") throw new Error("учитель рисует не на общем фоне (bgSource=" + JSON.stringify(await bgSourceOf(page, "teacher")) + ")");
+  const g = await geometry(page, "teacher", "#student-sent");
+  if (!g) throw new Error("в общем фоне учителя нет #student-sent");
+  const y = g.y + g.h * 0.75, x0 = g.x + 10, x1 = g.x + 210;
+  const pts = [];
+  for (let i = 0; i <= 6; i++) pts.push([x0 + (x1 - x0) * i / 6, y]);
+  await setToolOn(page, "teacher", "pen");
+  await drawStroke(page, "teacher", pts);
+  const row = await waitStrokeRow(page);
+  if (!row || !row.item.a) throw new Error("штрих учителя не сохранён с якорем: " + JSON.stringify(row && row.item).slice(0, 200));
+  const a = row.item.a;
+  const anchorT = await page.eval(`${B}.elementAtAnchor("teacher", ${JSON.stringify(a.i)})`);
+  const anchorS = await page.eval(`${B}.elementAtAnchor("student", ${JSON.stringify(a.i)})`);
+  if (!anchorT || !anchorS) throw new Error("якорь #" + a.i + " не найден на одной из сторон (t=" + JSON.stringify(anchorT) + ", s=" + JSON.stringify(anchorS) + ")");
+  if (!/student-sent/.test(anchorT.id || "") && anchorT.tag !== "P") throw new Error("штрих учителя привязан к «" + anchorT.tag + "." + anchorT.cls + "», а не к абзацу #student-sent");
+  if (anchorT.tag !== anchorS.tag || anchorT.id !== anchorS.id) throw new Error("у сторон разные элементы под якорем: teacher «" + anchorT.tag + "#" + anchorT.id + "» / student «" + anchorS.tag + "#" + anchorS.id + "»");
+  const box = { x: x0 - 30, y: y - 26, w: (x1 - x0) + 60, h: 52 };
+  const inkT = await inkAt(page, "teacher", box);
+  const inkS = await inkAt(page, "student", box);
+  if (!inkT || !inkT.bbox) throw new Error("штрих учителя не нарисовался: " + JSON.stringify(inkT));
+  if (!inkS || !inkS.bbox) throw new Error("ученик не увидел штрих учителя в том же месте: " + JSON.stringify(inkS));
+  const dx = Math.abs(inkT.bbox.cx - inkS.bbox.cx), dy = Math.abs(inkT.bbox.cy - inkS.bbox.cy);
+  if (dx > 8 || dy > 8) throw new Error("штрих учителя и ученика разошёлся: teacher (" + inkT.bbox.cx.toFixed(1) + ", " + inkT.bbox.cy.toFixed(1) + "), student (" + inkS.bbox.cx.toFixed(1) + ", " + inkS.bbox.cy.toFixed(1) + "), Δ=(" + dx.toFixed(1) + ", " + dy.toFixed(1) + ")");
+});
+
+test("F4", "Запрос фона: ученик не открывал лист, но отдаёт его по bgreq из detached-контейнера; без ученика учитель остаётся на своём фоне", async ({ page }) => {
+  /* A) ученик на другом листе (p2): live-лист theory им не рисовался */
+  await page.eval(`${B}.clearStore(); ${B}.HUB.clearLog(); true`);
+  await page.eval(`${B}.mountLiveBoth({studentPage: "p2"})`);
+  await page.eval(`${B}.waitPage("student", "p2", 5000)`);
+  const detached = await page.eval(`(() => ${B}.liveRenderDetached("student", "theory"))()`);
+  if (!/STUDENT-SHEET/.test(detached)) throw new Error("live-функция ученика не работает на detached-элементе (нет STUDENT-SHEET): " + String(detached).slice(0, 120));
+  try { await page.eval(`${B}.waitChannel("bgreq", 8000)`); }
+  catch (e) { throw new Error("учитель не запросил фон у ученика (нет \"bgreq\" в канале): " + e.message); }
+  await awaitUnifiedBg(page);
+  if (!(await page.eval(`${B}.channelHas("bg")`))) throw new Error("ученик не ответил на bgreq сообщением \"bg\"");
+  const th = await bgOf(page, "teacher");
+  if (!/STUDENT-SHEET/.test(th)) throw new Error("учитель не получил фон по bgreq");
+  if (/TEACHER-KEYS/.test(th)) throw new Error("после bgreq в фоне учителя остался его собственный лист");
+  if (page.errors.length) throw new Error("исключения при bgreq: " + page.errors.join(" | ").slice(0, 800));
+
+  /* B) ученика нет вовсе: учитель остаётся на своём live-фоне, без исключений */
+  const errsBefore = page.errors.length;
+  await page.eval(`${B}.HUB.clearLog(); true`);
+  await page.eval(`${B}.mountLiveTeacher()`);
+  await page.eval(`${B}.waitChannel("bgreq", 8000)`).catch(() => {});
+  await sleep(2200); // дать отработать таймауту запроса (нет ответа)
+  const own = await bgOf(page, "teacher");
+  if (!/TEACHER-KEYS/.test(own)) throw new Error("без ученика учитель потерял свой live-фон (нет TEACHER-KEYS): " + String(own).slice(0, 160));
+  if (/STUDENT-SHEET/.test(own)) throw new Error("без ученика учитель получил чужой фон (STUDENT-SHEET) — неоткуда");
+  const src = await bgSourceOf(page, "teacher");
+  if (src === "remote") throw new Error("bgSource=remote без ученика");
+  const newErrs = page.errors.slice(errsBefore);
+  if (newErrs.length) throw new Error("запрос фона без ученика дал исключения: " + newErrs.join(" | ").slice(0, 800));
+});
+
+test("G", "Якоря в пустоте: штрих между абзацами остаётся у ближайшего абзаца при сдвиге макета принимающей стороны", async ({ page }) => {
+  await fresh(page); // статический лист .sentence с пустым промежутком (margin-bottom:150px)
+  const g = await drawStrokeInGap(page, "student", ".sentence", 70, 200);
+  const row = await waitStrokeRow(page);
+  if (!row || !row.item) throw new Error("штрих не сохранён");
+  const a = row.item.a;
+  if (!a) throw new Error("штрих в пустом промежутке сохранён без якоря: " + JSON.stringify(row.item).slice(0, 240));
+  const nearS = await page.eval(`${B}.elementAtAnchor("student", ${JSON.stringify(a.i)})`);
+  if (!nearS) throw new Error("якорь #" + a.i + " не найден на листе ученика");
+  /* якорь должен быть к ближайшему абзацу (.sentence / P), а не к корню листа .bd-sheet */
+  if (!/sentence/.test(nearS.cls) && nearS.tag !== "P") {
+    throw new Error("штрих в пустоте привязан к «" + nearS.tag + "." + nearS.cls + "» вместо ближайшего абзаца .sentence: при сдвиге макета он уедет (anchorAt вернул корень листа)");
+  }
+  const anchorT = await page.eval(`${B}.elementAtAnchor("teacher", ${JSON.stringify(a.i)})`);
+  if (!anchorT) throw new Error("якорь #" + a.i + " не найден на листе учителя");
+  /* сдвигаем макет учителя: вставляем абзац в начало листа + refresh/relayout */
+  const t0 = await geometry(page, "teacher", ".sentence");
+  await page.eval(`(() => {
+    const b = ${B}; const r = b.root("teacher"); const sheet = r.querySelector(".bd-bg .bd-sheet");
+    if (!sheet) return false;
+    const p = document.createElement("p"); p.textContent = "Вставленный абзац для сдвига макета";
+    sheet.insertBefore(p, sheet.firstChild); return true;
+  })()`);
+  await page.eval(`${B}.relayout("teacher")`);
+  const t1 = await geometry(page, "teacher", ".sentence");
+  const delta = t1.y - t0.y;
+  if (!(delta > 20)) throw new Error("макет учителя не сдвинулся вставкой абзаца (ΔY=" + delta.toFixed(1) + " логических px) — проверка невозможна");
+  const box = gapBox(g);
+  const inkS = await inkAt(page, "student", box);
+  /* у учителя ищем краску в полосе, покрывающей и старую, и новую (сдвинутую) позицию */
+  const boxT = { x: g.x0 - 40, y: g.y - 90, w: (g.x1 - g.x0) + 80, h: 180 + Math.max(0, delta) + 60 };
+  const inkT = await inkAt(page, "teacher", boxT);
+  if (!inkS || !inkS.bbox) throw new Error("штрих не нарисовался у ученика в пустом месте: " + JSON.stringify(inkS));
+  if (!inkT || !inkT.bbox) throw new Error("у учителя штрих пропал после сдвига макета: " + JSON.stringify(inkT));
+  const expY = inkS.bbox.cy + delta;
+  if (Math.abs(inkT.bbox.cy - expY) > 10) {
+    throw new Error("штрих в пустом месте не привязан к ближайшему абзацу: ожидали y≈" + expY.toFixed(1) + " (позиция ученика " + inkS.bbox.cy.toFixed(1) + " + сдвиг макета " + delta.toFixed(1) + "), фактически y=" + inkT.bbox.cy.toFixed(1) + " (Δ=" + Math.abs(inkT.bbox.cy - expY).toFixed(1) + ")");
+  }
+  /* и это по-прежнему пустое место (не наехал на текст другого абзаца) */
+  const underT = await page.eval(`${B}.elementUnderPoint("teacher", ${inkT.bbox.cx}, ${inkT.bbox.cy})`);
+  if (underT && !underT.insideGap) {
+    throw new Error("штрих после сдвига оказался на элементе «" + underT.tag + "." + underT.cls + "» (id=" + JSON.stringify(underT.id) + "), а должен остаться в пустом промежутке между абзацами");
+  }
+  /* и не остался на абсолютном месте, если макет реально уехал */
+  if (delta > 30 && Math.abs(inkT.bbox.cy - inkS.bbox.cy) < delta * 0.6) {
+    throw new Error("штрих остался на абсолютном месте (y не сдвинулся вместе с абзацем: было " + inkS.bbox.cy.toFixed(1) + ", стало " + inkT.bbox.cy.toFixed(1) + ", сдвиг макета " + delta.toFixed(1) + ")");
+  }
+});
+
 /* ---------- раннер ---------- */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 
@@ -503,7 +750,7 @@ export async function runBoardStandalone() {
     await page.waitFor(`!!window.__board && !!window.__board.handles.teacher && !!window.__board.handles.student`, { timeout: 15000, label: "стенд доски загрузился" });
     const results = await runBoardTests({ page, baseUrl: server.url });
     const failed = results.filter(r => !r.pass).length;
-    console.log("\nИтог по доске v54: " + (results.length - failed) + "/" + results.length + " PASS" + (failed ? ", " + failed + " FAIL" : "") +
+    console.log("\nИтог по доске v55: " + (results.length - failed) + "/" + results.length + " PASS" + (failed ? ", " + failed + " FAIL" : "") +
       (failed ? "\nСкриншоты падений: " + ARTIFACTS : ""));
     return { results, failed };
   } finally {
