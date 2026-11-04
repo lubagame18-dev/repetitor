@@ -7,10 +7,11 @@ const RECOVERY = /type=recovery/.test(location.hash), LINK_ERR = /error_descript
 const sb = U.supa();
 const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
-           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null};
+           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null,
+           qzQuizzes:[], qzResults:[], qzSel:null, qzSelSid:null, qzCount:3, qzBusy:false, qzDraft:null, qzSaved:null};
 const $ = s => document.querySelector(s);
 const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
-const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered,school,avatar";
+const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered,covered_manual,school,avatar";
 const inviteLink = tok => `${location.origin}${location.pathname.replace(/teacher\.html$/, "")}?invite=${tok}`;
 const blockOf = (c, l) => c.blocks[l.block] || {name:"Свои уроки", color:U.ownColor()};
 const I = {
@@ -38,17 +39,20 @@ async function loadAll(){
   if (me.error) toast(/does not exist|function/i.test(me.error.message) ? "База ещё не настроена: выполните supabase/schema.sql в Supabase." : U.authErr(me.error));
   T.loaded = new Set();
   if (T.me.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
-  const [st, rs, hw, wr, sh, mt, ac, ar, wk] = await Promise.all([
+  const [st, rs, hw, wr, sh, mt, ac, ar, wk, qz, qr] = await Promise.all([
     sb.from("students").select(ST_COLS).order("created_at"),
     sb.from("results").select("*").order("created_at"),
     sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("sheets").select("*"),
     sb.from("materials").select("*").order("id"), sb.from("activity").select("*"),
-    sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200), sb.from("works").select("*")
+    sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200), sb.from("works").select("*"),
+    sb.from("quizzes").select("*").order("created_at", {ascending: false}),
+    sb.from("quiz_results").select("*").order("created_at", {ascending: false})
   ]);
   const err = [st, rs, hw, wr, sh, mt, ac, ar].find(x => x.error)?.error;
   if (err) toast("Ошибка загрузки: " + err.message + ". Выполните заново supabase/schema.sql.");
   T.students = st.data || []; T.rows = rs.data || []; T.hw = hw.data || []; T.writings = wr.data || []; T.sheets = sh.data || [];
   T.mats = mt.data || []; T.act = ac.data || []; T.reports = ar.data || []; T.works = wk.data || [];
+  T.qzQuizzes = qz.data || []; T.qzResults = qr.data || [];
   await ensureCourses([...new Set([...T.students.map(x => x.course), curCourse()])]);
   T.loading = false; render(); onlineNow(); paintOnline();
 }
@@ -290,6 +294,133 @@ function aiReportHTML(s, x){
       <p class="small muted">${new Date(rep.created_at).toLocaleString("ru-RU",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</p>` : ""}</div>`;
 }
 
+/* ---------- тест по темам: сборка из тестов уроков + нейросеть, ссылка ученику, карта ошибок ---------- */
+const QZ_COUNTS = [2, 3, 5];
+function qzState(s){
+  if (T.qzSelSid !== s.id){
+    T.qzSelSid = s.id; T.qzSel = new Set(); T.qzCount = 3; T.qzDraft = null; T.qzSaved = null; T.qzBusy = false;
+  }
+  if (!(T.qzSel instanceof Set)) T.qzSel = new Set(Array.isArray(T.qzSel) ? T.qzSel : []);
+  return T;
+}
+const qzQuestions = l => { try { return window.Quiz ? Quiz.questionsFromTests(U.lessonTests(l).test, l.title, l.id) : []; } catch(_){ return []; } };
+function qzResultsFor(s){ return [...(T.qzResults || [])].filter(r => r.student_id === s.id).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)); }
+function qzTopicLast(s){
+  const map = new Map();
+  qzResultsFor(s).forEach(r => (r.details?.topics || []).forEach(t => { const k = t.id || t.title; if (!map.has(k)) map.set(k, t); }));
+  return map;
+}
+const qzQuizById = id => (T.qzQuizzes || []).find(q => q.id === id) || null;
+const qzDate = iso => iso ? new Date(iso).toLocaleDateString("ru-RU", {day:"numeric", month:"short"}) : "";
+const qzPct = (ok, total) => total ? Math.round(+ok / +total * 100) : 0;
+function qzDraftHTML(d){
+  const groups = new Map();
+  d.questions.forEach((q, i) => {
+    const k = q.topicId || q.topic || "other";
+    const g = groups.get(k) || {title: q.topic || "Без темы", list: []};
+    g.list.push({q, i}); groups.set(k, g);
+  });
+  return `<div class="stack" style="gap:10px;border-top:1px solid var(--line);padding-top:12px">
+    <div class="row between" style="gap:8px;flex-wrap:wrap"><b>Предпросмотр: вопросов ${d.questions.length} · тем ${d.topics.length}</b><span class="small muted">Лишние вопросы можно убрать</span></div>
+    <label for="qz-title">Название теста</label><input id="qz-title" maxlength="120" value="${esc(d.title)}">
+    ${[...groups.values()].map(g => `<div class="qz-topic"><div class="qz-topic-row"><b>${esc(g.title)}</b><span class="chip">${g.list.length}</span></div><ol style="margin:6px 0 0;padding-left:18px">${g.list.map(({q, i}) => `<li style="margin:6px 0">${esc(q.q)} <button class="linkbtn" data-act="qz-drop" data-i="${i}">убрать</button></li>`).join("")}</ol></div>`).join("")}
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-act="qz-save" ${T.qzBusy ? "disabled" : ""}>Сохранить и получить ссылку</button><span class="small muted">вопросов: ${d.questions.length}</span></div></div>`;
+}
+function quizCardHTML(s, c){
+  const st = qzState(s);
+  const results = qzResultsFor(s);
+  const stats = window.Quiz ? Quiz.topicStats(results) : [];
+  const last = qzTopicLast(s);
+  const saved = st.qzSaved;
+  const draft = st.qzDraft ? qzDraftHTML(st.qzDraft) : "";
+  const picks = c.lessons.map(l => {
+    const n = qzQuestions(l).length, t = last.get(l.id), covered = s.covered_manual?.[l.id] || s.covered?.[l.id];
+    const extra = [`${n} вопр.`]; if (covered) extra.push("пройдено"); if (t?.total) extra.push("тест: " + qzPct(t.ok, t.total) + "%");
+    const ttl = String(l.title || "");
+    const short = ttl.length > 44 ? ttl.slice(0, 44).trimEnd() + "…" : ttl;
+    return `<label class="pick ${st.qzSel.has(l.id) ? "on" : ""}" title="${esc(ttl)}"><input type="checkbox" data-qz-topic="${esc(l.id)}" value="${esc(l.id)}" ${st.qzSel.has(l.id) ? "checked" : ""}><span>${esc(short)} <span class="small muted">· ${esc(extra.join(" · "))}</span></span></label>`;
+  }).join("");
+  const linkSaved = saved ? `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px">
+      <div class="kicker">Тест сохранён – ссылка готова</div><b>${esc(saved.title || "Тест по темам")}</b>
+      <div class="linkbox"><input type="text" id="qz-link" readonly value="${esc(Quiz.link(saved.id))}"><button class="btn ghost sm" data-act="qz-copy" data-id="${esc(saved.id)}">Копировать</button></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn ghost sm" data-qz-link href="${esc(Quiz.link(saved.id))}" target="_blank" rel="noopener">Открыть ссылку</a><button class="btn sm" data-act="qz-open" data-id="${esc(saved.id)}" data-title="${esc(saved.title || "")}">Открыть у ученика</button></div>
+      <p class="small muted">Отправьте ссылку в чат или откройте тест у ученика: если он сейчас в сети, тест появится сам.</p></div>` : "";
+  const quizzes = (T.qzQuizzes || []).filter(q => q.student_id === s.id).slice(0, 8);
+  const list = quizzes.length ? `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px"><div class="kicker">Сохранённые тесты этого ученика</div><div class="quiz-list">${quizzes.map(q => {
+      const lr = results.find(r => r.quiz_id === q.id), n = Array.isArray(q.data?.questions) ? q.data.questions.length : 0;
+      return `<div class="qz-item"><div style="min-width:0"><b>${esc(q.title || "Тест по темам")}</b><div class="small muted">${qzDate(q.created_at)} · вопросов: ${n}${lr ? ` · ${lr.score}/${lr.total}` : ""}</div></div><div class="row" style="gap:6px;flex-wrap:wrap">${lr ? `<span class="chip ${lvl(qzPct(lr.score, lr.total))}">${lr.score}/${lr.total}</span>` : ""}<a class="btn ghost sm" data-qz-link href="${esc(Quiz.link(q.id))}" target="_blank" rel="noopener">Открыть</a><button class="btn ghost sm" data-act="qz-copy" data-id="${esc(q.id)}">Копировать</button><button class="btn sm" data-act="qz-open" data-id="${esc(q.id)}" data-title="${esc(q.title || "")}">Ученику</button></div></div>`;
+    }).join("")}</div></div>` : "";
+  const resTable = results.length ? `<div style="border-top:1px solid var(--line);padding-top:12px"><div class="kicker">Попытки</div><div class="tablewrap"><table style="min-width:560px"><thead><tr><th>Дата</th><th>Тест</th><th>Результат</th><th>Надо доработать</th></tr></thead><tbody>${results.slice(0, 10).map(r => `<tr><td class="small">${qzDate(r.created_at)}</td><td class="small">${esc(qzQuizById(r.quiz_id)?.title || "Тест по темам")}</td><td><span class="chip ${lvl(qzPct(r.score, r.total))}">${r.score}/${r.total}</span></td><td>${(Array.isArray(r.needs_work) ? r.needs_work : []).map(n => `<span class="chip bad">${esc(n)}</span>`).join(" ") || "–"}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+  return `<div class="section-title"><h2>Тест по темам</h2><span class="small muted">Соберите тест из нескольких пройденных тем – ученик получит ссылку, а ошибки лягут на карту тем.</span></div>
+    <div class="card stack" id="qz-card" style="gap:12px">
+      ${st.qzDraft ? `<div class="kicker">Предпросмотр: вопросов ${st.qzDraft.questions.length} · тем ${st.qzDraft.topics.length}</div>` : ""}
+      <div class="kicker">1. Выберите темы</div>
+      <div style="max-height:260px;overflow:auto"><div class="picks">${picks || `<span class="small muted">В курсе пока нет уроков.</span>`}</div></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><label class="small" for="qz-count">Вопросов на тему</label>
+        <select id="qz-count" style="width:auto">${QZ_COUNTS.map(n => `<option ${n === st.qzCount ? "selected" : ""}>${n}</option>`).join("")}</select>
+        <button class="btn sm" data-act="qz-build" ${st.qzBusy ? "disabled" : ""}>${st.qzBusy ? "Собираю…" : "Собрать тест"}</button>
+        <span class="small muted">выбрано тем: ${st.qzSel.size}</span></div>
+      ${draft}${linkSaved}${list}
+      <div style="border-top:1px solid var(--line);padding-top:12px"><div class="kicker">Карта тем</div><div id="qz-map">${window.Quiz ? Quiz.graphHTML(stats) : `<p class="small muted">Модуль тестов не загрузился – обновите страницу.</p>`}</div></div>
+      ${resTable}</div>`;
+}
+async function qzBuild(s){
+  const c = U.courseFor(s, T.mats); if (!c) return;
+  const sel = [...qzState(s).qzSel].map(id => U.findLesson(c, id)).filter(Boolean);
+  if (!sel.length){ toast("Отметьте хотя бы одну тему"); return; }
+  if (sel.length > 20){ toast("Выберите не больше 20 тем"); return; }
+  if (!window.Quiz){ toast("Модуль тестов не загрузился – обновите страницу"); return; }
+  const count = Math.max(1, Math.min(10, +T.qzCount || 3));
+  T.qzBusy = true; T.qzDraft = null; T.qzSaved = null; render();
+  const topics = [], questions = []; let aiErr = "";
+  for (const l of sel){
+    topics.push({id: l.id, title: l.title});
+    let qs = qzQuestions(l).slice(0, count);
+    if (qs.length < count){
+      try {
+        const r = await ai({action: "generate_tasks", topic: l.title, count: count - qs.length, grade: s.grade});
+        if (r?.error) aiErr = r.error;
+        else qs = [...qs, ...Quiz.questionsFromTests(Array.isArray(r?.test) ? r.test : [], l.title, l.id)];
+      } catch(e){ aiErr = e.message || String(e); }
+    }
+    questions.push(...qs.slice(0, count));
+  }
+  T.qzBusy = false;
+  if (!questions.length){ render(); toast(aiErr ? "Нейросеть не помогла: " + aiErr : "В выбранных темах нет готовых вопросов с вариантами ответа"); return; }
+  const names = topics.map(t => t.title).slice(0, 3).map(x => String(x).slice(0, 40));
+  T.qzDraft = {title: `Тест по темам: ${names.join("; ")}${topics.length > 3 ? " и др." : ""}`.slice(0, 120), topics, questions};
+  render();
+  if (aiErr) toast("Часть вопросов нейросеть не добавила: " + aiErr);
+  else toast(`Собрано вопросов: ${questions.length}. Проверьте и сохраните.`);
+}
+async function qzSave(s){
+  const d = T.qzDraft; if (!d || !d.questions.length){ toast("Сначала соберите тест"); return; }
+  if (!window.Quiz){ toast("Модуль тестов не загрузился – обновите страницу"); return; }
+  const title = ((($("#qz-title") && $("#qz-title").value) || d.title || "").trim().slice(0, 120)) || "Тест по темам";
+  const id = Quiz.newId(), data = {title, subject: subjOfS(s), grade: s.grade ?? null, topics: d.topics, questions: d.questions};
+  T.qzBusy = true; render();
+  const {data: row, error} = await sb.from("quizzes").insert({id, student_id: s.id, title, course: s.course, data}).select().single();
+  T.qzBusy = false;
+  if (error){ toast("Не сохранилось: " + error.message); render(); return; }
+  T.qzQuizzes = [row || {id, student_id: s.id, title, course: s.course, data, created_at: new Date().toISOString()}, ...(T.qzQuizzes || [])];
+  T.qzSaved = T.qzQuizzes[0]; T.qzDraft = null; T.qzSel = new Set();
+  render(); toast("Тест сохранён. Ссылка готова – отправьте её ученику.");
+}
+async function qzCopy(id){
+  const link = window.Quiz ? Quiz.link(id) : String(id || "");
+  try { await navigator.clipboard.writeText(link); toast("Ссылка скопирована"); }
+  catch(_){
+    try { const ta = document.createElement("textarea"); ta.value = link; document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Ссылка скопирована"); }
+    catch(__){ toast("Ссылка: " + link); }
+  }
+}
+function qzOpen(s, id, title){
+  if (!id) return;
+  cmd(s.id, "quiz", {token: id, title: title || "Тест по темам"});
+  if (s.pair_id) cmd(s.pair_id, "quiz", {token: id, title: title || "Тест по темам"});
+  toast(T.online[s.id] ? "Тест отправлен ученику" : "Ученик сейчас не в сети – тест ждёт его в разделе «Тесты»");
+}
+
 function viewStudent(){
   const s = T.students.find(x => x.id === T.sel); if (!s) return viewStudents();
   const x = sData(s), c = x.c, et = window.ENTRY_TESTS?.[String(s.grade)];
@@ -338,6 +469,7 @@ function viewStudent(){
       <div><button class="btn sm" data-act="save-pair">Сохранить</button></div></div>
   </div>
   ${!pending(s) ? `<div class="section-title"><h2>Анализ и план</h2></div>${aiReportHTML(s, x)}` : ""}
+  ${c ? quizCardHTML(s, c) : ""}
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
   ${T.liveTest?.[s.id] && !T.liveTest[s.id].done && !T.liveTest[s.id].quit ? `<div class="section-title"><h2>Сейчас проходит тест</h2></div><div class="card" data-livetest="${s.id}">${liveTestHTML(T.liveTest[s.id])}</div>` : ""}
@@ -349,27 +481,29 @@ function viewStudent(){
   <div style="margin-top:16px">${U.progressHTML(T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id) && !pending(o)).map(o => ({subject: o.subject || U.subjectOf(o.course), ...U.subjectNow(T.rows.filter(r => r.student_id === o.id), T.writings.filter(w => w.student_id === o.id))})))}</div>
   ${c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings, x.hw)}
   <div class="section-title"><h2>Уроки</h2><div class="row"><button class="btn ghost sm" data-act="shift" title="Перенести все будущие уроки на неделю вперёд">Каникулы: сдвинуть будущие уроки на неделю</button></div></div>
-  <div class="tablewrap glass"><table style="min-width:1040px"><thead><tr><th>№</th><th>Дата</th><th>Тема</th><th>Доступ</th><th>Время</th><th>Выполнено</th><th>Тест</th><th>ДЗ-тест</th><th>Письмо</th><th>ДЗ</th><th></th></tr></thead><tbody>
+  <div class="tablewrap glass"><table style="min-width:1140px"><thead><tr><th>№</th><th>Дата</th><th>Тема</th><th>Доступ</th><th>Пройдено</th><th>Время</th><th>Выполнено</th><th>Тест</th><th>ДЗ-тест</th><th>Письмо</th><th>ДЗ</th><th></th></tr></thead><tbody>
   ${c.lessons.map((l,i) => { const r = x.results[l.id], hr = x.hwres[l.id], h = x.hw[l.id], w = x.writings[l.id], hs = U.hwState(c, l.id, x.hw), dn = x.done(l);
     const byDate = d(l.date) <= today(), early = unlocked.includes(l.id);
+    const manualDate = s.covered_manual?.[l.id], coveredDate = manualDate || s.covered?.[l.id];
     const wcell = !w ? "–" : w.status === "sent" ? `<span class="chip mid">ждёт</span>` : w.max ? `<span class="chip ${lvl(Math.round(w.total/w.max*100))}">${w.total}/${w.max}</span>` : `<span class="chip">${w.status === "redo" ? "доработка" : "проверено"}</span>`;
     return `<tr><td class="tnum">${i+1}</td><td><div class="dt-cell"><input type="date" class="tinput" value="${esc(l.date)}" data-date="${l.id}" aria-label="Дата урока ${i+1}"><input type="time" class="tinput" value="${esc(U.lessonTime(s, l))}" data-ltime="${l.id}" aria-label="Время урока ${i+1}"></div>${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
       <td><i class="dot" style="background:${blockOf(c, l).color}"></i> ${esc(l.title)}${l.writing ? `<div class="small muted">${esc(U.KIND_NAME[l.writing.type])}</div>` : ""}${l.custom ? (T.mats.find(m => m.id === l.mid)?.student_id ? `<div class="small muted">из курса «${esc(l.oge)}» <button class="linkbtn" data-act="del-copy" data-mid="${l.mid}">убрать</button></div>` : '<div class="small muted">свой урок</div>') : ""}</td>
       <td>${byDate ? '<span class="chip good">открыт</span>' : early ? `<button class="btn ghost sm" data-unlock="${l.id}" data-on="0">Закрыть</button>` : `<button class="btn ghost sm" data-unlock="${l.id}" data-on="1">${I.lock} Открыть сейчас</button>`}</td>
+      <td>${coveredDate ? `<span class="chip good" title="${manualDate ? "Отмечено вручную" : "Пройдено на уроке"}">✓ ${fmt(coveredDate, {day: "numeric", month: "short"})}</span> <button class="linkbtn" data-act="covered-toggle" data-lid="${esc(l.id)}" data-on="0">убрать</button>` : `<button class="btn ghost sm" data-act="covered-toggle" data-lid="${esc(l.id)}" data-on="1">Отметить</button>`}</td>
       <td class="tnum">${mins(x.time[l.id])}</td>
-      <td class="tnum">${dn == null ? "–" : `<span class="chip ${lvl(dn)}">${dn}%</span>`}${s.covered?.[l.id] ? `<div class="small muted">пройден на уроке ${fmt(s.covered[l.id], {day: "numeric", month: "short"})}</div>` : ""}</td>
+      <td class="tnum">${dn == null ? "–" : `<span class="chip ${lvl(dn)}">${dn}%</span>`}</td>
       <td class="tnum">${r ? `<span class="chip ${lvl(pct(r.last))}">${pct(r.last)}%</span><div class="small muted">лучш. ${pct(r.best)}% · ${r.attempts}${r.last?.duration_sec ? " · " + mins(r.last.duration_sec) : ""}</div>` : "–"}</td>
       <td class="tnum">${hr ? `<span class="chip ${lvl(pct(hr.last))}">${pct(hr.last)}%</span>` : "–"}</td>
       <td>${wcell}${w ? `<div style="margin-top:4px"><button class="btn ghost sm" data-wreview="${l.id}">Проверить</button></div>` : ""}</td>
       <td><span class="chip ${hs.c}">${hs.t}</span>${h?.note?`<div class="small" style="margin-top:4px">${/^https?:/.test(h.note)?`<a href="${esc(h.note)}" target="_blank" rel="noopener">ссылка ученика</a>`:esc(h.note)}</div>`:""}<div style="margin-top:4px"><button class="btn ghost sm" data-review="${l.id}">Оценить</button></div></td>
       <td><div class="stack" style="gap:6px"><button class="btn sm" data-act="start-lesson" data-rl="${l.id}" title="Звонок, доска и задания этого урока">▶ Урок</button><button class="btn yellow sm" data-boardfor="${l.id}">Доска</button>${l.practice?.length ? `<button class="btn ghost sm" data-workfor="${l.id}">Тетрадь${(T.works || []).some(w => w.student_id === s.id && w.lesson_id === l.id) ? " ✓" : ""}</button>` : ""}<button class="btn ghost sm" data-goto="${l.id}" title="Откроет этот урок на экране ученика">Показать ученику</button></div></td></tr>
-      ${T.review === l.id ? `<tr><td colspan="11"><div class="stack" style="gap:6px;max-width:520px"><b>ДЗ: ${esc(l.title)}</b><p class="small">${esc(l.hw || "")}</p>
+      ${T.review === l.id ? `<tr><td colspan="12"><div class="stack" style="gap:6px;max-width:520px"><b>ДЗ: ${esc(l.title)}</b><p class="small">${esc(l.hw || "")}</p>
           ${hr ? `<p class="small muted">ДЗ-тест: ${esc(U.recText(hr.last))}</p>` : ""}
           <input type="text" id="rv-grade" placeholder="Оценка" value="${esc(h?.grade||"")}"><textarea id="rv-comment" placeholder="Комментарий ученику">${esc(h?.comment||"")}</textarea>
           <div class="row"><button class="btn sm" data-act="review" data-st="accepted">Принять</button><button class="btn ghost sm" data-act="review" data-st="redo">На доработку</button></div></div></td></tr>` : ""}
-      ${T.wreview === l.id ? `<tr><td colspan="11"><div style="max-width:760px">${writingReviewHTML(s, x, l)}</div></td></tr>` : ""}`; }).join("")}
+      ${T.wreview === l.id ? `<tr><td colspan="12"><div style="max-width:760px">${writingReviewHTML(s, x, l)}</div></td></tr>` : ""}`; }).join("")}
   </tbody></table></div>
-  <p class="small muted" style="margin-top:8px">«Время» – сколько ученик провёл в папке урока. «Выполнено» – доля сделанного: мини-практика, тест, ДЗ-тест, письмо и отметка ДЗ.</p>`
+  <p class="small muted" style="margin-top:8px">«Время» – сколько ученик провёл в папке урока. «Выполнено» – доля сделанного: мини-практика, тест, ДЗ-тест, письмо и отметка ДЗ. «Пройдено» – отметка вручную (очно или на другой платформе): на «Выполнено» не влияет.</p>`
   : `<div class="section-title"><h2>План</h2></div><div class="card"><p>План ещё не выбран: выберите курс выше. Подходит: ${esc(U.getCourse(U.planFor(subjOfS(s), s.grade ?? 9, s.goals || []))?.course || "–")}.</p></div>`}
   <div class="section-title"><h2>Управление</h2></div>
   <div class="card row"><button class="btn ${T.confirmDel===s.id?"danger":"ghost"} sm" data-act="del-student">${T.confirmDel===s.id?"Нажмите ещё раз, чтобы удалить навсегда":"Удалить ученика"}</button></div>`;
@@ -1252,9 +1386,11 @@ let refT = 0;
 function refreshSoon(){
   clearTimeout(refT);
   refT = setTimeout(async () => {
-    const [rs, hw, wr, ac, st] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*"), sb.from("students").select(ST_COLS).order("created_at")]);
+    const [rs, hw, wr, ac, st, qz, qr] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*"), sb.from("students").select(ST_COLS).order("created_at"),
+      sb.from("quizzes").select("*").order("created_at", {ascending: false}), sb.from("quiz_results").select("*").order("created_at", {ascending: false})]);
     if (!st.error) T.students = st.data;
     if (!rs.error) T.rows = rs.data; if (!hw.error) T.hw = hw.data; if (!wr.error) T.writings = wr.data; if (!ac.error) T.act = ac.data;
+    if (!qz.error) T.qzQuizzes = qz.data || []; if (!qr.error) T.qzResults = qr.data || [];
     if (!typing()) render(); else T.stale = true;
   }, 500);
 }
@@ -1353,6 +1489,14 @@ document.addEventListener("paste", e => {
 });
 document.addEventListener("change", async e => {
   if (e.target.id === "call-url" || e.target.id === "room-url"){ const s = T.students.find(x => x.id === (e.target.id === "room-url" ? T.room?.sid : T.sel)); if (s && await saveCall(s, e.target.value)) render(); return; }
+  if (e.target.id === "qz-count"){ T.qzCount = Math.max(1, Math.min(10, +e.target.value || 3)); return; }
+  if (e.target.dataset.qzTopic){
+    const s = T.students.find(x => x.id === T.sel); if (!s) return;
+    const st = qzState(s), lid = e.target.dataset.qzTopic;
+    e.target.checked ? st.qzSel.add(lid) : st.qzSel.delete(lid);
+    const lab = e.target.closest("label"); if (lab) lab.classList.toggle("on", e.target.checked);
+    return;
+  }
   if (e.target.id === "tk-subj"){ T.take = {subj: e.target.value}; render(); return; }
   if (e.target.id === "tk-course"){ T.take = {...(T.take || {}), course: e.target.value}; render(); return; }
   if (e.target.id === "room-course" && T.room){ T.room.pickCourse = e.target.value; render(); return; }
@@ -1439,6 +1583,28 @@ document.addEventListener("click", async e => {
   if (t.dataset.review && !t.dataset.act){ T.review = T.review === t.dataset.review ? null : t.dataset.review; T.wreview = null; render(); return; }
   if (t.dataset.wreview && !t.dataset.act){ T.wreview = T.wreview === t.dataset.wreview ? null : t.dataset.wreview; T.review = null; render(); return; }
   const a = t.dataset.act;
+  if (a === "covered-toggle"){
+    const s = T.students.find(x => x.id === T.sel), lid = t.dataset.lid; if (!s || !lid) return;
+    const on = t.dataset.on === "1", covered = {...(s.covered || {})}, manual = {...(s.covered_manual || {})};
+    if (on){ covered[lid] = isoToday(); manual[lid] = isoToday(); } else { delete covered[lid]; delete manual[lid]; }
+    if (await upd(s.id, {covered, covered_manual: manual})){
+      const l = U.findLesson(U.courseFor(s, T.mats), lid);
+      render(); cmd(s.id, "refresh", {msg: on ? `Учитель отметил тему пройденной: «${l?.title || ""}»` : "Учитель снял отметку «пройдено»"});
+      toast(on ? "Отмечено: тема пройдена" : "Отметка «пройдено» снята");
+    }
+    return;
+  }
+  if (a === "qz-build"){ const s = T.students.find(x => x.id === T.sel); if (s) await qzBuild(s); return; }
+  if (a === "qz-drop"){
+    const d = T.qzDraft; if (!d) return;
+    const i = +t.dataset.i;
+    if (Number.isInteger(i) && i >= 0 && i < d.questions.length) d.questions.splice(i, 1);
+    if (!d.questions.length) T.qzDraft = null;
+    render(); return;
+  }
+  if (a === "qz-save"){ const s = T.students.find(x => x.id === T.sel); if (s) await qzSave(s); return; }
+  if (a === "qz-copy"){ await qzCopy(t.dataset.id || T.qzSaved?.id); return; }
+  if (a === "qz-open"){ const s = T.students.find(x => x.id === T.sel); if (s) qzOpen(s, t.dataset.id, t.dataset.title); return; }
   if (a && a.startsWith("te-")){ await teAct(a, t); return; }
   if (a && a.startsWith("game-")){ await gameAct(a, t); return; }
   if (a === "ce-reset"){ await ceReset(t); return; }

@@ -1,8 +1,53 @@
-/* Простой запуск проверок доски v55.
-   Использование: node _test/run.mjs   (то же, что node _test/board.mjs)
-   Пробрасывает BOARD_ONLY/BOARD_HEADLESS/PORT/CDP_PORT из окружения. */
-import { runBoardStandalone } from "./board.mjs";
+/* Полный прогон проверок repetitor (v57): мок Supabase без браузера + стенд доски + e2e (учитель+ученик).
+   Запуск: node _test/run.mjs
+           PORT=... CDP_PORT=... node _test/run.mjs   (базовые порты переопределяются для доски)
+   Печатает PASS/FAIL каждого набора, скриншоты падений — в _test/artifacts/.
+   Код выхода: 0 — всё зелёное, 1 — есть падения, 2 — стенд не запустился.
+   Наборы идут последовательно, каждый поднимает/гасит свои сервер и Chrome:
+     mock-selftest.mjs — мок (RPC/from/channel/quiz_*), без браузера;
+     board.mjs         — доска, 15 сценариев (board.html);
+     e2e.mjs           — a,b1,b2,b3 + Q1–Q4 на mock Supabase (teacher.html + index.html). */
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-runBoardStandalone()
-  .then(({ failed }) => process.exit(failed ? 1 : 0))
-  .catch(e => { console.error("ОШИБКА СТЕНДА:", (e && e.stack) || e); process.exit(2); });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function runFile(file) {
+  return new Promise(resolve => {
+    const p = spawn(process.execPath, [file], { cwd: path.dirname(__dirname), stdio: "inherit", env: process.env });
+    let done = false;
+    const finish = code => { if (done) return; done = true; resolve(code == null ? 1 : code); };
+    p.on("error", e => { console.error("Не удалось запустить " + file + ": " + e.message); finish(2); });
+    p.on("close", finish);
+  });
+}
+
+async function main() {
+  // старые скриншоты падений не должны путать: чистим только свою папку артефактов
+  try { fs.rmSync(path.join(__dirname, "artifacts"), { recursive: true, force: true }); } catch (_) {}
+  const suites = [
+    ["Мок Supabase (без браузера)", path.join(__dirname, "mock-selftest.mjs")],
+    ["Доска (стенд board.html)", path.join(__dirname, "board.mjs")],
+    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs")],
+  ];
+  const results = [];
+  for (const [name, file] of suites) {
+    console.log("\n══════════ " + name + " ══════════");
+    if (!fs.existsSync(file)) { console.error("Нет файла: " + file); results.push([name, 2]); continue; }
+    const code = await runFile(file);
+    results.push([name, code]);
+  }
+  console.log("\n══════════ ИТОГ ══════════");
+  let bad = false;
+  results.forEach(([name, code]) => {
+    const mark = code === 0 ? "PASS" : "FAIL";
+    if (code !== 0) bad = true;
+    console.log(`[${mark}] ${name}${code === 0 ? "" : ` (exit ${code})`}`);
+  });
+  if (bad) console.log("Скриншоты падений: " + path.join(__dirname, "artifacts"));
+  process.exit(bad ? 1 : 0);
+}
+
+main();

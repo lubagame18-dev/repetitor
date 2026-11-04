@@ -7,7 +7,8 @@ const CFG = window.APP_CONFIG || {};
 const sb = U.supa();/* встроенные готовые материалы по классам (подгружаются лениво по предмету) */
 try { const k0 = (LS.get("session")?.profile?.course) || CFG.DEFAULT_COURSE; if (window.BuiltinLoader && k0) BuiltinLoader.ensure(k0); } catch (e) { }
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
-           rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set(), syncPending:false};
+           rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set(), syncPending:false,
+           quizToken:null, quiz:null, qz:null, quizzes:null, qzResults:[], qzBusy:false};
 const $ = s => document.querySelector(s);
 const LS = {get(k, def){ try{ return JSON.parse(localStorage.getItem("oge-" + k)) ?? def; }catch(e){ return def; } },
             set(k, v){ try{ localStorage.setItem("oge-" + k, JSON.stringify(v)); }catch(e){} }};
@@ -161,6 +162,13 @@ function liveStart(){
       toast(m.msg || "Учитель обновил твои материалы");
       return;
     }
+    if (m.type === "quiz"){
+      if (!m.token) return;
+      if (S.view === "quiz" && S.qz && !S.qz.done){ toast("Сначала закончи текущий тест"); return; }
+      toast(`Учитель прислал тест: ${m.title || "новый тест"}`);
+      await openQuiz(m.token);
+      return;
+    }
     if (m.type === "lesson"){
       const ok = await ensureLesson(m);
       if (!ok){ toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return; }
@@ -219,6 +227,8 @@ function liveStart(){
   let presenceBusy = false;
   live.on("presence", {event:"sync"}, async () => {
     if (presenceBusy) return;
+    /* ученик проходит тест или смотрит раздел «Тесты» – не выдёргиваем его в комнату урока */
+    if (S.view === "quiz" || S.view === "quizzes") return;
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];
     const t = Object.values(live.presenceState()).flat().find(p => p.role === "teacher" && p.room && p.room.to?.some(id => mine.includes(id)));
     if (!(t && (t.room.at || 0) > (S.roomEnded || 0) && (!S.room || S.room.lesson !== t.room.lesson))) return;
@@ -228,6 +238,7 @@ function liveStart(){
       const ok = await ensureLesson({lesson: t.room.lesson, to: myRow?.id || S.profile.id});
       if (!ok) return;
       await load();   // свежие материалы к моменту приглашения/входа в комнату
+      if (S.view === "quiz" || S.view === "quizzes") return;   // тест могли открыть, пока грузили данные
       const title = S.course?.lessons.find(x => x.id === t.room.lesson)?.title || t.room.title || "";
       invite({...t.room, title});
     } finally { presenceBusy = false; }
@@ -242,7 +253,7 @@ function liveTrack(now){
     const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", board:"Доска", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
     const rl = S.view === "room" && roomLesson();
     if (rl){ live.track({role:"student", id:S.profile.id, name:S.profile.name, where:`на уроке «${rl.title}» · ${S.test && S.testInRoom ? "проходит тест" : ({theory:"теория", practice:"практика", writing:"письмо", mats:"материалы", hw:"домашка", test:"тест"}[S.sub] || "доска")}`, lesson: rl.id, tab: S.sub, at: Date.now()}).catch(() => {}); return; }
-    const where = S.view === "myboard" ? "на личной доске" : S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
+    const where = S.view === "myboard" ? "на личной доске" : S.view === "folder" ? `урок «${l?.title || ""}» · ${TAB[S.sub] || ""}` : S.view === "test" ? `проходит ${S.test?.kind === "entry" ? "входной тест" : "тест"}: ${S.test?.title || ""}` : S.view === "quiz" ? `проходит тест по темам: ${S.quiz?.title || ""}` : ({home:"на главной", lessons:"смотрит уроки", quizzes:"смотрит тесты", stats:"смотрит статистику", plan:"смотрит план", entry:"входной тест", look:"меняет оформление"}[S.view] || "");
     live.track({role:"student", id:S.profile.id, name:S.profile.name, where, lesson: l?.id || null, at: Date.now()}).catch(() => {});
   }, now ? 0 : 250);
 }
@@ -424,10 +435,10 @@ function pickAvatar(){
 }
 function drawerHTML(){
   const p = S.profile, ini = (p.name || "?").split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase();
-  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["self","Самообучение",I.book], window.OGE?.isOge(S.course) && ["oge","Мой ОГЭ",I.stats],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
+  const nav = [["home","Главная",I.home],["lessons","Мои уроки",I.folder],["quizzes","Тесты",I.check],["self","Самообучение",I.book], window.OGE?.isOge(S.course) && ["oge","Мой ОГЭ",I.stats],["myboard","Личная доска",I.board],["stats","Статистика",I.stats],["plan","План работы",I.plan], entryTest() && ["entry","Входной тест",I.entry],["look","Оформление",I.pen]].filter(Boolean);
   const mine = p.subjects?.length ? p.subjects : [{id:p.id, subject:subjKey(), grade:p.grade}];
   const others = U.SUBJECTS.filter(x => !mine.some(m => m.subject === x.k) && x.g.includes(+p.grade));
-  const cur = S.view === "folder" ? "lessons" : S.view === "test" ? (S.test?.kind === "entry" ? "entry" : "lessons") : S.view;
+  const cur = S.view === "folder" ? "lessons" : S.view === "quiz" ? "quizzes" : S.view === "test" ? (S.test?.kind === "entry" ? "entry" : "lessons") : S.view;
   return `<button class="me me-btn" data-go="profile" title="Мой профиль: школа, фото">${avatarHTML(p)}<div style="min-width:0;text-align:left"><b>${esc(p.name)}</b><div class="small muted">${p.grade ? p.grade + " класс" : ""}${p.goal ? " · " + esc(U.goalLabel(p.goal)) : ""}</div>${p.pair ? `<div class="small pairtag">👥 в паре: ${esc(p.pair.name.split(" ")[0])}</div>` : ""}</div></button>
    <div class="group"><span class="mono">Предметы</span>
      ${mine.map(m => m.id === p.id ? `<button class="navitem" data-go="lessons" ${cur==="lessons"?'aria-current="page"':""}><span class="emo">${U.subj(m.subject).e}</span><span>${esc(U.subj(m.subject).n)}${mine.filter(x => x.subject === m.subject).length > 1 && U.getCourse(m.course) ? `<small class="muted" style="display:block;font-weight:600">${esc(U.getCourse(m.course).tag || U.getCourse(m.course).course)}</small>` : ""}</span><span class="chip" style="margin-left:auto">${U.gradeName(m.grade).replace(" класс", " кл.")}</span></button>`
@@ -443,7 +454,7 @@ function drawerHTML(){
    ${!sb ? '<p class="small muted" style="padding:0 8px">Демо-режим: данные хранятся на этом устройстве.</p>' : ""}
    <div class="drawer-foot"><button class="btn" data-act="install" style="width:100%;justify-content:center">${I.phone.replace('<svg','<svg width="18" height="18"')} Скачать на телефон</button></div>`;
 }
-const TITLES = {profile:"Мой профиль", oge:"Мой ОГЭ", self:"Самообучение", room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон"};
+const TITLES = {profile:"Мой профиль", oge:"Мой ОГЭ", self:"Самообучение", room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон", quiz:"Тест по темам", quizzes:"Тесты"};
 
 /* ---------- экраны ---------- */
 function folderHTML(l){
@@ -766,6 +777,160 @@ function viewTest(){
   </article>`;
 }
 
+/* ---------- тесты по темам: ссылка index.html?quiz=КОД, объяснения, повтор, карта ---------- */
+const Quiz = window.Quiz || null;
+const quizDate = x => { try { return new Date(x).toLocaleDateString("ru-RU", {day:"numeric",month:"long",year:"numeric"}); } catch(_) { return ""; } };
+async function openQuiz(token){
+  if (!token) return false;
+  if (!Quiz){ toast("Модуль тестов не загрузился – обновите страницу."); return false; }
+  if (S.view === "quiz" && S.qz && !S.qz.done){ toast("Сначала закончи текущий тест"); return false; }
+  if (!sb){ toast("Тест откроется, когда появится связь с сервером."); return false; }
+  let r;
+  try { r = await sb.rpc("quiz_get", {p_token: token}); } catch(e){ r = {error:e}; }
+  if (r?.error || !r?.data){ toast("Тест не найден или нет связи. Попросите у учителя новую ссылку."); return false; }
+  const data = r.data, questions = Quiz.normQuestions(data.data);
+  if (!questions.length){ toast("В этом тесте пока нет вопросов."); return false; }
+  S.quiz = {id: data.id || token, title: data.title || data.data?.title || "Тест по темам", data: data.data || {}, questions};
+  S.qz = {i:0, attempt:1, picked:null, revealed:false, log:[], done:false, result:null};
+  S.quizToken = null;                       // ссылка уже открыта – не переоткрывать после выхода/входа
+  S.view = "quiz"; S.drawer = false;
+  render(); scrollTo(0, 0); liveTrack();
+  return true;
+}
+/* ссылка ?quiz=: если ученик не был залогинен, токен ждёт входа/регистрации и открывается после load */
+async function openDeepQuiz(){
+  if (!S.quizToken || !S.profile || S.invite) return false;
+  return await openQuiz(S.quizToken);
+}
+function quizPick(k){
+  const Q = S.quiz, A = S.qz;
+  if (!Q || !A || A.done || A.revealed) return;
+  const q = Q.questions[A.i]; if (!q || !(k >= 0 && k < q.o.length)) return;
+  A.picked = k; A.revealed = true;
+  A.log[A.i] = {i:A.i, topic:q.topic, topicId:q.topicId, first:(A.attempt === 1 && k === q.a), attempts:A.attempt, ok:k === q.a, picked:k};
+  render();
+}
+function quizRetry(){
+  const A = S.qz; if (!A || A.done || A.attempt !== 1) return;
+  A.attempt = 2; A.picked = null; A.revealed = false; render();
+}
+function quizNext(){
+  const Q = S.quiz, A = S.qz; if (!Q || !A || A.done) return;
+  if (A.i >= Q.questions.length - 1){ finishQuiz(); return; }
+  A.i++; A.attempt = 1; A.picked = null; A.revealed = false;
+  render(); scrollTo(0, 0);
+}
+function quizRestart(){
+  if (!S.quiz || !S.quiz.questions?.length) return;
+  S.qz = {i:0, attempt:1, picked:null, revealed:false, log:[], done:false, result:null};
+  S.quizToken = null; S.view = "quiz"; S.drawer = false;
+  render(); scrollTo(0, 0); liveTrack();
+}
+async function finishQuiz(){
+  const Q = S.quiz, A = S.qz; if (!Q || !A || A.done) return;
+  const n = Q.questions.length, topics = Quiz.summarize(Q.questions, A.log);
+  const score = A.log.filter(x => x && x.ok).length;
+  const needsWork = topics.filter(t => t.needsWork).map(t => t.title);
+  A.done = true;
+  A.result = {score, total:n, pct: n ? Math.round(score / n * 100) : 0, topics, needsWork};
+  const at = new Date().toISOString();
+  S.qzResults = [{quiz_id:Q.id, title:Q.title, score, total:n, details:{questions:A.log, topics}, needs_work:needsWork, created_at:at}, ...(S.qzResults || [])].slice(0, 100);
+  if (S.quizzes) S.quizzes = S.quizzes.map(x => x.id === Q.id ? {...x, last:{score, total:n, at}} : x);
+  S.view = "quiz"; S.drawer = false;
+  render(); scrollTo(0, 0); liveTrack();
+  liveAct(`прошёл тест по темам: ${score}/${n}`);
+  if (!sb) return;
+  try {
+    const {error} = await sb.rpc("quiz_submit", {p_code:S.token, p_token:Q.id, p_score:score, p_total:n, p_details:{questions:A.log, topics}, p_needs_work:needsWork});
+    if (error) toast("Результат не отправлен учителю: нет связи. Покажи этот экран учителю.");
+  } catch(e){ toast("Результат не отправлен учителю: нет связи. Покажи этот экран учителю."); }
+}
+function viewQuizResult(){
+  const Q = S.quiz, A = S.qz, R = A?.result;
+  if (!Q || !R) return `<div class="card"><p>Итог теста не сохранился на этом устройстве.</p><div class="row" style="margin-top:10px"><button class="btn" data-go="quizzes">Все тесты</button><button class="btn ghost" data-go="home">На главную</button></div></div>`;
+  const stats = Quiz.topicStats([{details:{topics:R.topics}}]);
+  return `<div class="quiz-wrap"><article class="quiz-card card quiz-result" data-qresult="1">
+    <div class="kicker">Тест по темам завершён</div>
+    <h1 style="font-size:1.5rem;margin:6px 0 2px">${esc(Q.title)}</h1>
+    <div class="quiz-score" data-score="${R.score}" data-total="${R.total}" data-pct="${R.pct}">${R.score} <small>из ${R.total} · ${R.pct}%</small></div>
+    <p style="margin:0">${R.pct === 100 ? "Котик ставит сто баллов!" : R.pct >= 80 ? "Отличный результат!" : R.pct >= 60 ? "Неплохо, есть что повторить." : "Есть темы, которые надо разобрать с учителем."}</p>
+    <div><b>Надо доработать:</b> ${R.needsWork.length ? `<div class="quiz-topics">${R.needsWork.map(t => `<span class="chip bad">${esc(t)}</span>`).join("")}</div>` : `<div class="quiz-topics"><span class="chip good">все темы освоены</span></div>`}</div>
+    <div class="section-title" style="margin:2px 0 0"><h2 style="font-size:1.1rem">Карта тем</h2></div>
+    <div id="qz-map">${Quiz.graphHTML(stats)}</div>
+    <div class="quiz-actions"><button class="btn" data-go="home">На главную</button><button class="btn ghost" data-qagain="1">Пройти снова</button><button class="btn ghost" data-go="quizzes">Все тесты</button></div>
+  </article></div>`;
+}
+function viewQuiz(){
+  const Q = S.quiz, A = S.qz;
+  if (!Q || !A || !Q.questions.length) return `<div class="card"><p>Тест не открыт.</p><div class="row" style="margin-top:10px"><button class="btn" data-go="quizzes">Все тесты</button><button class="btn ghost" data-go="home">На главную</button></div></div>`;
+  if (A.done) return viewQuizResult();
+  const n = Q.questions.length, q = Q.questions[A.i] || Q.questions[0], ok = A.revealed && A.picked === q.a;
+  const last = A.i === n - 1;
+  const expl = q.e ? esc(q.e) : `Правильный ответ: ${esc(q.o[q.a])}`;
+  const opts = q.o.map((o, k) => {
+    let c = "";
+    if (A.revealed){ if (ok && k === q.a) c = "ok"; else if (!ok && k === A.picked) c = "no"; }
+    return `<button class="quiz-opt${c ? " " + c : ""}" data-qopt="${k}" ${A.revealed ? "disabled" : ""}><span class="n">${k + 1}.</span><span>${esc(o)}</span></button>`;
+  }).join("");
+  const fb = A.revealed ? `<div class="quiz-fb ${ok ? "ok" : "no"}"><b>${ok ? "Верно!" : "Неверно."}</b><div class="quiz-expl">${expl}</div>${!ok && A.attempt === 1 ? `<div class="small muted">Это первая попытка. Попробуй ещё раз – тот же вопрос, вторая попытка из двух.</div>` : !ok && A.attempt === 2 ? `<div class="small muted">Тема попадает в «Надо доработать».</div>` : ""}</div>` : "";
+  const act = !A.revealed ? "" : (ok || A.attempt === 2)
+    ? `<div class="quiz-actions"><button class="btn" data-qnext="1">${last ? "Завершить" : "Дальше"}</button></div>`
+    : `<div class="quiz-actions"><button class="btn" data-qretry="1">Попробовать ещё раз</button></div>`;
+  return `<div class="quiz-wrap">
+    <div class="row between" style="margin-bottom:10px"><button class="btn ghost sm" data-go="home">← На главную</button><span class="chip tnum">Вопрос ${A.i + 1} из ${n}</span></div>
+    <article class="quiz-card card">
+      <div class="kicker">Тест по темам</div>
+      <h1 style="font-size:1.4rem;margin:6px 0 2px">${esc(Q.title)}</h1>
+      <div class="quiz-progress"><span class="small muted">Вопрос ${A.i + 1} из ${n}${A.attempt === 2 ? " · 2-я попытка" : ""}</span><div class="bar"><i style="width:${Math.round(A.i / n * 100)}%"></i></div></div>
+      ${q.topic ? `<div class="row" style="gap:6px;margin:2px 0 4px"><span class="quiz-topic-chip">${esc(q.topic)}</span></div>` : ""}
+      <p class="quiz-q">${esc(q.q)}</p>
+      <div class="quiz-opts">${opts}</div>
+      ${fb}${act}
+    </article></div>`;
+}
+function quizItemHTML(item){
+  const last = item.last;
+  return `<div class="qz-item"><div style="min-width:0"><b>${esc(item.title || "Тест по темам")}</b><div class="small muted">${item.questions || 0} ${item.questions === 1 ? "вопрос" : "вопросов"}${item.topics ? " · " + item.topics + " тем" : ""}${last ? ` · последний: ${last.score} из ${last.total}` : " · ещё не проходил"}</div></div>
+    <button class="btn sm" data-quiz="${esc(item.id)}">${last ? "Пройти снова" : "Пройти"}</button></div>`;
+}
+function viewQuizzes(){
+  const list = S.quizzes || [], results = S.qzResults || [];
+  const stats = Quiz ? Quiz.topicStats(results) : [];
+  let body;
+  if (!sb) body = `<div class="card"><p>Тесты доступны при подключении к серверу.</p></div>`;
+  else if (S.qzBusy && !S.quizzes) body = `<div class="card"><p class="muted">Загружаю тесты…</p></div>`;
+  else if (!list.length) body = `<div class="card"><p>Учитель пока не присылал тестов по темам. Когда пришлёт ссылку – тест появится здесь.</p></div>`;
+  else body = `<div class="quiz-list">${list.map(quizItemHTML).join("")}</div>`;
+  const hist = results.length ? `<div class="section-title"><h2>История попыток</h2></div><div class="quiz-list">${results.slice(0, 20).map(r => `<div class="qz-item"><div style="min-width:0"><b>${esc(r.title || "Тест по темам")}</b><div class="small muted">${esc(r.created_at ? quizDate(r.created_at) : "")}</div></div><span class="chip ${(r.total && r.score / r.total >= 0.6) ? "good" : "bad"}">${r.score} / ${r.total}</span></div>`).join("")}</div>` : "";
+  return `<div class="section-title" style="margin-top:6px"><h2>Тесты</h2><span class="chip">${list.length}</span></div>
+    <p class="small muted" style="margin-bottom:12px">Тесты по темам от учителя: сразу объяснение, при ошибке – вторая попытка. По итогам видно, что уже освоено, а что надо доработать.</p>
+    ${body}
+    <div class="section-title"><h2>Карта тем</h2></div>
+    <div id="qz-map">${Quiz ? Quiz.graphHTML(stats) : "<p class='small muted'>Модуль тестов не загрузился.</p>"}</div>
+    ${hist}`;
+}
+async function loadQuizzes(force){
+  if (!sb || !S.profile) return false;
+  if (S.qzBusy) return false;
+  if (S.quizzes && !force) return true;
+  S.qzBusy = true;
+  try {
+    const {data, error} = await sb.rpc("student_quizzes", {p_code: S.token});
+    if (error || !data){ if (force) toast("Не удалось загрузить тесты: проверь интернет."); return false; }
+    S.quizzes = data.quizzes || [];
+    S.qzResults = data.results || [];
+    return true;
+  } catch(e){ if (force) toast("Не удалось загрузить тесты: проверь интернет."); return false; }
+  finally { S.qzBusy = false; }
+}
+async function openQuizzes(){
+  if (S.regDone){ S.invite = null; S.regDone = null; }
+  S.view = "quizzes"; S.drawer = false; S.qzBusy = true;
+  render(); scrollTo(0, 0); liveTrack();
+  S.qzBusy = false;
+  if (await loadQuizzes(true)){ if (S.view === "quizzes") render(); }
+}
+
 function viewEntry(){
   const et = entryTest(), er = entryRes();
   if (!et) return `<div class="card"><p>Входной тест для этого класса пока не готов.</p></div>`;
@@ -1010,7 +1175,7 @@ function render(){
   const v = wait ? "home" : S.view;
   if (!wait) try { sessionStorage.setItem("s-route", JSON.stringify({view: v, open: S.open, sub: S.sub, y: v === S.routeV ? scrollY : 0})); S.routeV = v; } catch(_) {}
   if (S.routeY){ const y = S.routeY; S.routeY = 0; requestAnimationFrame(() => scrollTo(0, y)); }
-  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():v==="oge"?viewOge():v==="profile"?viewProfile():viewInstall();
+  const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():v==="oge"?viewOge():v==="profile"?viewProfile():v==="quiz"?viewQuiz():v==="quizzes"?viewQuizzes():viewInstall();
   app.innerHTML = `<div class="shell">
     <div class="drawer-back" ${S.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${S.drawer ? "open" : ""}" aria-label="Меню">${drawerHTML()}</nav>
@@ -1123,6 +1288,7 @@ document.addEventListener("submit", async e => {
       S.token = "local"; S.profile = {id:"local", name:$("#l-login").value.trim(), grade:g, goals, goal:goals.join(", "), course: U.planFor(g, goals), start_date: U.iso(new Date()), dates:{}, unlocked:[]};
     }
     saveSession(); await load(); S.view = "home"; render();
+    if (S.quizToken) await openDeepQuiz();   // пришли по ссылке на тест – открываем после входа
   }
   if (e.target.id === "reg-form"){
     const err = $("#r-err"), show = t => { err.textContent = t; err.hidden = false; };
@@ -1173,7 +1339,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-lab],[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  const t = e.target.closest("[data-lab],[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-quiz],[data-qopt],[data-qretry],[data-qnext],[data-qagain],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
   if (t?.dataset.lab){ e.preventDefault(); S.labPick = t.dataset.lab; LS.set("labPick", S.labPick); render(); return; }
   if (t.dataset.ogeRate || t.dataset.ogeDrill != null || t.dataset.ogeMock != null){ e.preventDefault(); ogeAct(t); return; }
   if (t.dataset.role){ S.role = t.dataset.role; S.mode = "in"; S.authMsg = null; S.signupDone = null; render(); return; }
@@ -1208,8 +1374,16 @@ document.addEventListener("click", async e => {
   if (t.dataset.playGame){ playGame(t.dataset.playGame, t.dataset.g); return; }
   if (t.dataset.playTheme){ const th = (PLAY_BANKS.themes || []).find(x => x.id === t.dataset.playTheme); if (th){ Play.onDone = selfDone("theme-" + th.id, ""); Play.chooseGame(th); } return; }
   if (t.dataset.act && t.dataset.act.startsWith("self-")){ selfAct(t.dataset.act, t); return; }
+  /* тесты по темам: ссылка/список → прохождение → объяснение → повтор → итог */
+  if (t.dataset.quiz){ openQuiz(t.dataset.quiz); return; }
+  if (t.dataset.qopt != null && S.qz){ quizPick(+t.dataset.qopt); return; }
+  if (t.dataset.qretry !== undefined){ quizRetry(); return; }
+  if (t.dataset.qnext !== undefined){ quizNext(); return; }
+  if (t.dataset.qagain !== undefined){ quizRestart(); return; }
   if (t.dataset.go){
     if (S.regDone){ S.invite = null; S.regDone = null; }
+    if (t.dataset.go === "quizzes"){ openQuizzes(); return; }
+    if (S.quizToken){ openDeepQuiz(); return; }   // токен из ссылки ждал окончания регистрации
     S.view = t.dataset.go; S.drawer = false; render(); scrollTo(0,0); return;
   }
   if (t.dataset.open){
@@ -1314,6 +1488,7 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
   if (S.role === "signup"){ S.role = "teacher"; S.mode = "signup"; }
   if (qp.get("t")){ S.role = "student"; S.mode = "signup"; S.tcode = qp.get("t").toUpperCase(); }
   if (qp.get("msg")) S.authMsg = {t: qp.get("msg")};
+  if (qp.get("quiz")) S.quizToken = qp.get("quiz").trim();   // ссылка учителя на тест по темам
   const sess = LS.get("session", null);
   /* оформление сайта из кабинета разработчика */
   if (sb){ try{ const {data} = await sb.from("app_settings").select("key,value");
@@ -1331,15 +1506,18 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
     S.token = sess.token; S.profile = sess.profile; recompute();
     /* после перезагрузки – на тот же экран и ту же вкладку урока */
     try { const rt = JSON.parse(sessionStorage.getItem("s-route") || "null");
-      if (rt && ["home","lessons","self","oge","myboard","stats","plan","look","folder","room","test"].includes(rt.view)){
+      if (rt && ["home","lessons","self","oge","myboard","stats","plan","look","folder","room","test","quizzes"].includes(rt.view)){
         S.view = rt.view === "room" || rt.view === "test" ? (rt.open ? "folder" : "home") : rt.view; S.open = rt.open || null; if (rt.sub) S.sub = rt.sub === "board" && rt.view !== "room" ? "theory" : rt.sub; S.routeY = rt.y || 0; }
     } catch(_) {}
     const c = LS.get("cache", null);
     if (c && sb){ S.rows = c.rows || []; S.hw = c.hw || {}; S.sheets = c.sheets || {}; S.writings = c.writings || {}; S.mats = c.mats || []; U.loadBase(c.base); recompute(); }
     render(); await load();
+    /* ссылка ?quiz= или восстановленный раздел «Тесты» – открываем после загрузки профиля */
+    if (S.quizToken) await openDeepQuiz();
+    else if (S.view === "quizzes") await openQuizzes();
   }
   render();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
-window.__app = {S, render};   // для отладки и автотестов
+window.__app = {S, render, openQuiz, openQuizzes, loadQuizzes};   // для отладки и автотестов
 })();
