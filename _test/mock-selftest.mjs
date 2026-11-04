@@ -78,7 +78,7 @@ const db = {
     teachers: [{ id: TEACHER_ID, name: "Учитель", base: true, base_access: [], role: "teacher" }],
     materials: [], course_data: [{ key: "rus-5", data: course("rus-5") }, { key: "math-5", data: course("math-5") }],
     board_items: [], app_settings: [], results: [], homework: [], writings: [], sheets: [], activity: [], ai_reports: [], works: [],
-    quizzes: QUIZZES, quiz_results: [],
+    topic_quizzes: QUIZZES, topic_quiz_results: [],
   },
 };
 const shared = makeShared();
@@ -185,7 +185,7 @@ const DETAILS = {
 };
 const sub = await student.client.rpc("quiz_submit", { p_code: TOKEN_B, p_token: QZ_ID, p_score: 1, p_total: 2, p_details: DETAILS, p_needs_work: [QZ_TOPIC.title] });
 ok(!sub.error && sub.data === null, "quiz_submit принят (returns void → data null)", sub);
-const rows = student.win.__MOCK.dbTable("quiz_results");
+const rows = student.win.__MOCK.dbTable("topic_quiz_results");
 ok(rows.length === 1 && rows[0].quiz_id === QZ_ID && rows[0].student_id === ROW_B && rows[0].score === 1 && rows[0].total === 2 && Array.isArray(rows[0].needs_work) && rows[0].needs_work[0] === QZ_TOPIC.title && rows[0].details.topics[0].needsWork === true, "quiz_submit записал результат (score/total/details/needs_work)", rows[0]);
 const sq1 = await student.client.rpc("student_quizzes", { p_code: TOKEN_B });
 ok(sq1.data && sq1.data.results.length === 1 && sq1.data.results[0].score === 1 && sq1.data.results[0].details.topics.length === 1 && sq1.data.results[0].needs_work[0] === QZ_TOPIC.title, "student_quizzes: result с details.topics и needs_work", sq1.data && sq1.data.results[0]);
@@ -205,6 +205,17 @@ const covUpd = await teacher.client.from("students").update({ covered: { "math-5
 ok(!covUpd.error, "from students update covered/covered_manual");
 const covRow = await teacher.client.from("students").select("id,covered,covered_manual").eq("id", ROW_B).single();
 ok(covRow.data && covRow.data.covered["math-5-1"] === "2026-11-04" && covRow.data.covered_manual["math-5-1"] === "2026-11-04", "у ученика записаны covered и covered_manual", covRow.data);
+
+// 11. НАШИ таблицы переименованы в topic_quizzes/topic_quiz_results (v57, чтобы не задеть legacy «Учу по ФРП»):
+//     учитель читает их через from(), insert проставляет teacher_id = auth.uid(), как default в schema.sql.
+const tqSel = await teacher.client.from("topic_quizzes").select("*").order("created_at", { ascending: false });
+ok(!tqSel.error && Array.isArray(tqSel.data) && tqSel.data.length === 1 && tqSel.data[0].id === QZ_ID, "from topic_quizzes: учитель видит свои тесты", tqSel.data && tqSel.data.map(q => q.id));
+const tqrSel = await teacher.client.from("topic_quiz_results").select("*").order("created_at", { ascending: false });
+ok(!tqrSel.error && Array.isArray(tqrSel.data) && tqrSel.data.length === 1 && tqrSel.data[0].quiz_id === QZ_ID, "from topic_quiz_results: попытки тестов", tqrSel.data && tqrSel.data.length);
+const tqIns = await teacher.client.from("topic_quizzes").insert({ id: "qzmock02", student_id: ROW_B, title: "Тест 2", course: "math-5", data: QZ_DATA }).select().single();
+ok(tqIns.data && tqIns.data.id === "qzmock02" && tqIns.data.teacher_id === TEACHER_ID, "insert topic_quizzes: id сохранён, teacher_id = auth.uid()", tqIns.data && { id: tqIns.data.id, teacher_id: tqIns.data.teacher_id });
+const legacyQuizzes = await teacher.client.from("quizzes").select("*");
+ok(!legacyQuizzes.error && Array.isArray(legacyQuizzes.data) && legacyQuizzes.data.length === 0, "legacy-таблица quizzes мок-БД не затрагивается (пустая)", legacyQuizzes.data);
 
 console.log(`\nИтог self-test мока: ${passed}/${passed + failed} PASS, ${Date.now() - t0} мс`);
 process.exit(failed ? 1 : 0);

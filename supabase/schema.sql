@@ -711,7 +711,7 @@ $$;
 -- ---------- Тесты по темам (несколько тем, ссылка ученику, разбор ошибок) ----------
 -- quizzes: тест учителя; id – короткий код в ссылке (index.html?quiz=КОД).
 -- data = {title, subject, grade, topics:[{id,title}], questions:[{q,o,a,e,topic,topicId}]}
-create table if not exists public.quizzes (
+create table if not exists public.topic_quizzes (
   id          text primary key check (id ~ '^[a-z0-9]{6,32}$'),
   teacher_id  uuid not null default auth.uid() references auth.users(id) on delete cascade,
   student_id  uuid references public.students(id) on delete cascade,
@@ -720,12 +720,12 @@ create table if not exists public.quizzes (
   data        jsonb not null default '{}'::jsonb,
   created_at  timestamptz not null default now()
 );
-create index if not exists quizzes_teacher_idx on public.quizzes(teacher_id, created_at desc);
+create index if not exists topic_quizzes_teacher_idx on public.topic_quizzes(teacher_id, created_at desc);
 
 -- quiz_results: попытка ученика. details = {questions:[{i,topic,topicId,first,attempts,ok,picked}], topics:[{id,title,total,first,ok,needsWork}]}
-create table if not exists public.quiz_results (
+create table if not exists public.topic_quiz_results (
   id          bigint generated always as identity primary key,
-  quiz_id     text not null references public.quizzes(id) on delete cascade,
+  quiz_id     text not null references public.topic_quizzes(id) on delete cascade,
   student_id  uuid not null references public.students(id) on delete cascade,
   score       int not null default 0 check (score >= 0),
   total       int not null default 0 check (total >= 0),
@@ -733,24 +733,24 @@ create table if not exists public.quiz_results (
   needs_work  text[] not null default '{}',
   created_at  timestamptz not null default now()
 );
-create index if not exists quiz_results_student_idx on public.quiz_results(student_id, created_at desc);
-create index if not exists quiz_results_quiz_idx on public.quiz_results(quiz_id, created_at desc);
+create index if not exists topic_quiz_results_student_idx on public.topic_quiz_results(student_id, created_at desc);
+create index if not exists topic_quiz_results_quiz_idx on public.topic_quiz_results(quiz_id, created_at desc);
 
-alter table public.quizzes      enable row level security;
-alter table public.quiz_results enable row level security;
-drop policy if exists "teacher_quizzes" on public.quizzes;
-create policy "teacher_quizzes" on public.quizzes for all to authenticated
+alter table public.topic_quizzes      enable row level security;
+alter table public.topic_quiz_results enable row level security;
+drop policy if exists "teacher_quizzes" on public.topic_quizzes;
+create policy "teacher_quizzes" on public.topic_quizzes for all to authenticated
   using (public.my_team(teacher_id)) with check (public.my_team(teacher_id));
-drop policy if exists "teacher_quiz_results" on public.quiz_results;
-create policy "teacher_quiz_results" on public.quiz_results for all to authenticated
-  using (exists (select 1 from public.quizzes q where q.id = quiz_id and public.my_team(q.teacher_id)))
-  with check (exists (select 1 from public.quizzes q where q.id = quiz_id and public.my_team(q.teacher_id)));
+drop policy if exists "teacher_quiz_results" on public.topic_quiz_results;
+create policy "teacher_quiz_results" on public.topic_quiz_results for all to authenticated
+  using (exists (select 1 from public.topic_quizzes q where q.id = quiz_id and public.my_team(q.teacher_id)))
+  with check (exists (select 1 from public.topic_quizzes q where q.id = quiz_id and public.my_team(q.teacher_id)));
 
 -- тест по ссылке: ученик получает вопросы и объяснения
 create or replace function public.quiz_get(p_token text)
 returns json language sql security definer set search_path = public stable as $$
   select json_build_object('id', q.id, 'title', q.title, 'data', q.data, 'created_at', q.created_at)
-  from public.quizzes q where q.id = p_token and length(p_token) between 6 and 32;
+  from public.topic_quizzes q where q.id = p_token and length(p_token) between 6 and 32;
 $$;
 
 -- результат теста от ученика (только по своему коду доступа и только тест своего учителя)
@@ -761,12 +761,12 @@ begin
   if sid is null then raise exception 'unknown code'; end if;
   if p_total < 0 or p_total > 200 or p_score < 0 or p_score > p_total then raise exception 'bad score'; end if;
   select * into st from public.students where id = sid;
-  select * into q from public.quizzes where id = p_token;
+  select * into q from public.topic_quizzes where id = p_token;
   if q.id is null then raise exception 'quiz not found'; end if;
   if q.teacher_id <> st.teacher_id then raise exception 'not your quiz'; end if;
   if q.student_id is not null and q.student_id <> sid then raise exception 'quiz for another student'; end if;
   if pg_column_size(coalesce(p_details, '{}'::jsonb)) > 60000 then raise exception 'too big'; end if;
-  insert into public.quiz_results(quiz_id, student_id, score, total, details, needs_work)
+  insert into public.topic_quiz_results(quiz_id, student_id, score, total, details, needs_work)
   values (p_token, sid, p_score, p_total, coalesce(p_details, '{}'::jsonb), coalesce(p_needs_work, '{}'));
 end $$;
 
@@ -780,14 +780,14 @@ returns json language sql security definer set search_path = public stable as $$
                coalesce(jsonb_array_length(q.data->'topics'), 0) as topics,
                coalesce(jsonb_array_length(q.data->'questions'), 0) as questions,
                (select json_build_object('score', r.score, 'total', r.total, 'at', r.created_at)
-                  from public.quiz_results r where r.quiz_id = q.id and r.student_id = s.id
+                  from public.topic_quiz_results r where r.quiz_id = q.id and r.student_id = s.id
                   order by r.created_at desc limit 1) as last
-        from public.quizzes q
+        from public.topic_quizzes q
         where q.teacher_id = s.teacher_id and (q.student_id is null or q.student_id = s.id)
         order by q.created_at desc limit 50) x), '[]'::json),
     'results', coalesce((select json_agg(y order by y.created_at desc) from (
         select r.quiz_id, q.title, r.score, r.total, r.details, r.needs_work, r.created_at
-        from public.quiz_results r join public.quizzes q on q.id = r.quiz_id
+        from public.topic_quiz_results r join public.topic_quizzes q on q.id = r.quiz_id
         where r.student_id = s.id order by r.created_at desc limit 100) y), '[]'::json)
   ) from s;
 $$;
@@ -825,3 +825,5 @@ do $$ declare f text; begin
   begin execute 'grant execute on function public.plan_active(uuid) to service_role'; exception when undefined_object then null; end;
 end $$;
 
+-- обновить кэш схемы PostgREST, чтобы новые таблицы и функции стали видны сразу
+notify pgrst, 'reload schema';

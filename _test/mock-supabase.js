@@ -375,7 +375,7 @@
     quiz_get: ({ p_token, token }) => {
       const id = String(p_token || token || "");
       if (id.length < 6 || id.length > 32) return null;              // как length(p_token) between 6 and 32
-      const q = table("quizzes").find(r => String(r.id) === id);
+      const q = table("topic_quizzes").find(r => String(r.id) === id);
       if (!q) return null;
       return { id: q.id, title: q.title, data: q.data || {}, created_at: q.created_at };
     },
@@ -384,14 +384,14 @@
       if (!row) throw new Error("unknown code");
       const score = +p_score, total = +p_total;
       if (!(Number.isFinite(score) && Number.isFinite(total) && total >= 0 && total <= 200 && score >= 0 && score <= total)) throw new Error("bad score");
-      const q = table("quizzes").find(r => String(r.id) === String(p_token));
+      const q = table("topic_quizzes").find(r => String(r.id) === String(p_token));
       if (!q) throw new Error("quiz not found");
       if (String(q.teacher_id) !== String(row.teacher_id)) throw new Error("not your quiz");
       if (q.student_id != null && String(q.student_id) !== String(row.id)) throw new Error("quiz for another student");
       const details = p_details && typeof p_details === "object" ? p_details : {};
       if (JSON.stringify(details).length > 60000) throw new Error("too big");
       const needs = Array.isArray(p_needs_work) ? p_needs_work.map(String) : [];
-      table("quiz_results").push({
+      table("topic_quiz_results").push({
         id: nextId(), quiz_id: String(q.id), student_id: row.id, score, total,
         details, needs_work: needs, created_at: new Date().toISOString(),
       });
@@ -402,20 +402,20 @@
       const row = rowByToken(p_code);
       if (!row) return { quizzes: [], results: [] };
       const byDateDesc = (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""));
-      const results = table("quiz_results")
+      const results = table("topic_quiz_results")
         .filter(r => String(r.student_id) === String(row.id))
         .sort(byDateDesc)
         .slice(0, 100)
         .map(r => {
-          const q = table("quizzes").find(x => String(x.id) === String(r.quiz_id));
+          const q = table("topic_quizzes").find(x => String(x.id) === String(r.quiz_id));
           return { quiz_id: r.quiz_id, title: q ? q.title : "", score: r.score, total: r.total, details: r.details || {}, needs_work: r.needs_work || [], created_at: r.created_at };
         });
-      const quizzes = table("quizzes")
+      const quizzes = table("topic_quizzes")
         .filter(q => String(q.teacher_id) === String(row.teacher_id) && (q.student_id == null || String(q.student_id) === String(row.id)))
         .sort(byDateDesc)
         .slice(0, 50)
         .map(q => {
-          const last = table("quiz_results")
+          const last = table("topic_quiz_results")
             .filter(r => String(r.quiz_id) === String(q.id) && String(r.student_id) === String(row.id))
             .sort(byDateDesc)[0] || null;
           return {

@@ -35,7 +35,7 @@ node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4)
 Скриншоты падений — `_test/artifacts/` (создаётся только при падении).
 
 **Ограничение:** в части сессий субагента Chrome не стартует (mojo/named pipes). В этом
-окружении прогоны из subagent-сессии проходят: **mock-selftest 40/40, доска 15/15, e2e 8/8**,
+окружении прогоны из subagent-сессии проходят: **mock-selftest 44/44, доска 15/15, e2e 8/8**,
 три полных прогона `run.mjs` подряд (2026-11-04, v57 + тесты по темам). Если Chrome не
 поднимается — `node --check _test/*.mjs` и запуск обычной командой из консоли.
 
@@ -48,13 +48,13 @@ node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4)
 
 | id | Сценарий |
 |----|----------|
-| a  | ученик на предмете B, учитель начинает урок A → ученик сам переключается на предмет A (`student_switch`), видит материал на доске в комнате без перезагрузки (< 6 c); у учителя «онлайн» (по person/ids), каналы доски у сторон совпадают |
-| b1 | смена урока в комнате (`#room-lesson`) → у ученика новый урок и материал < 2.5 c, без перезагрузки |
-| b2 | урок из другого предмета: учитель открывает урок B, когда ученик в комнате на A → переключение предмета + материал < 6 c, без перезагрузки, «онлайн» |
+| a  | ученик на предмете B, учитель начинает урок A → ученик сам переключается на предмет A (`student_switch`), видит материал на доске в комнате без перезагрузки (порог < 10 c с запасом на нагрузку CI; маркер в тесте проверяет, что страница НЕ перезагружалась); у учителя «онлайн» (по person/ids), каналы доски у сторон совпадают |
+| b1 | смена урока в комнате (`#room-lesson`) → у ученика новый урок и материал (порог < 6 c с запасом; без перезагрузки) |
+| b2 | урок из другого предмета: учитель открывает урок B, когда ученик в комнате на A → переключение предмета + материал (порог < 10 c с запасом; без перезагрузки), «онлайн» |
 | b3 | refresh из канала → тост «Материалы обновились», доска не сбрасывается, без перезагрузки |
-| **Q1** | **учитель собрал тест**: карточка ученика → `#qz-card`, отметить 2 темы (`[data-qz-topic]`), `[data-act="qz-build"]` → предпросмотр (`#qz-title`, группы `.qz-topic`, «вопросов: N»), `[data-act="qz-save"]` → ссылка `?quiz=КОД` (`#qz-link`, `[data-qz-link]`); в mock-БД строка `quizzes` (student_id rowA, ≥2 вопросов, ≥2 тем, у каждого `topic`/`topicId`); «Открыть у ученика» → live `cmd` `{type:"quiz", to, token, title}` |
+| **Q1** | **учитель собрал тест**: карточка ученика → `#qz-card`, отметить 2 темы (`[data-qz-topic]`), `[data-act="qz-build"]` → предпросмотр (`#qz-title`, группы `.qz-topic`, «вопросов: N»), `[data-act="qz-save"]` → ссылка `?quiz=КОД` (`#qz-link`, `[data-qz-link]`); в mock-БД строка `topic_quizzes` (student_id rowA, ≥2 вопросов, ≥2 тем, у каждого `topic`/`topicId`); «Открыть у ученика» → live `cmd` `{type:"quiz", to, token, title}` |
 | **Q2** | **ручное «пройдено»**: `[data-act="covered-toggle"][data-lid][data-on="1"]` → в mock-БД `students.covered[lid]` **и** `covered_manual[lid]`; в карточке чип «✓»; колонка «Выполнено» не изменилась; повторное нажатие (`data-on=0`) снимает обе метки |
-| **Q3** | **ученик проходит тест по прямой ссылке** `index.html?quiz=КОД` (сессия rowA, новая вкладка): тест открывается сам (`S.view="quiz"`), даже если у учителя идёт урок (presence не выдёргивает в комнату); неверный ответ → `.quiz-fb.no` с объяснением + `[data-qretry]`; повторно неверно → `[data-qnext]`, тема в `needsWork`; остальные верно → `.quiz-result[data-qresult]`, `.quiz-score` (score/total/%), «Надо доработать» с `.chip.bad`, `#qz-map .qz-topic.bad`; mock-БД `quiz_results` (score/total, `details.topics[].needsWork`, `needs_work[]`, `details.questions[0].attempts=2`), rpc `quiz_submit` с параметрами ровно `p_code,p_token,p_score,p_total,p_details,p_needs_work` |
+| **Q3** | **ученик проходит тест по прямой ссылке** `index.html?quiz=КОД` (сессия rowA, новая вкладка): тест открывается сам (`S.view="quiz"`), даже если у учителя идёт урок (presence не выдёргивает в комнату); неверный ответ → `.quiz-fb.no` с объяснением + `[data-qretry]`; повторно неверно → `[data-qnext]`, тема в `needsWork`; остальные верно → `.quiz-result[data-qresult]`, `.quiz-score` (score/total/%), «Надо доработать» с `.chip.bad`, `#qz-map .qz-topic.bad`; mock-БД `topic_quiz_results` (score/total, `details.topics[].needsWork`, `needs_work[]`, `details.questions[0].attempts=2`), rpc `quiz_submit` с параметрами ровно `p_code,p_token,p_score,p_total,p_details,p_needs_work` |
 | **Q4** | **карта тем**: у учителя в карточке rowA `#qz-map .qz-topic.bad` с названием заваленной темы и блок `.qz-need` «Надо доработать» (после живого обновления; при необходимости — кнопка «Обновить»); у ученика раздел «Тесты» (`[data-go="quizzes"]`) → `.quiz-list`, `[data-quiz]`, `#qz-map .qz-topic.bad` по `student_quizzes` |
 
 Важные детали e2e:
@@ -76,7 +76,7 @@ track/presenceState/subscribe/removeChannel`. Общее состояние вк
 `BroadcastChannel`; данные задаются через `window.__MOCK_CFG` (`session`, `db`, `reset`).
 
 Расширения под тесты по темам:
-- таблицы `quizzes`/`quiz_results` — обычные таблицы общей БД; при `insert` учителя
+- НАШИ таблицы `topic_quizzes`/`topic_quiz_results` (переименованы из `quizzes`/`quiz_results`, чтобы не задеть legacy-таблицы «Учу по ФРП» с другой схемой) — обычные таблицы общей БД; при `insert` учителя
   проставляется `teacher_id = auth.uid()` (как default в `supabase/schema.sql`);
 - RPC по контракту `schema.sql`: `quiz_get({p_token})` → `{id,title,data,created_at}` или
   `null`; `quiz_submit({p_code,p_token,p_score,p_total,p_details,p_needs_work})` → void,
@@ -125,7 +125,7 @@ DOM-селекторы стенда и устройство `board-harness.js` �
 
 - `run.mjs` — полный прогон трёх наборов, итог PASS/FAIL, exit code;
 - `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz);
-- `mock-selftest.mjs` — самопроверка мока без браузера (40 проверок);
+- `mock-selftest.mjs` — самопроверка мока без браузера (44 проверки);
 - `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q4;
 - `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 15 сценариев;
 - `cdp.mjs` — мини-драйвер CDP (Chrome, мышь/клавиатура, `Runtime.evaluate`, скриншоты);

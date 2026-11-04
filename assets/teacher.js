@@ -45,8 +45,8 @@ async function loadAll(){
     sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("sheets").select("*"),
     sb.from("materials").select("*").order("id"), sb.from("activity").select("*"),
     sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200), sb.from("works").select("*"),
-    sb.from("quizzes").select("*").order("created_at", {ascending: false}),
-    sb.from("quiz_results").select("*").order("created_at", {ascending: false})
+    sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}),
+    sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false})
   ]);
   const err = [st, rs, hw, wr, sh, mt, ac, ar].find(x => x.error)?.error;
   if (err) toast("Ошибка загрузки: " + err.message + ". Выполните заново supabase/schema.sql.");
@@ -399,7 +399,7 @@ async function qzSave(s){
   const title = ((($("#qz-title") && $("#qz-title").value) || d.title || "").trim().slice(0, 120)) || "Тест по темам";
   const id = Quiz.newId(), data = {title, subject: subjOfS(s), grade: s.grade ?? null, topics: d.topics, questions: d.questions};
   T.qzBusy = true; render();
-  const {data: row, error} = await sb.from("quizzes").insert({id, student_id: s.id, title, course: s.course, data}).select().single();
+  const {data: row, error} = await sb.from("topic_quizzes").insert({id, student_id: s.id, title, course: s.course, data}).select().single();
   T.qzBusy = false;
   if (error){ toast("Не сохранилось: " + error.message); render(); return; }
   T.qzQuizzes = [row || {id, student_id: s.id, title, course: s.course, data, created_at: new Date().toISOString()}, ...(T.qzQuizzes || [])];
@@ -1387,7 +1387,7 @@ function refreshSoon(){
   clearTimeout(refT);
   refT = setTimeout(async () => {
     const [rs, hw, wr, ac, st, qz, qr] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*"), sb.from("students").select(ST_COLS).order("created_at"),
-      sb.from("quizzes").select("*").order("created_at", {ascending: false}), sb.from("quiz_results").select("*").order("created_at", {ascending: false})]);
+      sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}), sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false})]);
     if (!st.error) T.students = st.data;
     if (!rs.error) T.rows = rs.data; if (!hw.error) T.hw = hw.data; if (!wr.error) T.writings = wr.data; if (!ac.error) T.act = ac.data;
     if (!qz.error) T.qzQuizzes = qz.data || []; if (!qr.error) T.qzResults = qr.data || [];
