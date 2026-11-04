@@ -773,6 +773,115 @@ test("S4", "Самообучение: прогресс подхватывает�
   assert(leftAfter < left0, "после прохождения «Моих ошибок» счётчик data-self-errors-left не уменьшился: было " + left0 + ", стало " + leftAfter);
 });
 
+/* ---------- T1: карточка ученика у учителя — самообучение, база, доска ученика ---------- */
+/** мир T1: прогресс самообучения и пометки на доске rowA (сид пересоздаёт мок-БД целиком) */
+function t1Seed(deckTotal, lessonId) {
+  const seed = JSON.parse(JSON.stringify(W.db));
+  const now = new Date().toISOString();
+  const words = ["аэропорты", "банты", "бороду", "бухгалтеров", "вероисповедание", "водопровод", "вручит", "газопровод", "диспансер", "договор", "документ", "досуг", "еретик", "жалюзи", "звонит"];
+  seed.tables.works = [
+    { id: 9001, student_id: ROW_A, lesson_id: "self:stress", task: 0, data: { mastered: words.slice(0, 5), errors: { "звонить": 2 }, attempts: 20, done: false, total: 15 }, updated_at: now },
+    { id: 9002, student_id: ROW_A, lesson_id: "self:stress", task: 1, data: { mastered: words.slice(), errors: {}, attempts: 15, done: true, total: 15 }, updated_at: now },
+    { id: 9003, student_id: ROW_A, lesson_id: "self:deck", task: 0, data: { mastered: [0, 1], errors: { 2: 1 }, attempts: 5, done: false, total: deckTotal }, updated_at: now },
+    { id: 9004, student_id: ROW_A, lesson_id: "self:errors", task: 0, data: { items: [
+      { kind: "stress", key: "s:звонить", label: "звонить", detail: "звонИть", count: 2, at: Date.now() },
+      { kind: "card", key: "d:paronyms:0", label: "абонент / абонемент", detail: "абонент – пользователь (телефонный абонент); абонемент – документ на право пользования.", count: 1, at: Date.now() },
+    ], updatedAt: Date.now() }, updated_at: now },
+  ];
+  seed.tables.materials = [{ id: 9201, teacher_id: TEACHER_ID, course: "rus-5", lesson_id: lessonId, kind: "text", title: "Памятка по ударениям", body: "Ударение в глаголах.", shared: true, student_id: null, data: {}, created_at: now }];
+  seed.tables.board_items = [
+    { id: 9101, student_id: ROW_A, lesson_id: lessonId + ":theory", item: { t: "s", p: [[10, 30], [40, 40], [70, 50]], c: "#111", w: 3 }, author: "student", created_at: now },
+    { id: 9102, student_id: ROW_A, lesson_id: lessonId + ":practice", item: { t: "t", x: 40, y: 80, w: 300, h: 40, s: "подчёркнуто", c: "#7b4cf5" }, author: "student", created_at: now },
+    { id: 9103, student_id: ROW_A, lesson_id: lessonId + ":theory", item: { t: "i", x: 20, y: 120, w: 200, h: 120, src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }, author: "teacher", created_at: now },
+    { id: 9104, student_id: ROW_A, lesson_id: "free:p1", item: { t: "s", p: [[5, 5], [15, 15]], c: "#111", w: 3 }, author: "student", created_at: now },
+  ];
+  return seed;
+}
+test("T1", "Карточка ученика у учителя: прогресс самообучения, база и доска ученика; «Открыть доску» → board с пометками", async ({ teacher, baseUrl }) => {
+  /* прогресс/доска засеваются в мок-БД и кабинет перезагружается: T1 идёт последним, чтобы не влиять на S1–S4 */
+  const lessonId = W.lessons.rus[0].id;
+  const deckTotal = await teacher.eval(`(window.SELF_DATA && window.SELF_DATA.decks && window.SELF_DATA.decks[0] && window.SELF_DATA.decks[0].cards.length) || 29`);
+  const seed = t1Seed(+deckTotal || 29, lessonId);
+  await teacher.eval(`window.__MOCK.reset(${JSON.stringify(seed)}); try { sessionStorage.clear(); } catch (_) {}; true`);
+  await teacher.goto(baseUrl + "/teacher.html");
+  /* кабинет восстанавливает прошлый маршрут из sessionStorage (после Q4 он мог быть в карточке ученика),
+     поэтому ждём shell и явно возвращаемся к списку учеников */
+  await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя после сида T1 (shell + __teacher)" });
+  await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
+  await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников у учителя (T1)" });
+  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-t-student-all]') && document.querySelector('[data-t-board-row]') ? 1 : 0`,
+    { timeout: 15000, label: "секция «Всё, что делает ученик» с доской (данные доски загрузились)" });
+  const st = await teacher.eval(`(() => {
+    const q = s => document.querySelector(s);
+    const rows = [...document.querySelectorAll('[data-t-board-row]')];
+    const agg = lesson => rows.filter(r => r.dataset.lesson === lesson).reduce((a, r) => ({
+      strokes: a.strokes + (+r.dataset.strokes || 0), texts: a.texts + (+r.dataset.texts || 0), files: a.files + (+r.dataset.files || 0),
+    }), { strokes: 0, texts: 0, files: 0 });
+    const ds = el => el ? {...el.dataset} : null;
+    return {
+      hasAll: !!q('[data-t-student-all]'),
+      heading: /всё, что делает|что делает ученик/i.test(document.body.innerText || ""),
+      stress0: ds(q('[data-t-self-stress="0"]')), stress1: ds(q('[data-t-self-stress="1"]')),
+      deck0: ds(q('[data-t-self-deck="0"]')),
+      errs: (q('[data-t-self-errors]') || {}).innerText || "",
+      errKeys: [...document.querySelectorAll('[data-t-err-key]')].map(x => x.getAttribute('data-t-err-key')),
+      base: ds(q('[data-t-base]')), baseText: q('[data-t-base]') ? q('[data-t-base]').innerText : "",
+      rows: rows.map(r => ({lesson: r.dataset.lesson, page: r.dataset.page, strokes: +r.dataset.strokes, texts: +r.dataset.texts, files: +r.dataset.files})),
+      lessonAgg: agg(${JSON.stringify(lessonId)}), freeAgg: agg("free"),
+      summary: (q('[data-t-board-summary]') || {}).textContent || "",
+      boardText: q('.boards-list') ? q('.boards-list').innerText : "",
+      reload: !!q('[data-act="boards-reload"]'),
+      openBtns: [...document.querySelectorAll('.boards-list [data-boardfor][data-boardpage]')].length,
+      text: document.body.innerText || "",
+    };
+  })()`);
+  const fail = (msg) => { throw new Error(msg + " (state: " + JSON.stringify({ stress0: st.stress0, stress1: st.stress1, deck0: st.deck0, base: st.base, rows: st.rows, text: String(st.text).slice(0, 700) }) + ")"); };
+  if (!st.hasAll) fail("нет контейнера [data-t-student-all]");
+  if (!st.heading) fail("нет заголовка «Всё, что делает ученик»");
+  // 1) самообучение
+  if (!st.stress0 || +st.stress0.mastered !== 5 || String(st.stress0.done) === "1" || +st.stress0.errors !== 2) fail("блок ударений 0: ожидали 5/15, done=0, ошибок 2");
+  if (!st.stress1 || +st.stress1.mastered !== 15 || String(st.stress1.done) !== "1") fail("блок ударений 1: ожидали 15/15, done=1 (✓)");
+  if (!st.deck0 || +st.deck0.mastered !== 2) fail("колода 0: ожидали 2/" + (+deckTotal || 29));
+  if (!st.errs.includes("звонить") || !st.errs.includes("звонИть")) fail("«Мои ошибки»: нет «звонить»/«звонИть»");
+  if (!st.text.includes("5/15") || !st.text.includes("15/15") || !st.text.includes("2/" + (+deckTotal || 29))) fail("в тексте нет числовых прогрессов 5/15, 15/15, 2/N");
+  if (!/✓/.test(st.text)) fail("у пройденного блока нет ✓");
+  if (!/ошиб/i.test(st.text)) fail("нет упоминания ошибок в прогрессе самообучения");
+  // 2) база
+  if (!st.base) fail("нет блока базы [data-t-base]");
+  if (st.base.openLessons == null || st.base.totalLessons == null) fail("база: нет data-open-lessons/data-total-lessons");
+  if (+st.base.materials < 1) fail("база: материалов меньше 1 (сид дал 1 материал)");
+  if (!/открыто\s+\d+\s+из\s+\d+/i.test(st.baseText)) fail("нет текста «открыто X из Y уроков»");
+  if (!/материал/i.test(st.baseText)) fail("нет текста про материалы");
+  // 3) доска ученика: строки по листам, счётчики, отдельная «Личная доска», кнопки
+  if (!/штрих/i.test(st.boardText) || !/надпис/i.test(st.boardText) || !/вложен/i.test(st.boardText)) fail("нет строк доски со счётчиками «штрихов/надписей/вложений»");
+  if (st.lessonAgg.strokes !== 1 || st.lessonAgg.texts !== 1 || st.lessonAgg.files !== 1) fail("счётчики пометок урока: ожидали штрихов 1, надписей 1, вложений 1");
+  if (st.freeAgg.strokes !== 1) fail("«Личная доска»: ожидали 1 штрих, получили " + JSON.stringify(st.freeAgg));
+  if (!/личная доска/i.test(st.text)) fail("нет отдельной строки «Личная доска»");
+  if (!/штрихов\s+4|пометок\s+4/i.test(st.summary)) fail("сводка доски не показывает 4 пометки: " + JSON.stringify(st.summary));
+  if (!st.reload) fail("нет кнопки «Обновить» [data-act=boards-reload]");
+  if (st.openBtns < 1) fail("нет кнопки «Открыть доску» с data-boardpage в списке доски");
+  // «Обновить» — кэш сбрасывается и строки снова появляются
+  const rowsBefore = st.rows.length;
+  await teacher.eval(`document.querySelector('[data-act="boards-reload"]').click(); true`);
+  await teacher.waitFor(`document.querySelectorAll('[data-t-board-row]').length === ${rowsBefore} ? 1 : 0`,
+    { timeout: 10000, label: "строки доски после «Обновить» (перечитывание board_items)" });
+  // «Открыть доску» из новой секции → T.view="board", #board .bd-cv, T.board.info().items > 0
+  const opened = await teacher.eval(`(() => {
+    const b = document.querySelector('.boards-list [data-boardfor][data-boardpage]') || document.querySelector('[data-boardfor]:not([data-boardfor="free"])');
+    if (!b) return false; b.click(); return true;
+  })()`);
+  if (!opened) throw new Error("не нашли кнопку «Открыть доску» ([data-boardfor][data-boardpage])");
+  await teacher.waitFor(`window.__teacher && window.__teacher.T && window.__teacher.T.view === "board" ? 1 : 0`,
+    { timeout: 15000, label: "T.view===\"board\" после «Открыть доску» (window.__teacher.T)" });
+  await teacher.waitFor(`document.querySelector("#board .bd-cv") ? 1 : 0`, { timeout: 15000, label: "доска в кабинете (#board .bd-cv)" });
+  await teacher.waitFor(`(() => { try { const T = window.__teacher.T; const b = T && T.board; const i = b && typeof b.info === "function" ? b.info() : null; return i && i.ready && i.items.length > 0 ? 1 : 0; } catch(_) { return 0; } })()`,
+    { timeout: 20000, label: "T.board.info().ready && items > 0 (пометки ученика на доске)" });
+  const boardInfo = await teacher.eval(`(() => { try { const T = window.__teacher.T; const b = T.board; const i = b.info(); return {items: i.items.length, page: i.page, lesson: T.boardLesson}; } catch(_) { return null; } })()`);
+  if (!boardInfo || boardInfo.items < 1) throw new Error("T.board.info() не показывает пометки: " + JSON.stringify(boardInfo));
+  if (String(boardInfo.lesson) !== lessonId) throw new Error("T.boardLesson не совпал с уроком: " + JSON.stringify(boardInfo) + ", ожидали " + lessonId);
+});
+
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 

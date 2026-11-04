@@ -7,7 +7,7 @@ Chrome, без npm и без сети. Три набора идут послед
 |-------|------|---------------|---------|
 | Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai", generate_tasks)` | нет |
 | Доска | `board.mjs` + `board.html` | 15 сценариев доски: якоря, вложения, текст, живой фон, якоря в пустоте | да |
-| E2E | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q4**, **S1–S4** | да |
+| E2E | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q4**, **S1–S4**, **T1** | да |
 
 ## Запуск
 
@@ -16,7 +16,7 @@ cd repetitor-live
 node _test/run.mjs              # всё: mock-selftest + доска + e2e
 node _test/mock-selftest.mjs    # только мок (быстро, Chrome не нужен)
 node _test/board.mjs            # только доска (15/15)
-node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4,S1–S4)
+node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4,S1–S4,T1)
 E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 ```
 
@@ -25,7 +25,7 @@ E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 | Переменная      | По умолчанию | Что делает                                    |
 |-----------------|--------------|-----------------------------------------------|
 | `BOARD_ONLY`    | (все)        | фильтр сценариев доски: `C`, `F`, `D2,E1`, `G`|
-| `E2E_ONLY`      | (все)        | фильтр e2e: `a,b1`, `Q`, `Q3`, `S`            |
+| `E2E_ONLY`      | (все)        | фильтр e2e: `a,b1`, `Q`, `Q3`, `S`, `T`       |
 | `BOARD_HEADLESS`| `1`          | `0` — показать окно браузера (доска)          |
 | `E2E_HEADLESS`  | `1`          | `0` — показать окно браузера (e2e)            |
 | `PORT`          | `8765`/`8766`| статика доски / e2e                           |
@@ -40,7 +40,7 @@ E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 «CDP timeout: Runtime.evaluate».
 
 **Ограничение:** в части сессий субагента Chrome не стартует (mojo/named pipes). В этом
-окружении прогоны из subagent-сессии проходят: **mock-selftest 54/54, доска 15/15, e2e 12/12**,
+окружении прогоны из subagent-сессии проходят: **mock-selftest 58/58, доска 15/15, e2e 13/13**,
 три полных прогона `run.mjs` подряд (2026-11-04, v58 + самообучение). Если Chrome не
 поднимается — `node --check _test/*.mjs` и запуск обычной командой из консоли.
 
@@ -65,6 +65,7 @@ E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 | **S2** | **ошибка = повтор (+2)**: блок 1, первый ответ неверный; `Play.stressState()`: слово НЕ в mastered, `errors[слово]>=1`, `reps[слово]>=3`; фидбек при возврате — «Слово встретится ещё раз – закрепим»; слово появляется ≥2 раз; в works task=1 `done/mastered=15/errors` |
 | **S3** | **карточки**: колода «Паронимы» (`[data-act="self-deck"][data-d="0"]`) → `[data-show]` «Показать ответ» → `.self-back`; «Ещё учить» `[data-again]` возвращает карточку; дальше «Знаю» `[data-know]` до всех карточек; works `self:deck` task=0 `done`, `mastered.length = всех карточек`; результат `kind=self` с `self:cards` |
 | **S4** | **прогресс и «Мои ошибки»**: перезагрузка `index.html` → прогресс подхвачен (кнопка блока 0 = 15/15); блок `.self-prep` «Что подтянуть» с кнопками ударений/карточек; `[data-act="self-errors"][data-self-errors-left=N]` N≥2 (ошибки блоков + карточки); тренажёр «Мои ошибки» (cardDeck по items) пройден → works `self:errors` `items.length` уменьшился, DOM-счётчик уменьшился |
+| **T1** | **карточка ученика у учителя — всё, что делает ученик** (идёт последним, пересоздаёт mock-БД своим сидом): секция `[data-t-student-all]` «Всё, что делает ученик»; самообучение `[data-t-self-stress="0"]` (mastered 5/15, errors 2), `[data-t-self-stress="1"]` (15/15, ✓), `[data-t-self-deck="0"]` (2/29), `[data-t-self-errors]`/`[data-t-err-key]` («звонить» → «звонИть»); база `[data-t-base]` (`data-open-lessons`/`data-total-lessons`/`data-materials`, текст «открыто X из Y уроков · материалов: N»); доска — строки `[data-t-board-row]` со счётчиками `data-strokes/texts/files` (урок: 1/1/1; отдельная «Личная доска»: 1 штрих), сводка `[data-t-board-summary]` («4 пометки»), `[data-act="boards-reload"]` перечитывает `board_items`; клик `[data-boardfor][data-boardpage]` → `window.__teacher.T.view==="board"`, `#board .bd-cv`, `T.board.info().ready && items>0`, `T.boardLesson` = урок. Перед открытием кабинет перезагружается с `sessionStorage.clear()` (иначе восстановленный маршрут Q4 открывает карточку без списка учеников) |
 
 Важные детали e2e:
 - все вкладки одного origin делят `localStorage`, поэтому mock-БД пишется только в пустое
@@ -98,6 +99,10 @@ track/presenceState/subscribe/removeChannel`. Общее состояние вк
   запись), `student_submit_result(...)` пишет строку в `results` (`kind="self"` для тренажёров,
   валидация score/total как в схеме); `student_state` возвращает формы схемы:
   `works:[{lesson_id,task,data}]`, `results:[{lesson_id,kind,score,total,wrong,created_at,duration_sec}]`;
+- **карточка учителя (T1)**: `from("board_items").select("id,lesson_id,item,author,created_at")
+  .eq("student_id", id).order("id")` — как в реальном from() (selftest проверяет фильтры, `.in`,
+  `.limit`, группировку по lesson_id/странице и что чужие строки не попадают); `works` читаются
+  по `student_id` (прогресс self виден учителю);
 - хелперы `window.__MOCK`: `dbTable(name)`, `tables()`, `tokens()`, `reset(seed)`,
   `broadcastLog()`, `cmdList()`, `lastRpc(name)`, `rpcNames()`, `involveLog()`, `channels()`,
   `presenceOf(name)`.
@@ -139,8 +144,8 @@ DOM-селекторы стенда и устройство `board-harness.js` �
 
 - `run.mjs` — полный прогон трёх наборов, итог PASS/FAIL, exit code;
 - `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz);
-- `mock-selftest.mjs` — самопроверка мока без браузера (54 проверки);
-- `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q4,S1–S4;
+- `mock-selftest.mjs` — самопроверка мока без браузера (58 проверок);
+- `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q4,S1–S4,T1;
 - `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 15 сценариев;
 - `cdp.mjs` — мини-драйвер CDP (Chrome, мышь/клавиатура, `Runtime.evaluate`, скриншоты);
 - `serve.mjs` — статический сервер корня worktree (без кэша);

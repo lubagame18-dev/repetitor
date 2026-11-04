@@ -7,7 +7,7 @@ const RECOVERY = /type=recovery/.test(location.hash), LINK_ERR = /error_descript
 const sb = U.supa();
 const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
-           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null,
+           online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, boardPage:null, bcache:{}, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null,
            qzQuizzes:[], qzResults:[], qzSel:null, qzSelSid:null, qzCount:3, qzBusy:false, qzDraft:null, qzSaved:null};
 const $ = s => document.querySelector(s);
 const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
@@ -280,6 +280,131 @@ function selfLogHTML(s, c){
     </tbody></table></div>`;
 }
 
+/* ---------- всё, что делает ученик: самообучение, база и материалы, доска с пометками ---------- */
+const selfIsHist = s => subjOfS(s) === "hist" || String(s.course || "").startsWith("hist");
+/* прогресс самообучения хранится в works: self:stress / self:deck / self:errors */
+function selfWork(s, kind){
+  const lid = "self:" + kind;
+  return (T.works || []).filter(w => w.student_id === s.id && w.lesson_id === lid)
+    .map(w => ({task: +w.task, data: w.data || {}})).sort((a, b) => a.task - b.task);
+}
+const selfWorkData = (s, kind, task) => (selfWork(s, kind).find(x => x.task === +task) || {}).data || null;
+const selfErrTotal = errors => Object.values(errors || {}).reduce((a, x) => a + (+x || 0), 0);
+function selfBlockProg(s, i){
+  const block = (window.SELF_DATA?.stress?.blocks || [])[i] || {};
+  const d = selfWorkData(s, "stress", i) || {}, mastered = Array.isArray(d.mastered) ? d.mastered : [];
+  const errors = d.errors && typeof d.errors === "object" ? d.errors : {}, total = (block.words || []).length || 15;
+  return {mastered, errors, count: mastered.length, total, errTotal: selfErrTotal(errors), done: !!d.done || mastered.length >= total};
+}
+function selfDecksFor(s){
+  return (window.SELF_DATA?.decks || []).map((d, i) => ({d, i})).filter(x => (x.d.subject || "rus") !== "hist" || selfIsHist(s));
+}
+function selfDeckProg(s, i){
+  const deck = (window.SELF_DATA?.decks || [])[i] || {}, d = selfWorkData(s, "deck", i) || {};
+  const mastered = Array.isArray(d.mastered) ? d.mastered : [], errors = d.errors && typeof d.errors === "object" ? d.errors : {}, total = (deck.cards || []).length || 0;
+  return {mastered, errors, count: mastered.length, total, errTotal: selfErrTotal(errors), done: !!d.done || (total > 0 && mastered.length >= total)};
+}
+const selfErrItems = s => { const d = selfWorkData(s, "errors", 0) || {}; return Array.isArray(d.items) ? d.items : []; };
+const fmtWhen = iso => iso ? new Date(iso).toLocaleString("ru-RU", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : "";
+const MAT_IC = {link:"🔗", file:"📎", text:"📝", tasks:"✏️"};
+const MAT_NAME = {link:"ссылка", file:"файл", text:"текст", tasks:"задания"};
+function selfProgressHTML(s){
+  const blocks = window.SELF_DATA?.stress?.blocks || [], decks = selfDecksFor(s);
+  const stressRows = blocks.map((b, i) => {
+    const p = selfBlockProg(s, i), pctv = p.total ? Math.round(p.count / p.total * 100) : 0;
+    return `<div class="self-prog-row ${p.done ? "done" : ""}" data-t-self-stress="${i}" data-mastered="${p.count}" data-done="${p.done ? 1 : 0}" data-errors="${p.errTotal}">
+      <div class="self-prog-head"><b>${esc(b.title)}</b><span class="chip ${p.done ? "good" : ""}">${p.done ? "✓ " : ""}${p.count}/${p.total}</span></div>
+      <div class="self-prog-bar"><i style="width:${pctv}%"></i></div>
+      <div class="small muted">${p.errTotal ? "ошибок: " + p.errTotal : "без ошибок"}${p.done ? " · пройден" : p.count ? " · продолжает" : " · не начинал"}</div></div>`;
+  }).join("");
+  const deckRows = decks.map(({d, i}) => {
+    const p = selfDeckProg(s, i), pctv = p.total ? Math.round(p.count / p.total * 100) : 0;
+    return `<div class="self-prog-row ${p.done ? "done" : ""}" data-t-self-deck="${i}" data-mastered="${p.count}" data-done="${p.done ? 1 : 0}" data-errors="${p.errTotal}">
+      <div class="self-prog-head"><b>${esc(d.emoji || "🃏")} ${esc(d.title)}</b><span class="chip ${p.done ? "good" : ""}">${p.done ? "✓ " : ""}${p.count}/${p.total}</span></div>
+      <div class="self-prog-bar"><i style="width:${pctv}%"></i></div>
+      <div class="small muted">${p.errTotal ? "ошибок: " + p.errTotal : "без ошибок"}${p.done ? " · освоена" : p.count ? " · продолжает" : " · не начинал"}</div></div>`;
+  }).join("");
+  const errs = selfErrItems(s), shown = errs.slice(0, 20);
+  const errHTML = shown.length ? `<div class="self-err-list">${shown.map(it => `<div class="self-err-row" data-t-err-key="${esc(it.key || it.label || "")}"><b>${esc(it.label || "")}</b>${it.detail ? `<span class="small muted"> → ${esc(it.detail)}</span>` : ""}${(+it.count || 0) > 1 ? `<span class="chip bad">×${+it.count}</span>` : ""}</div>`).join("")}</div>` : `<p class="small muted">Ошибок нет.</p>`;
+  const stressDone = blocks.filter((_, i) => selfBlockProg(s, i).done).length, deckDone = decks.filter(x => selfDeckProg(s, x.i).done).length;
+  const has = !!(selfWork(s, "stress").length || selfWork(s, "deck").length || errs.length);
+  return `<div class="card stack" style="gap:10px" data-t-self-progress>
+    <div class="row between" style="gap:8px;flex-wrap:wrap"><div class="kicker">Самообучение: прогресс</div><span class="small muted">блоки: ${stressDone}/${blocks.length} · колоды: ${deckDone}/${decks.length}</span></div>
+    ${has ? `<div class="self-progress-grid">${stressRows}${deckRows}</div>
+      <div class="kicker" style="margin-top:2px">Мои ошибки${errs.length ? ` (${errs.length})` : ""}</div><div data-t-self-errors>${errHTML}</div>`
+      : `<p class="muted small">Ученик ещё не занимался в новой базе.</p>`}</div>`;
+}
+function studentBaseHTML(s, c){
+  const course = U.getCourse(s.course), subj = U.subj(subjOfS(s));
+  const totalL = c?.lessons?.length || 0, openN = (s.unlocked || []).length;
+  const mats = (T.mats || []).filter(m => m.course === s.course && (!m.student_id || m.student_id === s.id || m.shared));
+  const rows = (T.rows || []).filter(r => r.student_id === s.id).slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  const lastRow = rows[0];
+  const worksAt = (T.works || []).filter(w => w.student_id === s.id).map(w => w.updated_at).filter(Boolean).sort().at(-1);
+  const lastWhen = [lastRow?.created_at, worksAt].filter(Boolean).sort().at(-1);
+  const KN = {lesson:"тест урока", hw:"ДЗ-тест", mini:"мини-практика", entry:"входной тест", self:"самообучение", oge:"ОГЭ"};
+  let lastWhat = "";
+  if (worksAt && (!lastRow || new Date(worksAt) >= new Date(lastRow.created_at))) lastWhat = "прогресс самообучения";
+  else if (lastRow){ const l = c ? U.findLesson(c, lastRow.lesson_id) : null; lastWhat = (KN[lastRow.kind] || lastRow.kind || "занятие") + (l?.title ? ": " + l.title : ""); }
+  const matRows = mats.slice(0, 6).map(m => `<div class="mat"><span class="ic">${MAT_IC[m.kind] || "•"}</span><div style="min-width:0;flex:1"><b>${esc(m.title || m.data?.title || "Материал")}</b><div class="small muted">${MAT_NAME[m.kind] || m.kind}${m.shared ? " · общая база" : ""}${m.student_id === s.id ? " · только этому ученику" : ""}</div>${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">открыть</a>` : ""}</div></div>`).join("");
+  return `<div class="card stack" style="gap:8px" data-t-base data-open-lessons="${openN}" data-total-lessons="${totalL}" data-materials="${mats.length}">
+    <div class="kicker">База и материалы ученика</div>
+    <p class="small"><b>${esc(course?.course || s.course || "курс не выбран")}</b>${course?.tag ? ` · ${esc(course.tag)}` : ""}</p>
+    <p class="small muted">${subj.e} ${esc(subj.n)} · ${s.grade != null ? U.gradeName(s.grade) : "класс не указан"} · открыто ${openN} из ${totalL} уроков · материалов: ${mats.length}</p>
+    <p class="small muted">Последняя активность: ${lastWhen ? fmtWhen(lastWhen) + (lastWhat ? " · " + esc(lastWhat) : "") : "пока нет"}</p>
+    ${matRows ? `<div class="stack" style="gap:6px">${matRows}</div>` : `<p class="small muted">Материалов к курсу пока нет.</p>`}</div>`;
+}
+function ensureBoards(s){
+  if (!sb || !s || pending(s)) return;
+  T.bcache = T.bcache || {};
+  const cur = T.bcache[s.id];
+  if (cur && (cur.loading || Array.isArray(cur.rows))) return;
+  T.bcache[s.id] = {rows: [], loading: true, at: 0, error: null};
+  try {
+    sb.from("board_items").select("id,lesson_id,item,author,created_at").eq("student_id", s.id).order("id").then(({data, error}) => {
+      T.bcache[s.id] = {rows: error ? [] : (data || []), loading: false, at: Date.now(), error: error ? error.message : null};
+      if (error) toast("Доска не загрузилась: " + error.message);
+      if (T.sel === s.id && T.view === "student") render();
+    }, err => { T.bcache[s.id] = {rows: [], loading: false, at: Date.now(), error: (err && err.message) || "нет связи"}; if (T.sel === s.id && T.view === "student") render(); });
+  } catch(e){ T.bcache[s.id] = {rows: [], loading: false, at: Date.now(), error: e.message || String(e)}; }
+}
+function studentBoardsHTML(s, c){
+  const st = (T.bcache || {})[s.id] || {};
+  const head = `<div class="row between" style="gap:8px;flex-wrap:wrap"><div class="kicker">Доска ученика: пометки и подчёркивания</div><button class="btn ghost sm" data-act="boards-reload" ${st.loading ? "disabled" : ""}>${st.loading ? "Загружаю…" : "Обновить"}</button></div>`;
+  if (st.loading) return `<div class="card stack" style="gap:8px">${head}<p class="small muted">Загружаю доску…</p></div>`;
+  if (st.error) return `<div class="card stack" style="gap:8px">${head}<p class="small muted">Не удалось загрузить доску: ${esc(st.error)}</p></div>`;
+  const rows = st.rows || [];
+  if (!rows.length) return `<div class="card stack" style="gap:8px">${head}<p class="small muted">Ученик пока ничего не писал на доске.</p></div>`;
+  const groups = new Map();
+  rows.forEach(r => {
+    const it = r.item || {}, full = String(r.lesson_id || ""), k = full.lastIndexOf(":");
+    const lesson = k > 0 ? full.slice(0, k) : full, page = k > 0 ? full.slice(k + 1) : "";
+    const g = groups.get(full) || {lesson, page, strokes: 0, texts: 0, files: 0, at: ""};
+    if (it.t === "s") g.strokes++; else if (it.t === "t") g.texts++; else if (it.t === "i") g.files++;
+    if (r.created_at && (!g.at || String(r.created_at) > g.at)) g.at = r.created_at;
+    groups.set(full, g);
+  });
+  const list = [...groups.values()];
+  const marksN = list.reduce((a, g) => a + g.strokes + g.texts + g.files, 0), sheetN = list.length;
+  const body = list.map(g => {
+    const l = g.lesson === "free" ? FREE : c?.lessons?.find(x => x.id === g.lesson);
+    const title = g.lesson === "free" ? "Личная доска" : (l?.title || g.lesson);
+    let pageLabel = g.page;
+    try { const ps = Board.pages(c || {lessons: [], texts: {}, izl: {}}, l || FREE); pageLabel = (ps.find(p => p.key === g.page) || {}).label || g.page; } catch(_){}
+    return `<div class="board-mark-row" data-t-board-row data-lesson="${esc(g.lesson)}" data-page="${esc(g.page)}" data-strokes="${g.strokes}" data-texts="${g.texts}" data-files="${g.files}">
+      <div style="min-width:0"><b>${esc(title)}</b>${pageLabel ? ` <span class="small muted">· ${esc(pageLabel)}</span>` : ""}
+        <div class="small">штрихов ${g.strokes} · надписей ${g.texts} · вложений ${g.files}</div>
+        ${g.at ? `<div class="small muted">${fmtWhen(g.at)}</div>` : ""}</div>
+      <button class="btn ghost sm" data-boardfor="${esc(g.lesson)}" data-boardpage="${esc(g.page)}">Открыть доску</button></div>`;
+  }).join("");
+  return `<div class="card stack" style="gap:8px">${head}<p class="small muted" data-t-board-summary>всего пометок ${marksN} на ${sheetN} листах</p><div class="boards-list">${body}</div></div>`;
+}
+function studentAllHTML(s, c){
+  if (pending(s)) return "";
+  ensureBoards(s);
+  return `<div class="stack" id="student-all" data-t-student-all style="gap:14px">${selfProgressHTML(s)}${studentBaseHTML(s, c)}${studentBoardsHTML(s, c)}</div>`;
+}
+
 function aiReportHTML(s, x){
   const rep = T.reports.find(r => r.student_id === s.id && r.kind === "analysis"), b = rep?.body;
   return `<div class="ai-box stack" style="gap:10px"><div class="row between"><div><div class="kicker">Разбор нейросети</div>
@@ -475,6 +600,7 @@ function viewStudent(){
   ${T.liveTest?.[s.id] && !T.liveTest[s.id].done && !T.liveTest[s.id].quit ? `<div class="section-title"><h2>Сейчас проходит тест</h2></div><div class="card" data-livetest="${s.id}">${liveTestHTML(T.liveTest[s.id])}</div>` : ""}
   ${(() => { const L = T.rows.filter(r => r.student_id === s.id && (r.kind === "lesson" || r.kind === "hw") && r.answers?.length).slice(-4).reverse(); if (!L.length) return "";
     return `<div class="section-title"><h2>Последние тесты – ответы</h2></div><div class="card">${L.map(r => { const l = U.findLesson(c, r.lesson_id); return `<div style="margin-bottom:10px"><b>${r.kind === "hw" ? "ДЗ-тест" : "Тест"}: ${esc(l?.title || r.lesson_id)}</b> <span class="chip ${U.lvl(Math.round(r.score / r.total * 100))}">${r.score}/${r.total}</span> <span class="small muted">${new Date(r.created_at).toLocaleString("ru-RU", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"})}</span>${answersHTML(r.answers, false)}</div>`; }).join("")}</div>`; })()}
+  ${!pending(s) ? `<div class="section-title"><h2>Всё, что делает ученик</h2><span class="small muted">самообучение, база и доска – так же, как видит ученик</span></div>${studentAllHTML(s, c)}` : ""}
   ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
   ${!pending(s) && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
   ${!pending(s) && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
@@ -522,7 +648,7 @@ function viewWork(){
 }
 
 function viewBoard(){
-  const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = T.boardLesson === "free" ? FREE : c.lessons.find(x => x.id === T.boardLesson);
+  const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats) || {lessons: [], blocks: {}}, l = T.boardLesson === "free" ? FREE : (c.lessons.find(x => x.id === T.boardLesson) || FREE);
   const p = s.pair_id && T.students.find(x => x.id === s.pair_id);
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-student="${s.id}">← ${esc(s.name)}</button>
     <button class="btn sm" data-goto="${l.id}" data-sub2="board">Позвать ${p ? "учеников" : "ученика"} на доску</button></div>
@@ -1026,7 +1152,7 @@ function render(){
     const {pages, live} = roomBoardPages(s, c, l);
     const menu = () => !s || l === FREE ? [] : [{label: "✨ Добавить тему или объяснение", run: () => ceModal(s, l, "theory")}, {label: "🧩 Сгенерировать задания", run: () => ceModal(s, l, "practice")},
       {label: "🎯 Отработать слабую зону", run: () => ceModal(s, l, "practice", weakReq(s, l))}];
-    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages, live, page: T.view === "room" ? T.room?.shown || pages[0]?.key : undefined, onPage: p => { if (T.view === "room" && T.room){ T.room.tab = T.room.shown = p; roomPersist(); } }, menu});
+    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages, live, page: T.view === "room" ? T.room?.shown || pages[0]?.key : (T.boardPage || undefined), onPage: p => { if (T.view === "room" && T.room){ T.room.tab = T.room.shown = p; roomPersist(); } else T.boardPage = p; }, menu});
   }
   if (!$("#board")){ Board.release(); T.board = null; }
   if (T.session && !T.loading && T.routeReady) try { sessionStorage.setItem("t-route", JSON.stringify({view: T.view, sel: T.sel, open: T.open, sub: T.sub, courseId: T.courseId, matSubject: T.matSubject, boardLesson: T.boardLesson, workLesson: T.workLesson, room: T.room ? {sid: T.room.sid, lesson: T.room.lesson} : null, y: scrollY})); } catch(_) {}
@@ -1567,7 +1693,12 @@ document.addEventListener("click", async e => {
   }
   if (t.dataset.workfor){ T.workLesson = t.dataset.workfor; T.view = "work"; render(); scrollTo(0, 0); return; }
   if (t.dataset.boardfor === "free"){ cmd(T.sel, "goto", {lesson: "free"}); const s = T.students.find(x => x.id === T.sel); if (s?.pair_id) cmd(s.pair_id, "goto", {lesson: "free"}); }
-  if (t.dataset.boardfor){ T.boardLesson = t.dataset.boardfor; T.view = "board"; render(); scrollTo(0,0); return; }
+  if (t.dataset.boardfor){
+    T.boardLesson = t.dataset.boardfor; T.boardPage = t.dataset.boardpage || null; T.view = "board"; render(); scrollTo(0,0);
+    const pg = t.dataset.boardpage;
+    if (pg) requestAnimationFrame(() => { try { T.board && T.board.open && T.board.open(pg); } catch(_){} });
+    return;
+  }
   if (t.dataset.delmat){
     if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно удалить?"; return; }
     const {error} = await sb.from("materials").delete().eq("id", +t.dataset.delmat);
@@ -1583,6 +1714,11 @@ document.addEventListener("click", async e => {
   if (t.dataset.review && !t.dataset.act){ T.review = T.review === t.dataset.review ? null : t.dataset.review; T.wreview = null; render(); return; }
   if (t.dataset.wreview && !t.dataset.act){ T.wreview = T.wreview === t.dataset.wreview ? null : t.dataset.wreview; T.review = null; render(); return; }
   const a = t.dataset.act;
+  if (a === "boards-reload"){
+    const s = T.students.find(x => x.id === T.sel); if (!s) return;
+    T.bcache = T.bcache || {}; T.bcache[s.id] = null;
+    ensureBoards(s); render(); toast("Обновляю доску ученика…"); return;
+  }
   if (a === "covered-toggle"){
     const s = T.students.find(x => x.id === T.sel), lid = t.dataset.lid; if (!s || !lid) return;
     const on = t.dataset.on === "1", covered = {...(s.covered || {})}, manual = {...(s.covered_manual || {})};
@@ -1883,4 +2019,6 @@ document.addEventListener("click", async e => {
   }
   T.routeReady = true;
 })();
+/* аддитивный хук для e2e: состояние кабинета и хелперы прогресса/доски */
+window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards};
 })();

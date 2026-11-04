@@ -143,6 +143,21 @@ ok(rm.data === true, "board_remove ученика");
 const after2 = await teacher.client.from("board_items").select("id").eq("student_id", ROW_A).order("id");
 ok(after2.data.length === 1, "после board_remove остался один объект", { after: after2.data, rm, addedId: add.data, token: sw.data.token, tokens: student.win.__MOCK.tokens(), studentDb: student.win.__MOCK.dbTable("board_items"), ls: (shared.local.getItem("mock-db-v1") || "").slice(0, 260) });
 
+// 4b. карточка учителя «доска ученика»: board_items читаются по student_id и группируются по lesson_id,
+//     личная доска ("free:p1") — отдельно от уроков; чужие строки не попадают; works по student_id (прогресс self).
+await teacher.client.from("board_items").insert({ student_id: ROW_A, lesson_id: "free:p1", item: { t: "s", p: [[3, 4]] }, author: "student" }).select("id").single();
+await teacher.client.from("board_items").insert({ student_id: ROW_B, lesson_id: "math-5-1:practice", item: { t: "s", p: [[5, 6]] }, author: "student" }).select("id").single();
+const boardA = await teacher.client.from("board_items").select("lesson_id,item").eq("student_id", ROW_A).order("lesson_id");
+const lessonKeysA = [...new Set((boardA.data || []).map(r => r.lesson_id))].sort();
+ok(lessonKeysA.length === 2 && lessonKeysA.includes("free:p1") && lessonKeysA.includes("rus-5-1:practice"), "board_items по student_id: строки rowA по двум листам (урок + личная доска), чужие не попали", lessonKeysA);
+const onlyFree = await teacher.client.from("board_items").select("lesson_id").eq("student_id", ROW_A).in("lesson_id", ["free:p1"]);
+ok(onlyFree.data && onlyFree.data.length === 1 && onlyFree.data[0].lesson_id === "free:p1", "board_items .in(lesson_id) для строки доски", onlyFree.data);
+await student.client.rpc("student_save_work", { p_code: sw.data.token, p_lesson: "self:stress", p_task: 0, p_data: { mastered: ["аэропорты"], done: false, total: 15, errors: {} } });
+const selfWorks = await teacher.client.from("works").select("lesson_id,task,data").eq("student_id", ROW_A).order("task");
+ok(selfWorks.data && selfWorks.data.length >= 1 && selfWorks.data.some(w => w.lesson_id === "self:stress" && +w.task === 0 && w.data && w.data.total === 15), "works по student_id: учитель видит прогресс самообучения ученика", selfWorks.data);
+const limitedItems = await teacher.client.from("board_items").select("id").eq("student_id", ROW_A).order("id").limit(1);
+ok(limitedItems.data && limitedItems.data.length === 1, "board_items .order().limit() как в реальном from()", limitedItems.data);
+
 // 5. update/upsert/delete через from
 const upd = await teacher.client.from("students").update({ call_url: "https://call" }).eq("id", ROW_A);
 ok(!upd.error, "from students update");
@@ -151,7 +166,8 @@ ok(updCheck.data && updCheck.data.call_url === "https://call", "students update 
 const ups = await teacher.client.from("sheets").upsert({ teacher_id: TEACHER_ID, course: "rus-5", lesson_id: "rus-5-1", name: "Лист", url: "u" }, { onConflict: "teacher_id,course,lesson_id" });
 ok(!ups.error, "from sheets upsert");
 const del = await teacher.client.from("board_items").delete().eq("student_id", ROW_A);
-ok(!del.error && (await teacher.client.from("board_items").select("id")).data.length === 0, "from board_items delete с фильтром");
+const delLeft = (await teacher.client.from("board_items").select("id").eq("student_id", ROW_A)).data || [];
+ok(!del.error && delLeft.length === 0, "from board_items delete с фильтром");
 
 // 6. shared DB: ученик видит то, что записал учитель
 const shared2 = await student.client.rpc("board_load", { p_code: sw.data.token, p_lesson: "rus-5-1:practice" });
@@ -221,10 +237,13 @@ ok(!legacyQuizzes.error && Array.isArray(legacyQuizzes.data) && legacyQuizzes.da
 const STRESS_DATA = { done: true, mastered: ["аэропОрты", "бАнты"], errors: { "дОговор": 2 }, at: "2026-11-04T20:00:00.000Z" };
 const sw1 = await student.client.rpc("student_save_work", { p_code: TOKEN_B, p_lesson: "self:stress", p_task: 0, p_data: STRESS_DATA });
 ok(!sw1.error && sw1.data === null, "student_save_work self:stress принят (void)", sw1);
-const worksRows = student.win.__MOCK.dbTable("works");
-ok(worksRows.length === 1 && worksRows[0].lesson_id === "self:stress" && +worksRows[0].task === 0 && worksRows[0].data.done === true && worksRows[0].data.mastered.length === 2, "student_save_work записал works self:stress", worksRows);
+/* строк в works может быть больше (например, прогресс rowA из проверки карточки учителя) — проверяем строку именно rowB */
+const worksB = () => student.win.__MOCK.dbTable("works").filter(w => String(w.student_id) === String(ROW_B) && w.lesson_id === "self:stress");
+const worksRows = worksB();
+ok(worksRows.length === 1 && +worksRows[0].task === 0 && worksRows[0].data.done === true && worksRows[0].data.mastered.length === 2, "student_save_work записал works self:stress", student.win.__MOCK.dbTable("works"));
 const sw2 = await student.client.rpc("student_save_work", { p_code: TOKEN_B, p_lesson: "self:stress", p_task: 0, p_data: { ...STRESS_DATA, done: false } });
-ok(!sw2.error && student.win.__MOCK.dbTable("works").length === 1 && student.win.__MOCK.dbTable("works")[0].data.done === false, "повторный student_save_work обновляет ту же строку (upsert)", sw2.error);
+const worksB2 = worksB();
+ok(!sw2.error && worksB2.length === 1 && worksB2[0].data.done === false, "повторный student_save_work обновляет ту же строку (upsert)", sw2.error);
 const stSelf = await student.client.rpc("student_state", { p_code: TOKEN_B });
 const savedWork = stSelf.data && (stSelf.data.works || []).find(w => w.lesson_id === "self:stress" && +w.task === 0);
 ok(savedWork && savedWork.data && Array.isArray(savedWork.data.mastered), "student_state.works возвращает прогресс самообучения", savedWork);

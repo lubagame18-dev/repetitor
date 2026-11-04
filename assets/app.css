@@ -677,3 +677,22 @@ body.play-open{overflow:hidden}
 .self-answer{font-size:1.05rem;line-height:1.6;white-space:pre-line}
 .self-note{margin-top:6px}
 @media (max-width:560px){.self-front{font-size:1.15rem}.st-word,.st-v{font-size:1.8rem}}
+/* ---------- кабинет учителя: всё, что делает ученик (самообучение, база, доска) ---------- */
+.self-progress-grid{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.self-prog-row{border:1px solid var(--line);border-radius:14px;padding:9px 11px;background:var(--glass-2);min-width:0}
+.self-prog-row.done{border-color:color-mix(in srgb,var(--good) 40%,var(--line));background:color-mix(in srgb,var(--good) 7%,var(--glass-2))}
+.self-prog-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px}
+.self-prog-head b{font-size:.92rem;line-height:1.3;min-width:0;overflow-wrap:anywhere}
+.self-prog-head .chip{flex:none}
+.self-prog-bar{height:6px;border-radius:999px;background:var(--chip);overflow:hidden;margin-bottom:5px}
+.self-prog-bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--violet),var(--pink));transition:width .3s}
+.self-prog-row.done .self-prog-bar i{background:linear-gradient(90deg,var(--good),#57c78a)}
+.self-err-list{display:flex;flex-direction:column;gap:5px}
+.self-err-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;border-bottom:1px dashed var(--hair);padding:4px 0}
+.self-err-row b{font-size:.92rem}
+.self-err-row .chip{margin-left:auto}
+.boards-list{display:flex;flex-direction:column;gap:8px}
+.board-mark-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--line);border-radius:14px;padding:9px 11px;background:var(--glass-2)}
+.board-mark-row b{font-size:.95rem}
+.board-mark-row .btn{flex:none}
+@media (max-width:560px){.self-progress-grid{grid-template-columns:1fr}.board-mark-row{align-items:flex-start}.board-mark-row .btn{width:100%;justify-content:center}}
