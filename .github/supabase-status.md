@@ -1,11 +1,11 @@
 # Последнее обновление Supabase
 
-Время: 2026-11-02 16:56 UTC · коммит 8bf062d
+Время: 2026-11-04 14:14 UTC · коммит 945be58
 
 ## База (schema.sql)
 ```
-[]
-ok (201)
+{"message":"Failed to run sql query: ERROR:  42703: column \"teacher_id\" does not exist\n"}
+ОШИБКА 400 (изменения отменены)
 ```
 
 ## Функция ai
