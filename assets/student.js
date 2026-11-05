@@ -151,6 +151,7 @@ function liveStart(){
   live = sb.channel(`live-${S.profile.teacher}`, {config:{presence:{key:"s-" + S.profile.id}, broadcast:{self:false}}});
   live.on("broadcast", {event:"act"}, ({payload:m}) => onSync(m));
   live.on("broadcast", {event:"cmd"}, async ({payload:m}) => {
+    if (!S.profile) return;   // команда до загрузки профиля – не падаем, применится после входа
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];   // команда по любому предмету этого ученика
     if (!m?.cmd || (!mine.includes(m.to) && m.to !== "all")) return;
     if (m.type === "izlpick"){ S.labPick = m.key; LS.set("labPick", m.key); if (S.view === "folder" && S.course?.lessons.find(x => x.id === S.open)?.lab === "izl") S.sub = "lab"; render(); toast("Учитель выбрал текст для изложения: " + (m.title || "")); return; }
@@ -967,23 +968,41 @@ function selfSave(kind, task, data){
   if (data && data.done) flush();                        // завершение блока/колоды сохраняем сразу
   else selfSaveT[key] = setTimeout(flush, 700);
 }
-function selfStressState(b){
-  const block = selfBlocks()[b] || {words:[]}, p = selfProg("stress")[b] || {};
+const selfPlain = w => String(w ?? "").toLowerCase();
+const selfPlural = (n, one, few, many) => { const x = Math.abs(+n || 0) % 100, y = x % 10; return `${+n || 0} ${x > 10 && x < 20 ? many : y === 1 ? one : y >= 2 && y <= 4 ? few : many}`; };
+/* свои наборы учителя (materials kind "tasks", lesson_id "self"): блоки ударений и колоды карточек */
+function selfCourseKey(){ return S.profile?.course || S.course?.course || ""; }
+function selfCustomSets(){
+  const D = selfData();
+  if (typeof D.customSets !== "function") return {blocks: [], decks: []};
+  try {
+    const out = D.customSets(S.mats, selfCourseKey(), S.profile?.id) || {};
+    return {blocks: Array.isArray(out.blocks) ? out.blocks : [], decks: Array.isArray(out.decks) ? out.decks : []};
+  } catch(_){ return {blocks: [], decks: []}; }
+}
+/* объединённые списки: встроенные (task = индекс, прогресс не меняется) + свои (task = SELF_DATA.taskFor) */
+function selfStressItems(){
+  const built = selfBlocks().map((b, i) => ({block:b, task:i, custom:false}));
+  return [...built, ...selfCustomSets().blocks.map(x => ({block:x, task:x.task, custom:true}))];
+}
+function selfDeckItems(){
+  const hist = selfIsHist();
+  const built = (selfData().decks || []).map((d, i) => ({deck:d, task:i, custom:false})).filter(x => (x.deck.subject || "rus") !== "hist" || hist);
+  return [...built, ...selfCustomSets().decks.map(x => ({deck:x, task:x.task, custom:true}))];
+}
+function selfStressState(task, block){
+  block = block || (selfStressItems().find(x => x.task === task) || {}).block || {words:[]};
+  const p = selfProg("stress")[task] || {};
   const mastered = Array.isArray(p.mastered) ? p.mastered : [], errors = p.errors && typeof p.errors === "object" ? p.errors : {};
   const total = block.words?.length || 0;
   return {p, mastered, errors, count: mastered.length, total, errTotal: Object.values(errors).reduce((a, x) => a + (+x || 0), 0), done: !!p.done || (total > 0 && mastered.length >= total)};
 }
-function selfDeckState(d){
-  const deck = selfData().decks?.[d] || {cards:[]}, p = selfProg("deck")[d] || {};
+function selfDeckState(task, deck){
+  deck = deck || (selfDeckItems().find(x => x.task === task) || {}).deck || {cards:[]};
+  const p = selfProg("deck")[task] || {};
   const mastered = Array.isArray(p.mastered) ? p.mastered : [], errors = p.errors && typeof p.errors === "object" ? p.errors : {};
   const total = deck.cards?.length || 0;
   return {p, mastered, errors, count: mastered.length, total, errTotal: Object.values(errors).reduce((a, x) => a + (+x || 0), 0), done: !!p.done || (total > 0 && mastered.length >= total)};
-}
-const selfPlain = w => String(w ?? "").toLowerCase();
-/* колоды: русские всегда, исторические – только на историческом курсе */
-function selfDecks(){
-  const hist = selfIsHist();
-  return (selfData().decks || []).map((d, i) => ({d, i})).filter(x => (x.d.subject || "rus") !== "hist" || hist);
 }
 function selfErrorsItems(){ const d = selfProg("errors")[0]; return d && Array.isArray(d.items) ? d.items : []; }
 /* «Мои ошибки»: объединяем по key, храним не больше 60, свежие – выше */
@@ -1023,41 +1042,43 @@ function selfRemember(kind, source, data){
   }
   if (items.length) selfErrAdd(items);
 }
-function selfBlockHTML(i, block, st){
+function selfBlockHTML(i, item, st){
+  const block = item.block || item, task = item.task ?? i, custom = !!item.custom;
   const pctv = st.total ? Math.round(st.count / st.total * 100) : 0;
   const state = st.done ? "✓ пройден" : st.count ? "продолжить" : "начать";
-  return `<button class="pl-card self-block" data-act="self-stress-block" data-b="${i}" data-self-progress="${st.count}/${st.total}">
-    <div class="row between" style="width:100%;gap:8px"><b style="min-width:0">${esc(block.title)}</b><span class="chip ${st.done ? "good" : ""}">${st.done ? "✓ " : ""}${st.count}/${st.total}</span></div>
+  return `<button class="pl-card self-block" data-act="self-stress-block" data-b="${i}" data-task="${task}"${custom && block.id ? ` data-custom="${esc(block.id)}"` : ""} data-self-progress="${st.count}/${st.total}">
+    <div class="row between" style="width:100%;gap:8px"><b style="min-width:0">${esc(block.title)}</b><span class="row" style="gap:4px;flex-wrap:wrap;justify-content:flex-end">${custom ? `<span class="chip mid">от учителя</span>` : ""}<span class="chip ${st.done ? "good" : ""}">${st.done ? "✓ " : ""}${st.count}/${st.total}</span></span></div>
     <div class="progress self-bar" style="margin:8px 0 2px"><i style="width:${pctv}%"></i></div>
-    <span class="small muted">${st.errTotal ? "ошибок: " + st.errTotal : "15 слов в блоке"} · ${state}</span></button>`;
+    <span class="small muted">${st.errTotal ? "ошибок: " + st.errTotal : selfPlural(st.total, "слово", "слова", "слов") + " в блоке"} · ${state}</span></button>`;
 }
-function selfDeckHTML(i, deck, st){
+function selfDeckHTML(i, item, st){
+  const deck = item.deck || item, task = item.task ?? i, custom = !!item.custom;
   const pctv = st.total ? Math.round(st.count / st.total * 100) : 0;
-  return `<button class="pl-card self-deck" data-act="self-deck" data-d="${i}" data-self-progress="${st.count}/${st.total}">
-    <span class="pl-emo">${esc(deck.emoji || "🃏")}</span><b>${esc(deck.title)}</b><span class="small muted">${esc(deck.note || "")}</span>
+  return `<button class="pl-card self-deck" data-act="self-deck" data-d="${i}" data-task="${task}"${custom && deck.id ? ` data-custom="${esc(deck.id)}"` : ""} data-self-progress="${st.count}/${st.total}">
+    <span class="pl-emo">${esc(deck.emoji || "🃏")}</span><b>${esc(deck.title)}</b><span class="small muted">${esc(deck.note || "")}${custom ? ` · ${selfPlural(st.total, "карточка", "карточки", "карточек")}` : ""}</span>
     <div class="progress self-bar" style="margin:8px 0 2px"><i style="width:${pctv}%"></i></div>
-    <span class="row" style="gap:4px;flex-wrap:wrap"><span class="chip ${st.done ? "good" : ""}">${st.done ? "✓ " : ""}${st.count}/${st.total}</span>${st.errTotal ? `<span class="chip bad">ошибок: ${st.errTotal}</span>` : ""}</span></button>`;
+    <span class="row" style="gap:4px;flex-wrap:wrap">${custom ? `<span class="chip mid">от учителя</span>` : ""}<span class="chip ${st.done ? "good" : ""}">${st.done ? "✓ " : ""}${st.count}/${st.total}</span>${st.errTotal ? `<span class="chip bad">ошибок: ${st.errTotal}</span>` : ""}</span></button>`;
 }
-function selfStartStress(b, blocks){
-  const block = (blocks || selfBlocks())[b];
-  if (!block) return;
+function selfStartStress(it, items){
+  const item = typeof it === "number" ? (items || selfStressItems())[it] : it;
+  const block = item?.block; if (!block) return;
   if (!window.Play || typeof Play.stressMastery !== "function"){ toast("Тренажёр ударений обновится после обновления страницы."); return; }
-  const st = selfStressState(b), done = selfDone("self-stress", "");
+  const task = item.task, st = selfStressState(task, block), done = selfDone("self-stress", "");
   Play.onDone = r => { done(r); setTimeout(() => { if (S.view === "self") render(); }, 150); };
   Play.stressMastery(block, {
     progress: {mastered: st.mastered.slice(), errors: {...st.errors}},
-    onProgress: d => { selfSave("stress", b, d); selfRemember("stress", block, d); }
+    onProgress: d => { selfSave("stress", task, d); selfRemember("stress", block, d); }
   });
 }
-function selfStartDeck(d, decks){
-  const deck = (decks || selfData().decks || [])[d];
-  if (!deck) return;
+function selfStartDeck(it, items){
+  const item = typeof it === "number" ? (items || selfDeckItems())[it] : it;
+  const deck = item?.deck; if (!deck) return;
   if (!window.Play || typeof Play.cardDeck !== "function"){ toast("Карточки обновятся после обновления страницы."); return; }
-  const st = selfDeckState(d), done = selfDone("self-cards", "");
+  const task = item.task, st = selfDeckState(task, deck), done = selfDone("self-cards", "");
   Play.onDone = r => { done(r); setTimeout(() => { if (S.view === "self") render(); }, 150); };
   Play.cardDeck(deck, {
     progress: {mastered: st.mastered.slice(), errors: {...st.errors}},
-    onProgress: data => { selfSave("deck", d, data); selfRemember("deck", deck, data); }
+    onProgress: data => { selfSave("deck", task, data); selfRemember("deck", deck, data); }
   });
 }
 function selfStartErrors(){
@@ -1082,10 +1103,11 @@ function viewSelf(){
   const L = selfLessons(), l = selfLesson(), best = LS.get("self-best", {}) || {};
   const card = (act, emo, h, d, extra = "") => `<button class="pl-card" data-act="${act}" ${extra}><span class="pl-emo">${emo}</span><b>${h}</b><span class="small muted">${d}</span>${best[act] ? `<span class="chip" style="margin-top:4px">лучший: ${esc(best[act])}</span>` : ""}</button>`;
   const games = selfGames(), themes = (window.PLAY_BANKS?.themes || []);
-  const blocks = selfBlocks();
-  const blockStates = blocks.map((b, i) => ({b, i, st: selfStressState(i)}));
+  const stressItems = selfStressItems();
+  const blockStates = stressItems.map((it, i) => ({it, i, st: selfStressState(it.task, it.block)}));
   const nextBlock = blockStates.find(x => !x.st.done) || null;
-  const deckStates = selfDecks().map(x => ({...x, st: selfDeckState(x.i)}));
+  const deckItems = selfDeckItems();
+  const deckStates = deckItems.map((it, i) => ({it, i, st: selfDeckState(it.task, it.deck)}));
   const nextDeck = deckStates.find(x => !x.st.done) || null;
   const errorsN = selfErrorsItems().length;
   const OG = window.OGE;
@@ -1102,16 +1124,16 @@ function viewSelf(){
     <h3 style="margin:0">Что подтянуть</h3>
     ${recs}
     <div class="row" style="gap:8px;flex-wrap:wrap">
-      ${nextBlock ? `<button class="btn sm" data-act="self-stress-block" data-b="${nextBlock.i}">${nextBlock.st.count ? "Продолжить ударения" : "Начать ударения"}: ${esc(nextBlock.b.title)}</button>` : blocks.length ? `<span class="chip good">Все блоки ударений пройдены ✓</span>` : ""}
-      ${nextDeck ? `<button class="btn ghost sm" data-act="self-deck" data-d="${nextDeck.i}">Карточки: ${esc(nextDeck.d.title)}</button>` : ""}
+      ${nextBlock ? `<button class="btn sm" data-act="self-stress-block" data-b="${nextBlock.i}" data-task="${nextBlock.it.task}"${nextBlock.it.custom && nextBlock.it.block.id ? ` data-custom="${esc(nextBlock.it.block.id)}"` : ""}>${nextBlock.st.count ? "Продолжить ударения" : "Начать ударения"}: ${esc(nextBlock.it.block.title)}</button>` : blockStates.length ? `<span class="chip good">Все блоки ударений пройдены ✓</span>` : ""}
+      ${nextDeck ? `<button class="btn ghost sm" data-act="self-deck" data-d="${nextDeck.i}" data-task="${nextDeck.it.task}"${nextDeck.it.custom && nextDeck.it.deck.id ? ` data-custom="${esc(nextDeck.it.deck.id)}"` : ""}>Карточки: ${esc(nextDeck.it.deck.title)}</button>` : ""}
       ${OG && OG.isOge(S.course) ? `<button class="btn ghost sm" data-go="oge">Мой ОГЭ</button>` : ""}
     </div></div>`;
-  const stressSection = blocks.length ? `<h3 style="margin:18px 0 10px">Ударения ОГЭ</h3>
-    <p class="small muted" style="margin-bottom:10px">Блок закончен, когда все 15 слов отвечены верно; ошибся – слово вернётся ещё два раза. Прогресс сохраняется.</p>
-    <div class="pl-grid self-blocks">${blockStates.map(x => selfBlockHTML(x.i, x.b, x.st)).join("")}</div>` : "";
+  const stressSection = blockStates.length ? `<h3 style="margin:18px 0 10px">Ударения ОГЭ</h3>
+    <p class="small muted" style="margin-bottom:10px">Блок закончен, когда все слова отвечены верно; ошибся – слово вернётся ещё два раза. Прогресс сохраняется. Наборы учителя отмечены «от учителя».</p>
+    <div class="pl-grid self-blocks">${blockStates.map(x => selfBlockHTML(x.i, x.it, x.st)).join("")}</div>` : "";
   const deckSection = deckStates.length ? `<h3 style="margin:18px 0 10px">Карточки-запоминалки</h3>
     <p class="small muted" style="margin-bottom:10px">Открывай карточку, вспоминай ответ и отмечай «Знаю» или «Ещё учить». Колода освоена, когда все карточки отмечены «Знаю».</p>
-    <div class="pl-grid self-decks">${deckStates.map(x => selfDeckHTML(x.i, x.d, x.st)).join("")}
+    <div class="pl-grid self-decks">${deckStates.map(x => selfDeckHTML(x.i, x.it, x.st)).join("")}
       ${errorsN ? `<button class="pl-card self-errors" data-act="self-errors" data-self-errors-left="${errorsN}"><span class="pl-emo">🩹</span><b>Мои ошибки</b><span class="small muted">Слова и карточки, где ты ошибался – повтори и закрой их</span><span class="chip bad">${errorsN}</span></button>` : ""}</div>` : "";
   return `<div class="section-title" style="margin-top:6px"><h2>Самообучение</h2></div>
     <p class="muted" style="margin-bottom:12px">Глубокая подготовка: блоки ударений, карточки-запоминалки и работа над своими ошибками. Учитель видит, что ты занимался.</p>

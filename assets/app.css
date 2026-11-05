@@ -696,3 +696,19 @@ body.play-open{overflow:hidden}
 .board-mark-row b{font-size:.95rem}
 .board-mark-row .btn{flex:none}
 @media (max-width:560px){.self-progress-grid{grid-template-columns:1fr}.board-mark-row{align-items:flex-start}.board-mark-row .btn{width:100%;justify-content:center}}
+/* ---------- база самообучения: просмотр и конструктор своих наборов ---------- */
+.ss-viewer{display:flex;flex-direction:column;gap:8px}
+.ss-set{border:1px solid var(--line);border-radius:12px;background:var(--glass-2);padding:8px 11px}
+.ss-set>summary{cursor:pointer;font-weight:700;font-size:.93rem;line-height:1.35}
+.ss-set[open]>summary{margin-bottom:7px}
+.ss-custom{border-color:color-mix(in srgb,var(--violet) 32%,var(--line))}
+.ss-words{display:flex;flex-wrap:wrap;gap:5px}
+.ss-word{background:var(--field);border:1px solid var(--hair);border-radius:999px;padding:2px 9px;font-size:.9rem;font-weight:700}
+.ss-cards{display:flex;flex-direction:column;gap:5px}
+.ss-card{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;border-bottom:1px dashed var(--hair);padding:3px 0}
+.ss-card b{font-size:.9rem}
+.ss-form label{margin-top:2px}
+.ss-form textarea{min-height:150px;font-family:inherit}
+.ss-hint{background:color-mix(in srgb,var(--sun) 26%,transparent);border-radius:10px;padding:7px 9px;margin:0}
+.ss-form .row{margin-top:2px}
+@media (max-width:560px){.ss-set>summary{font-size:.88rem}.ss-card{flex-direction:column;gap:2px}}

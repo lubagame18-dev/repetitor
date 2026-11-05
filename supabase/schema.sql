@@ -239,15 +239,20 @@ returns boolean language sql security definer set search_path = public stable as
   select t = auth.uid();   -- ученики видны только своему кабинету
 $$;
 
--- действующий тариф: разработчик – full; иначе тариф, если оплачен (или идёт пробный период); null – подписки нет
+-- бесплатный доступ: всё открыто без подписки (по умолчанию включён; в app_settings ключ free_access='0' возвращает тарифы)
+create or replace function public.free_access()
+returns boolean language sql security definer set search_path = public stable as $$
+  select coalesce((select lower(value::text) in ('1','true','on','yes') from app_settings where key = 'free_access'), true);
+$$;
+-- действующий тариф: при бесплатном доступе – full; разработчик – full; иначе тариф, если оплачен (или идёт пробный период); null – подписки нет
 create or replace function public.plan_active(uid uuid)
 returns text language sql security definer set search_path = public stable as $$
-  select case when t.role = 'developer' then 'full' when t.paid_until > now() then t.plan else null end from teachers t where t.id = uid;
+  select case when free_access() then 'full' when t.role = 'developer' then 'full' when t.paid_until > now() then t.plan else null end from teachers t where t.id = uid;
 $$;
--- доступ к встроенной базе: тариф 300/500, разработчик или выдано вручную
+-- доступ к встроенной базе: бесплатный доступ, тариф 300/500, разработчик или выдано вручную
 create or replace function public.can_read_base(uid uuid)
 returns boolean language sql security definer set search_path = public stable as $$
-  select coalesce(plan_active(uid) in ('materials','full'), false) or exists (select 1 from teachers where id = uid and cardinality(base_access) > 0);
+  select free_access() or coalesce(plan_active(uid) in ('materials','full'), false) or exists (select 1 from teachers where id = uid and cardinality(base_access) > 0);
 $$;
 
 drop policy if exists "payments_own" on public.payments;
@@ -328,7 +333,7 @@ begin
   end if;
   select * into r from teachers where id = uid;
   return json_build_object('join_code', r.join_code, 'id', r.id, 'email', r.email, 'name', r.name, 'role', r.role, 'base_access', r.base_access, 'theme', r.theme, 'call_url', r.call_url,
-    'plan', r.plan, 'paid_until', r.paid_until, 'trial', r.trial, 'active', plan_active(r.id), 'base', can_read_base(r.id),
+    'plan', r.plan, 'paid_until', r.paid_until, 'trial', r.trial, 'active', plan_active(r.id), 'base', can_read_base(r.id), 'free', free_access(),
     'prices', (select value from app_settings where key = 'prices'),
     'room', r.room);
 end $$;
@@ -816,13 +821,14 @@ do $$ declare f text; begin
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;
-  foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_room(jsonb)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
+  foreach f in array array['public.plan_active(uuid)', 'public.can_read_base(uuid)', 'public.free_access()', 'public.teacher_new_invite(uuid)', 'public.teacher_add_subject(uuid, text, int, text)', 'public.teacher_set_call(text)', 'public.teacher_set_room(jsonb)', 'public.teacher_set_pair(uuid, uuid)', 'public.me()', 'public.teacher_set_theme(text)',
     'public.dev_join(text)', 'public.dev_change_code(text)', 'public.dev_set_secret(text, text)', 'public.dev_list_secrets()', 'public.dev_stats()', 'public.is_dev()'] loop
     execute 'revoke all on function ' || f || ' from public, anon';
     execute 'grant execute on function ' || f || ' to authenticated';
   end loop;
   execute 'revoke all on function public.board_owner(uuid) from public, anon, authenticated';
   begin execute 'grant execute on function public.plan_active(uuid) to service_role'; exception when undefined_object then null; end;
+  begin execute 'grant execute on function public.free_access() to service_role'; exception when undefined_object then null; end;
 end $$;
 
 -- обновить кэш схемы PostgREST, чтобы новые таблицы и функции стали видны сразу

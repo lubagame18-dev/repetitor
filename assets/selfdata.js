@@ -180,3 +180,52 @@ window.SELF_DATA = {
     }
   ]
 };
+
+/* ---------- конструктор: свои наборы учителя в самообучении ----------
+   Свои блоки/колоды хранятся как materials (kind "tasks", lesson_id "self"):
+   data = {kind:"self-stress", words:[...]} или {kind:"self-deck", cards:[{f,b}], emoji}.
+   Прогресс ученика в works ключуется стабильным числовым task = taskFor("m"+materialId). */
+(function(){
+  const D = window.SELF_DATA;
+  if (!D) return;
+  D.taskFor = id => {
+    let h = 5381; const s = String(id || "");
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return 900000 + (h % 100000);
+  };
+  const VOW = /[аеёиоуыэюя]/i;
+  D.parseStressWord = w => {
+    const letters = [...String(w || "").trim()];
+    if (!letters.length) return null;
+    let idx = -1, up = 0;
+    for (let i = 0; i < letters.length; i++){
+      const ch = letters[i];
+      if (!/[а-яё]/i.test(ch)) return null;
+      if (ch !== ch.toLowerCase()){ if (!VOW.test(ch)) return null; up++; idx = i; }
+    }
+    if (up !== 1) return null;
+    return { idx, word: letters.map((c, i) => i === idx ? c.toUpperCase() : c.toLowerCase()).join(""),
+      plain: letters.map(c => c.toLowerCase()).join("") };
+  };
+  /* свои наборы для ученика/учителя: mats — S.mats/T.mats, course — код курса, studentId — чей прогресс смотрим */
+  D.customSets = (mats, course, studentId) => {
+    const out = {blocks: [], decks: []};
+    (mats || []).forEach(m => {
+      if (!m || m.kind !== "tasks" || m.lesson_id !== "self" || !m.data || typeof m.data !== "object") return;
+      if (course && m.course && m.course !== course) return;
+      if (m.student_id && m.student_id !== studentId) return;
+      const id = "m" + m.id;
+      if (m.data.kind === "self-stress" && Array.isArray(m.data.words)){
+        const words = m.data.words.map(D.parseStressWord).filter(Boolean).map(x => x.word);
+        if (words.length) out.blocks.push({id, materialId: m.id, title: m.title || "Свои ударения", words,
+          task: D.taskFor(id), custom: true, studentId: m.student_id || null});
+      }
+      if (m.data.kind === "self-deck" && Array.isArray(m.data.cards)){
+        const cards = m.data.cards.filter(c => c && c.f && c.b).map(c => ({f: String(c.f), b: String(c.b)}));
+        if (cards.length) out.decks.push({id, materialId: m.id, title: m.title || "Свои карточки",
+          emoji: m.data.emoji || "🃏", note: "Набор учителя", cards, task: D.taskFor(id), custom: true, studentId: m.student_id || null});
+      }
+    });
+    return out;
+  };
+})();

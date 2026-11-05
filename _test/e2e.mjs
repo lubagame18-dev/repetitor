@@ -103,6 +103,7 @@ export function buildWorld() {
   const teachers = [{
     id: TEACHER_ID, name: "Любовь Игоревна", email: "teacher@test.local", join_code: "JOIN01",
     base: true, base_access: ["oge-rus", "rus-5", "math-5"], role: "teacher", theme: null, call_url: "",
+    free: true, active: "full",
   }];
   const db = {
     seq: 5000,
@@ -225,10 +226,11 @@ async function closePlay(page){
   await page.eval(`(() => { const ov = document.querySelector('.play-ov'); if (!ov) return false; const x = ov.querySelector('.play-end [data-close]') || ov.querySelector('.play-x'); if (x) x.click(); return true; })()`);
   await page.waitFor(`!document.querySelector('.play-ov') ? 1 : 0`, { timeout: 6000, label: "оверлей Play закрыт" });
 }
-/** пройти блок ударений кликами по гласным; firstWrong — первый ответ заведомо неверный */
+/** пройти блок ударений кликами по гласным; b — индекс встроенного блока или массив слов (свои наборы) */
 async function runStressMastery(page, b, { firstWrong = false, maxSteps = 320 } = {}){
-  const words = await selfWords(page, b);
-  assert(Array.isArray(words) && words.length >= 10, "в блоке " + b + " меньше 10 слов: " + JSON.stringify(words));
+  const words = Array.isArray(b) ? b : await selfWords(page, b);
+  const label = Array.isArray(b) ? "свой набор" : "блок " + b;
+  assert(Array.isArray(words) && words.length >= 1, label + ": нет слов: " + JSON.stringify(words));
   const meta = new Map(words.map(w => [stressPlain(w), { raw: w, idx: stressIdx(w), plain: stressPlain(w) }]));
   const seen = new Map(); let steps = 0, firstBad = null, wrongDone = false, retryFeedback = false, stateAfterWrong = null;
   while (steps++ < maxSteps) {
@@ -236,7 +238,7 @@ async function runStressMastery(page, b, { firstWrong = false, maxSteps = 320 } 
     const cur = await page.eval(`(() => { const w = document.querySelector('.play-ov .play-body .st-word'); return w ? w.textContent : null; })()`);
     assert(cur, "нет текущего слова в тренажёре ударений");
     const m = meta.get(cur);
-    assert(m, "слово «" + cur + "» не найдено в SELF_DATA блока " + b);
+    assert(m, "слово «" + cur + "» не найдено в " + label + ": " + JSON.stringify([...meta.keys()]));
     seen.set(cur, (seen.get(cur) || 0) + 1);
     if (!wrongDone && firstWrong) {
       const k = await page.eval(`[...document.querySelectorAll('.play-ov .st-v')].map(x => +x.dataset.k).find(k => k !== ${m.idx})`);
@@ -256,8 +258,12 @@ async function runStressMastery(page, b, { firstWrong = false, maxSteps = 320 } 
     }
     await waitStressReady(page);
   }
-  assert(await stressDone(page), "тренажёр ударений не дошёл до финала за " + maxSteps + " шагов");
+  assert(await stressDone(page), "тренажёр ударений не дошёл до финала за " + maxSteps + " шагов (" + label + ")");
   return { seen, firstBad, retryFeedback, stateAfterWrong };
+}
+/** дождаться строки в materials (свои наборы учителя) */
+async function waitMaterial(teacher, pred, timeout = 15000){
+  return waitMockRow(teacher, "materials", pred, timeout);
 }
 /** пройти колоду карточек (или тренажёр «Мои ошибки»): Показать ответ → Знаю / Ещё учить */
 async function runDeckLoop(page, { firstAgain = false, maxSteps = 400 } = {}){
@@ -669,7 +675,9 @@ test("Q4", "Карта тем: у учителя #qz-map .qz-topic.bad с тем
 });
 
 /* ---------- S1–S4: самообучение (блоки ударений, карточки, ошибки, прогресс) ---------- */
-test("S1", "Самообучение: блок ударений — ошибка с подсказкой, повтор, 15/15; прогресс works и результат self сохраняются", async ({ teacher, browser, baseUrl }) => {
+test("S1", "Самообучение: блок ударений — ошибка с подсказкой, повтор, 15/15; прогресс works и результат self сохраняются", async ({ teacher, student, browser, baseUrl }) => {
+  /* вкладка rowB больше не нужна и делит localStorage – закрываем, чтобы сессия rowA не перетиралась */
+  try { await student.close(); } catch (_) {}
   const page = await ensureSelfStudent({ browser, baseUrl });
   await selfOpen(page);
   const blocks = await page.eval(`document.querySelectorAll('[data-act="self-stress-block"]').length`);
@@ -807,6 +815,8 @@ test("T1", "Карточка ученика у учителя: прогресс 
   /* кабинет восстанавливает прошлый маршрут из sessionStorage (после Q4 он мог быть в карточке ученика),
      поэтому ждём shell и явно возвращаемся к списку учеников */
   await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя после сида T1 (shell + __teacher)" });
+  /* сбрасываем «идущий урок», иначе ученик при загрузке получает room-pull и переключается на другой предмет */
+  await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; if (!T) return false; T.room = null; if (T.me) T.me.room = null; return true; })()`);
   await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
   await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников у учителя (T1)" });
   await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
@@ -882,6 +892,263 @@ test("T1", "Карточка ученика у учителя: прогресс 
   if (String(boardInfo.lesson) !== lessonId) throw new Error("T.boardLesson не совпал с уроком: " + JSON.stringify(boardInfo) + ", ожидали " + lessonId);
 });
 
+/* ---------- U1: база самообучения + конструктор наборов учителя ---------- */
+/** перезагрузить кабинет и открыть карточку rowA (маршрут из sessionStorage не восстанавливаем) */
+async function reloadTeacherToRow(teacher, baseUrl){
+  await teacher.eval(`try { sessionStorage.clear(); } catch (_) {}; true`);
+  await teacher.goto(baseUrl + "/teacher.html");
+  await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя (shell + __teacher)" });
+  /* сбрасываем «идущий урок», иначе ученик при загрузке получает room-pull и переключается на другой предмет */
+  await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; if (!T) return false; T.room = null; if (T.me) T.me.room = null; return true; })()`);
+  /* сбрасываем сохранённый «идущий урок»: иначе ученик получает room-pull и уходит на другой предмет */
+  await teacher.eval(`(async () => { try { await window.__MOCK.client.from("teachers").update({room: null}).eq("id", ${JSON.stringify(TEACHER_ID)}); } catch (_) {} return true; })()`);
+  await teacher.eval(`try { sessionStorage.clear(); } catch (_) {}; true`);
+  await teacher.goto(baseUrl + "/teacher.html");
+  await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя после сброса урока" });
+  /* presence без комнаты: ученик не должен получить room-pull и уйти на другой предмет */
+  await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; if (!T) return false; T.room = null; if (T.me) T.me.room = null; try { T.live && T.live.track({role: "teacher", room: null}); } catch (_) {} return true; })()`);
+  await teacher.waitFor(`(() => { const st = window.__MOCK.presenceOf("live-${TEACHER_ID}") || {}; return Object.values(st).flat().every(p => !p.room) ? 1 : 0; })()`, { timeout: 10000, label: "presence учителя без комнаты" });  await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
+  await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников (U1)" });
+  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "карточка rowA («Всё, что делает ученик»)" });
+}
+/** заполнить и сохранить форму набора ss-* (тип stress|deck) */
+async function ssCreate(teacher, { kind, title, body, scope = "all" }){
+  await teacher.eval(`document.querySelector('[data-act="ss-new"]').click(); true`);
+  await teacher.waitFor(`document.getElementById("ss-form") ? 1 : 0`, { timeout: 8000, label: "форма «Создать набор» (#ss-form)" });
+  await teacher.eval(`(() => {
+    const set = (sel, v) => { const el = document.querySelector(sel); if (!el) return false; el.value = v; el.dispatchEvent(new Event("change", {bubbles: true})); el.dispatchEvent(new Event("input", {bubbles: true})); return true; };
+    set("#ss-kind", ${JSON.stringify(kind)}); set("#ss-title", ${JSON.stringify(title)}); set("#ss-scope", ${JSON.stringify(scope)}); set("#ss-body", ${JSON.stringify(body)});
+    return true;
+  })()`);
+  await teacher.eval(`document.querySelector('[data-act="ss-save"]').click(); true`);
+}
+/** открыть просмотр базы (секция сворачиваемая; список своих наборов — внутри [data-ss-viewer]) */
+async function openBaseViewer(teacher){
+  if (!(await teacher.eval(`!!document.querySelector('[data-ss-viewer]')`))) {
+    await teacher.eval(`document.querySelector('[data-act="ss-view"]').click(); true`);
+  }
+  await teacher.waitFor(`document.querySelector('[data-ss-viewer]') ? 1 : 0`, { timeout: 8000, label: "просмотр базы ([data-ss-viewer])" });
+}
+test("U1", "База самообучения и конструктор: просмотр базы, создание stress/deck наборов, ученик проходит, прогресс у учителя, правка и удаление", async ({ teacher, student, browser, baseUrl }) => {
+  /* вкладка ученика rowB больше не нужна: она делит localStorage и может перезаписать сессию rowA во время reload */
+  try { await student.close(); } catch (_) {}
+  /* свой мир: чистая мок-БД (иначе works/материалы прошлых сценариев повлияют) */
+  await teacher.eval(`window.__MOCK.reset(${JSON.stringify(JSON.parse(JSON.stringify(W.db)))}); true`);
+  await reloadTeacherToRow(teacher, baseUrl);
+
+  /* a) просмотр базы: 12 блоков × 15 слов = 180, 5 встроенных колод */
+  const hasBase = await teacher.eval(`!!document.querySelector('[data-t-selfbase]')`);
+  assert(hasBase, "в карточке нет секции [data-t-selfbase] «База самообучения»");
+  await teacher.eval(`document.querySelector('[data-act="ss-view"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-ss-viewer]') ? 1 : 0`, { timeout: 8000, label: "просмотр базы ([data-ss-viewer]) после «Показать базу»" });
+  const base = await teacher.eval(`(() => {
+    const blocks = [...document.querySelectorAll('[data-t-self-base-stress]')];
+    const decks = [...document.querySelectorAll('[data-t-self-base-deck]')].map(d => ({cards: +d.dataset.cards, text: d.textContent}));
+    return {
+      blocks: blocks.length,
+      words: blocks.reduce((a, b) => a + (+b.dataset.words || 0), 0),
+      blockWords: blocks.map(b => +b.dataset.words || 0),
+      decks,
+      text: document.body.innerText || "",
+    };
+  })()`);
+  eq(base.blocks, 12, "встроенных блоков ударений в базе");
+  eq(base.words, 180, "суммарно слов в блоках ударений");
+  eq(base.decks.length, 5, "встроенных колод в базе");
+  const deckCards = base.decks.map(d => d.cards).sort((a, b) => a - b);
+  assert(deckCards.join(",") === "15,15,16,20,29", "количества карточек во встроенных колодах: " + JSON.stringify(base.decks));
+  for (const name of ["Паронимы", "Средства выразительности"]) assert(base.decks.some(d => d.text.includes(name)) || base.text.includes(name), "нет встроенной колоды «" + name + "»");
+
+  /* b) создаём свой stress-набор */
+  await ssCreate(teacher, { kind: "stress", title: "Слова от учителя", body: "звонИть\nтОрты\nбАнты" });
+  const matStress = await waitMaterial(teacher, m => m.kind === "tasks" && m.lesson_id === "self" && m.title === "Слова от учителя");
+  assert(matStress, "после сохранения нет материала stress-набора в mock-БД: " + JSON.stringify(await teacherDB(teacher, "materials")).slice(0, 500));
+  eq(matStress.course, "rus-5", "materials.course stress-набора");
+  eq(matStress.student_id, null, "student_id при scope=all");
+  eq(matStress.data && matStress.data.kind, "self-stress", "materials.data.kind stress-набора");
+  eq((matStress.data.words || []).length, 3, "materials.data.words.length stress-набора");
+  assert((matStress.data.words || []).includes("звонИть"), "канонические слова (звонИть) не сохранены: " + JSON.stringify(matStress.data.words));
+  const sid = matStress.id, stressSetKey = "m" + sid;
+  await teacher.waitFor(`document.querySelector('[data-t-custom-set][data-id="${sid}"]') ? 1 : 0`, { timeout: 8000, label: "свой stress-набор в списке [data-t-custom-set]" });
+  await teacher.waitFor(`document.querySelector('[data-t-custom-stress="${stressSetKey}"]') ? 1 : 0`, { timeout: 8000, label: "строка прогресса своего stress-набора [data-t-custom-stress]" });
+
+  /* c) создаём свою колоду карточек */
+  await ssCreate(teacher, { kind: "deck", title: "Мои карточки", body: "вопрос один | ответ один\nвопрос два | ответ два" });
+  const matDeck = await waitMaterial(teacher, m => m.kind === "tasks" && m.lesson_id === "self" && m.title === "Мои карточки");
+  assert(matDeck, "после сохранения нет материала deck-набора");
+  eq(matDeck.data && matDeck.data.kind, "self-deck", "materials.data.kind deck-набора");
+  eq((matDeck.data.cards || []).length, 2, "materials.data.cards.length deck-набора");
+  eq(matDeck.data.cards[0].f, "вопрос один", "deck cards[0].f");
+  eq(matDeck.data.cards[0].b, "ответ один", "deck cards[0].b");
+  const did = matDeck.id, deckSetKey = "m" + did;
+  await teacher.waitFor(`document.querySelector('[data-t-custom-set][data-id="${did}"]') ? 1 : 0`, { timeout: 8000, label: "свой deck-набор в списке" });
+  await teacher.waitFor(`document.querySelector('[data-t-custom-deck="${deckSetKey}"]') ? 1 : 0`, { timeout: 8000, label: "строка прогресса своего deck-набора [data-t-custom-deck]" });
+
+  /* d) ученик: reload → видит оба набора с пометкой «от учителя» и проходит их */
+  let page;
+  try { if (W.quizTab) await W.quizTab.close(); } catch (_) {}
+  W.quizTab = null; W.quizTabClosed = false;
+  page = await browser.newPage("about:blank");
+  await page.inject(seedScript({ db: null, session: null, studentSession: W.studentSession(ROW_A), joinHow: null }), "seed-u1.js");
+  await page.inject(MOCK_SRC, "mock-supabase.js");
+  await blockUrls(page);
+  W.quizTab = page;
+  /* сессия хранится в общем localStorage: после закрытия вкладки rowB могла остаться чужая – вернём rowA */
+  await page.inject(seedScript({ db: null, session: null, studentSession: W.studentSession(ROW_A), joinHow: null }), "seed-u1.js");
+  await page.goto(baseUrl + "/index.html");
+  await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="self"]') ? 1 : 0`, { timeout: 25000, label: "ученик после reload (свои наборы)" });
+  const sessDbg = await page.eval(`(() => { const S = window.__app && window.__app.S; let sess = null; try { sess = JSON.parse(localStorage.getItem("oge-session") || "null"); } catch (_) { sess = "ERR"; } return { href: location.href, sess: sess && sess.profile ? {id: sess.profile.id, token: sess.token} : sess, token: S && S.token, id: S && S.profile && S.profile.id, course: S && S.profile && S.profile.course }; })()`).catch(e => ({ evalError: String(e) }));
+  console.log("       [U1 student reload] " + JSON.stringify(sessDbg).slice(0, 600));
+  await selfOpen(page);
+  const customStress = `[data-act="self-stress-block"][data-custom="${stressSetKey}"]`;
+  const customDeck = `[data-act="self-deck"][data-custom="${deckSetKey}"]`;
+  try {
+    await page.waitFor(`document.querySelector(${JSON.stringify(customStress)}) ? 1 : 0`, { timeout: 12000, label: "свой stress-блок ученика с data-custom" });
+  } catch (e) {
+    const diag = await page.eval(`(() => { const S = window.__app && window.__app.S; return {
+      profile: S && S.profile ? {id: S.profile.id, course: S.profile.course, subjects: (S.profile.subjects || []).map(x => x && x.id)} : null,
+      mats: (S && S.mats || []).map(m => ({id: m.id, kind: m.kind, lesson: m.lesson_id, course: m.course, sid: m.student_id, dk: m.data && m.data.kind})).slice(0, 12),
+      view: S && S.view,
+      hasSelfData: !!(window.SELF_DATA && window.SELF_DATA.customSets),
+      customSets: (() => { try { const c = window.SELF_DATA.customSets(S.mats, S.profile.course, S.profile.id); return {b: c.blocks.length, d: c.decks.length}; } catch (err) { return "ERR:" + err.message; } })(),
+      body: (document.body.innerText || "").slice(0, 500),
+    }; })()`).catch(err => ({evalError: String(err)}));
+    console.log("       [U1 diag] " + JSON.stringify(diag).slice(0, 1600));
+    console.log("       [U1 quiz-tab errors] " + JSON.stringify(page.errors.slice(-4)));
+    throw e;
+  }
+  await page.waitFor(`document.querySelector(${JSON.stringify(customDeck)}) ? 1 : 0`, { timeout: 12000, label: "своя колода ученика с data-custom" });
+  const custInfo = await page.eval(`(() => {
+    const b = document.querySelector(${JSON.stringify(customStress)}), d = document.querySelector(${JSON.stringify(customDeck)});
+    return { bText: b ? b.textContent : "", dText: d ? d.textContent : "", bTask: b ? b.dataset.task : null, dTask: d ? d.dataset.task : null };
+  })()`);
+  assert(/Слова от учителя/.test(custInfo.bText), "в своём блоке нет названия «Слова от учителя»: " + JSON.stringify(custInfo.bText));
+  assert(/от учителя/.test(custInfo.bText) && /от учителя/.test(custInfo.dText), "нет пометки «от учителя»: " + JSON.stringify(custInfo));
+  const stressTask = await page.eval(`window.SELF_DATA.taskFor("m${sid}")`);
+  const deckTask = await page.eval(`window.SELF_DATA.taskFor("m${did}")`);
+  eq(+custInfo.bTask, stressTask, "data-task своего stress-блока");
+  eq(+custInfo.dTask, deckTask, "data-task своей колоды");
+  // проходим свой stress-блок (3 слова)
+  await page.eval(`document.querySelector(${JSON.stringify(customStress)}).click(); true`);
+  await page.waitFor(`document.querySelector('.play-ov .play-body .st-word .st-v') ? 1 : 0`, { timeout: 15000, label: "тренажёр своего stress-блока" });
+  await runStressMastery(page, (matStress.data.words || []));
+  await page.waitFor(`!!document.querySelector('.play-ov .play-end') ? 1 : 0`, { timeout: 12000, label: "финал своего stress-блока" });
+  const wStress = await waitMockRow(teacher, "works", w => w.lesson_id === "self:stress" && +w.task === +stressTask && w.data && w.data.done === true);
+  assert(wStress, "works self:stress с p_task=taskFor(m" + sid + ") не записан: " + JSON.stringify(await teacherDB(teacher, "works")).slice(0, 500));
+  eq((wStress.data.mastered || []).length, 3, "mastered.length своего stress-блока");
+  const rStress = await waitMockRow(teacher, "results", r => r.kind === "self" && String(r.lesson_id).startsWith("self:stress"));
+  assert(rStress, "нет результата kind=self по своему stress-блоку");
+  await closePlay(page);
+  // проходим свою колоду (2 карточки)
+  try {
+    await page.waitFor(`document.querySelector(${JSON.stringify(customDeck)}) ? 1 : 0`, { timeout: 8000, label: "своя колода после закрытия тренажёра" });
+  } catch (e) {
+    const diag = await page.eval(`(() => { const S = window.__app && window.__app.S; return {
+      view: S && S.view, profile: S && S.profile ? {id: S.profile.id, course: S.profile.course} : null,
+      mats: (S && S.mats || []).map(m => ({id: m.id, lesson: m.lesson_id, course: m.course, sid: m.student_id, dk: m.data && m.data.kind})),
+      deckBtns: [...document.querySelectorAll('.self-decks [data-act="self-deck"]')].map(b => ({custom: b.dataset.custom || null, text: (b.textContent || "").slice(0, 40)})),
+      blockBtns: [...document.querySelectorAll('.self-blocks [data-act="self-stress-block"]')].map(b => ({custom: b.dataset.custom || null})),
+      overlay: !!document.querySelector('.play-ov'),
+      body: (document.body.innerText || "").slice(0, 400),
+    }; })()`).catch(err => ({evalError: String(err)}));
+    console.log("       [U1 deck diag] " + JSON.stringify(diag).slice(0, 1400));
+    throw e;
+  }
+  /* клик по своей колоде: после финала блока экран перерисовывается – пробуем несколько раз */
+  let deckOpened = false;
+  for (let attempt = 0; attempt < 4 && !deckOpened; attempt++){
+    await sleep(attempt ? 400 : 150);
+    await page.eval(`(() => { const b = document.querySelector(${JSON.stringify(customDeck)}); if (b) b.click(); return !!b; })()`);
+    try { await page.waitFor(`document.querySelector(".play-ov") ? 1 : 0`, { timeout: 2500, label: "" }); deckOpened = true; } catch (_) {}
+  }
+  try { await page.waitFor(`document.querySelector('.play-ov .play-body .self-front') ? 1 : 0`, { timeout: 15000, label: "тренажёр своей колоды" }); }
+  catch (e) {
+    const diag2 = await page.eval(`(() => ({ overlay: !!document.querySelector(".play-ov"), ovText: (document.querySelector(".play-ov") || {}).innerText || "", play: typeof window.Play, view: window.__app && window.__app.S && window.__app.S.view, works: window.__MOCK ? window.__MOCK.dbTable("works").filter(w => w.lesson_id === "self:deck") : null }))()`).catch(err => ({ evalError: String(err) }));
+    console.log("       [U1 deck-open diag] " + JSON.stringify(diag2).slice(0, 1400));
+    throw e;
+  }
+  await runDeckLoop(page);
+  const wDeck = await waitMockRow(teacher, "works", w => w.lesson_id === "self:deck" && +w.task === +deckTask && w.data && w.data.done === true);
+  assert(wDeck, "works self:deck с p_task=taskFor(m" + did + ") не записан: " + JSON.stringify(await teacherDB(teacher, "works")).slice(0, 500));
+  eq((wDeck.data.mastered || []).length, 2, "mastered.length своей колоды");
+  const rDeck = await waitMockRow(teacher, "results", r => r.kind === "self" && String(r.lesson_id).startsWith("self:cards"));
+  assert(rDeck, "нет результата kind=self по своей колоде");
+  await closePlay(page);
+
+  /* e) прогресс у учителя по своим наборам */
+  await reloadTeacherToRow(teacher, baseUrl);
+  const prog = await teacher.eval(`(() => {
+    const ds = el => el ? {...el.dataset} : null;
+    return { stress: ds(document.querySelector('[data-t-custom-stress="${stressSetKey}"]')), deck: ds(document.querySelector('[data-t-custom-deck="${deckSetKey}"]')) };
+  })()`);
+  assert(prog.stress && +prog.stress.mastered === 3 && +prog.stress.total === 3 && String(prog.stress.done) === "1", "у учителя нет прогресса своего stress-набора 3/3: " + JSON.stringify(prog.stress));
+  assert(prog.deck && +prog.deck.mastered === 2 && +prog.deck.total === 2 && String(prog.deck.done) === "1", "у учителя нет прогресса своей колоды 2/2: " + JSON.stringify(prog.deck));
+
+  /* f) редактирование: title «Слова от учителя 2» — ученик видит после reload */
+  await openBaseViewer(teacher);
+  await teacher.eval(`document.querySelector('[data-act="ss-edit"][data-id="${sid}"]').click(); true`);
+  await teacher.waitFor(`document.getElementById("ss-form") ? 1 : 0`, { timeout: 8000, label: "форма редактирования набора" });
+  await teacher.eval(`(() => { const el = document.getElementById("ss-title"); el.value = "Слова от учителя 2"; el.dispatchEvent(new Event("input", {bubbles: true})); el.dispatchEvent(new Event("change", {bubbles: true})); return true; })()`);
+  await teacher.eval(`document.querySelector('[data-act="ss-save"]').click(); true`);
+  const renamed = await waitMaterial(teacher, m => m.id === sid && m.title === "Слова от учителя 2");
+  assert(renamed, "materials.title не обновился после редактирования: " + JSON.stringify((await teacherDB(teacher, "materials")).find(m => m.id === sid)));
+  await page.goto(baseUrl + "/index.html");
+  await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="self"]') ? 1 : 0`, { timeout: 25000, label: "ученик после reload (после переименования)" });
+  await selfOpen(page);
+  await page.waitFor(`(() => { const b = document.querySelector('[data-act="self-stress-block"][data-custom="${stressSetKey}"]'); return b && /Слова от учителя 2/.test(b.textContent) ? 1 : 0; })()`,
+    { timeout: 12000, label: "ученик видит новое название своего блока" });
+
+  /* g) удаление колоды: два клика по «Удалить», ученик больше не видит, встроенные остаются */
+  await openBaseViewer(teacher);
+  await teacher.eval(`document.querySelector('[data-act="ss-del"][data-id="${did}"]').click(); true`);
+  await sleep(150);
+  await teacher.eval(`document.querySelector('[data-act="ss-del"][data-id="${did}"]').click(); true`);
+  const gone = await waitMockRow(teacher, "materials", m => m.id === did, 1500);
+  // строка должна исчезнуть; ждём подтверждения удаления до 10 с
+  let deleted = !gone;
+  for (let i = 0; i < 40 && !deleted; i++) { await sleep(250); deleted = !(await teacherDB(teacher, "materials")).some(m => m.id === did); }
+  assert(deleted, "deck-набор не удалён из materials: " + JSON.stringify((await teacherDB(teacher, "materials")).find(m => m.id === did)));
+  await page.goto(baseUrl + "/index.html");
+  await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="self"]') ? 1 : 0`, { timeout: 25000, label: "ученик после reload (после удаления)" });
+  await selfOpen(page);
+  const afterDel = await page.eval(`(() => ({
+    custom: document.querySelectorAll('.self-decks [data-act="self-deck"][data-custom]').length,
+    builtinBlocks: document.querySelectorAll('.self-blocks [data-act="self-stress-block"]:not([data-custom])').length,
+    builtinDecks: document.querySelectorAll('.self-decks [data-act="self-deck"]:not([data-custom])').length,
+    hasDel: !!document.querySelector('[data-act="self-deck"][data-custom="${deckSetKey}"]'),
+  }))()`);
+  assert(!afterDel.hasDel, "удалённая колода осталась у ученика");
+  assert(afterDel.custom === 0, "после удаления у ученика остались свои колоды: " + afterDel.custom);
+  eq(afterDel.builtinBlocks, 12, "встроенные блоки ударений после удаления набора");
+  eq(afterDel.builtinDecks, 2, "встроенные колоды на rus-курсе после удаления набора");
+  // и у учителя база по-прежнему цела
+  await reloadTeacherToRow(teacher, baseUrl);
+  await teacher.eval(`document.querySelector('[data-act="ss-view"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-ss-viewer]') ? 1 : 0`, { timeout: 8000, label: "просмотр базы после удаления" });
+  const baseAfter = await teacher.eval(`(() => ({ blocks: document.querySelectorAll('[data-t-self-base-stress]').length, decks: document.querySelectorAll('[data-t-self-base-deck]').length, custom: document.querySelectorAll('[data-t-custom-set]').length }))()`);
+  eq(baseAfter.blocks, 12, "встроенные блоки в базе после удаления");
+  eq(baseAfter.decks, 5, "встроенные колоды в базе после удаления");
+  eq(baseAfter.custom, 1, "остался один свой набор (stress) после удаления колоды");
+});
+
+test("U2", "Доступ без подписки: раздел «Доступ», всё открыто, оплата не предлагается", async ({ teacher }) => {
+  await teacher.eval(`document.querySelector('[data-view="sub"]').click(); true`);
+  await teacher.waitFor(`/Всё открыто/.test((document.querySelector("#app") || {}).innerText || "") ? 1 : 0`,
+    { timeout: 10000, label: "раздел «Доступ»: «Всё открыто»" });
+  const d = await teacher.eval(`(() => {
+    const nav = Array.from(document.querySelectorAll('.navitem')).find(b => b.getAttribute("data-view") === "sub");
+    const T = window.__teacher && window.__teacher.T;
+    return { pay: document.querySelectorAll("[data-pay]").length, nav: (nav || {}).textContent || "",
+      free: !!(T && T.me && T.me.free), active: T && T.me && T.me.active,
+      banner: /Подписка закончилась/.test((document.querySelector("#app") || {}).innerText || "") };
+  })()`);
+  eq(d.pay, 0, "кнопок оплаты нет");
+  eq(d.free, true, "me().free");
+  eq(d.active, "full", "me().active = full");
+  assert(/Доступ/.test(d.nav), "пункт меню называется «Доступ», а не «Подписка»");
+  assert(!d.banner, "нет баннера «Подписка закончилась»");
+});
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 
@@ -924,6 +1191,8 @@ export async function runE2E({ headless = process.env.E2E_HEADLESS !== "0", only
     for (const t of TESTS) {
       if (filter.length && !filter.some(f => t.id.toLowerCase().startsWith(f.toLowerCase()))) continue;
       const eBefore = teacher.errors.length, sBefore = student.errors.length;
+      const qBefore = W.quizTab ? W.quizTab.errors.length : 0;
+      const qcBefore = W.quizTab ? W.quizTab.console.length : 0;
       const cBefore = teacher.console.length, csBefore = student.console.length;
       const t0 = Date.now();
       let pass = false, err = null;
@@ -936,8 +1205,9 @@ export async function runE2E({ headless = process.env.E2E_HEADLESS !== "0", only
         if (W.quizTab && !W.quizTabClosed) { extraTabs.push(W.quizTab); W.quizTabClosed = true; }
       }
       const tabs = [teacher, student, ...(W.quizTab && !W.quizTabClosed ? [W.quizTab] : [])];
-      const consoleErrors = tabs.flatMap(p => p.console).filter(c => c.type === "error").map(c => c.text).slice(0, 10);
-      const pageErrors = [...teacher.errors.slice(eBefore), ...student.errors.slice(sBefore), ...(W.quizTab ? W.quizTab.errors : [])].slice(0, 6);
+      const consoleErrors = [...teacher.console.slice(cBefore), ...student.console.slice(csBefore), ...(W.quizTab ? W.quizTab.console.slice(qcBefore) : [])]
+        .filter(c => c.type === "error").map(c => c.text).slice(0, 10);
+      const pageErrors = [...teacher.errors.slice(eBefore), ...student.errors.slice(sBefore), ...(W.quizTab ? W.quizTab.errors.slice(qBefore) : [])].slice(0, 6);
       results.push({ id: t.id, name: t.name, pass, ms: Date.now() - t0, error: err ? String(err.message || err) : null, consoleErrors, pageErrors });
       console.log(`[${pass ? "PASS" : "FAIL"}] ${t.id} ${t.name}${pass ? "" : "\n       " + (err && err.message || err)}`);
       if (!pass) {

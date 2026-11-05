@@ -107,6 +107,7 @@ function view(){
   <form class="card stack" id="pay-form" style="gap:10px">
     <div class="grid2 stats">${[["basic","Базовый"],["materials","С материалами"],["full","Полный"]].map(([k,n]) => `<div><label for="pr-${k}">${n}, ₽ в месяц</label><input type="text" inputmode="numeric" id="pr-${k}" value="${esc((D.settings.prices || {})[k] ?? {basic:100, materials:300, full:500}[k])}"></div>`).join("")}
       <div><label for="trial-days">Пробный период, дней (0 – без него)</label><input type="text" inputmode="numeric" id="trial-days" value="${esc(D.settings.trial_days ?? 7)}"></div></div>
+    <div><label for="free-access" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="free-access" ${(D.settings.free_access ?? "1") !== "0" ? "checked" : ""}> Всё открыто без подписки — для всех репетиторов</label><p class="small muted" style="margin:4px 0 0">Отключите, если хотите вернуть тарифы и оплату.</p></div>
     <p class="small muted">ЮKassa → Настройки → Магазин: «shopId» и «Секретный ключ». В ЮKassa → Интеграция → HTTP-уведомления вставьте адрес ниже и отметьте событие <b>payment.succeeded</b>.</p>
     <div class="linkbox"><input type="text" readonly value="${esc((window.APP_CONFIG || {}).SUPABASE_URL || "https://ВАШ-ПРОЕКТ.supabase.co")}/functions/v1/pay"></div>
     <label for="yk-shop">shopId ЮKassa ${tail("yk_shop") ? `<span class="chip good">сохранён: ${esc(tail("yk_shop"))}</span>` : ""}</label><input type="text" id="yk-shop" autocomplete="off">
@@ -237,7 +238,7 @@ document.addEventListener("submit", async e => {
   if (e.target.id === "pay-form"){
     const prices = {}; ["basic","materials","full"].forEach(k => prices[k] = Math.max(1, Math.round(+$("#pr-" + k).value.replace(/\D/g, "")) || 0));
     const days = Math.max(0, parseInt($("#trial-days").value, 10) || 0);
-    let {error} = await sb.from("app_settings").upsert([{key: "prices", value: prices}, {key: "trial_days", value: days}]);
+    let {error} = await sb.from("app_settings").upsert([{key: "prices", value: prices}, {key: "trial_days", value: days}, {key: "free_access", value: $("#free-access")?.checked ? "1" : "0"}]);
     if (!error && $("#yk-shop").value.trim()) error = (await sb.rpc("dev_set_secret", {p_key: "yk_shop", p_value: $("#yk-shop").value.trim()})).error;
     if (!error && $("#yk-secret").value.trim()) error = (await sb.rpc("dev_set_secret", {p_key: "yk_secret", p_value: $("#yk-secret").value.trim()})).error;
     toast(error ? "Не сохранилось: " + error.message : "Тарифы и оплата сохранены"); load(); return;

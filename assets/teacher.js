@@ -8,7 +8,8 @@ const sb = U.supa();
 const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null, view:"students", grade:"all", sel:null, open:null, sub:"method", review:null, wreview:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
            online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, boardPage:null, bcache:{}, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null,
-           qzQuizzes:[], qzResults:[], qzSel:null, qzSelSid:null, qzCount:3, qzBusy:false, qzDraft:null, qzSaved:null};
+           qzQuizzes:[], qzResults:[], qzSel:null, qzSelSid:null, qzCount:3, qzBusy:false, qzDraft:null, qzSaved:null,
+           sbase:false, snew:false, ssEdit:null, ssSid:null, ssKind:null};
 const $ = s => document.querySelector(s);
 const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
 const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered,covered_manual,school,avatar";
@@ -327,10 +328,27 @@ function selfProgressHTML(s){
   const errs = selfErrItems(s), shown = errs.slice(0, 20);
   const errHTML = shown.length ? `<div class="self-err-list">${shown.map(it => `<div class="self-err-row" data-t-err-key="${esc(it.key || it.label || "")}"><b>${esc(it.label || "")}</b>${it.detail ? `<span class="small muted"> → ${esc(it.detail)}</span>` : ""}${(+it.count || 0) > 1 ? `<span class="chip bad">×${+it.count}</span>` : ""}</div>`).join("")}</div>` : `<p class="small muted">Ошибок нет.</p>`;
   const stressDone = blocks.filter((_, i) => selfBlockProg(s, i).done).length, deckDone = decks.filter(x => selfDeckProg(s, x.i).done).length;
-  const has = !!(selfWork(s, "stress").length || selfWork(s, "deck").length || errs.length);
+  const has = !!(selfWork(s, "stress").length || selfWork(s, "deck").length || errs.length || (window.SELF_DATA?.customSets ? (() => { try { const cs = SELF_DATA.customSets(T.mats, s.course, s.id); return cs.blocks.length + cs.decks.length; } catch(_){ return 0; } })() : 0));
+  const customRows = (() => {
+    if (!window.SELF_DATA || typeof SELF_DATA.customSets !== "function") return "";
+    let sets; try { sets = SELF_DATA.customSets(T.mats, s.course, s.id); } catch(_){ return ""; }
+    const row = (kind, item) => {
+      const d = selfWorkData(s, kind, item.task) || {};
+      const mastered = Array.isArray(d.mastered) ? d.mastered : [], errors = d.errors && typeof d.errors === "object" ? d.errors : {};
+      const total = (kind === "stress" ? (item.words || []) : (item.cards || [])).length || 0, count = mastered.length;
+      const done = !!d.done || (total > 0 && count >= total), errTotal = selfErrTotal(errors), pctv = total ? Math.round(count / total * 100) : 0;
+      const attr = kind === "stress" ? "data-t-custom-stress" : "data-t-custom-deck";
+      return `<div class="self-prog-row custom ${done ? "done" : ""}" ${attr}="${esc(item.id)}" data-ss-set-progress="${esc(item.id)}" data-task="${item.task}" data-mastered="${count}" data-total="${total}" data-done="${done ? 1 : 0}" data-errors="${errTotal}">
+        <div class="self-prog-head"><b>${esc(item.emoji ? item.emoji + " " : "")}${esc(item.title)}</b><span class="row" style="gap:4px;flex-wrap:wrap"><span class="chip">от учителя</span><span class="chip ${done ? "good" : ""}">${done ? "✓ " : ""}${count}/${total}</span></span></div>
+        <div class="self-prog-bar"><i style="width:${pctv}%"></i></div>
+        <div class="small muted">${errTotal ? "ошибок: " + errTotal : "без ошибок"}${done ? " · пройден" : count ? " · продолжает" : " · не начинал"}${item.studentId ? " · только этому ученику" : " · весь курс"}</div></div>`;
+    };
+    const all = [...(sets.blocks || []).map(b => row("stress", b)), ...(sets.decks || []).map(d => row("deck", d))];
+    return all.length ? `<div class="kicker" style="grid-column:1/-1;margin-top:2px">Наборы от учителя</div>${all.join("")}` : "";
+  })();
   return `<div class="card stack" style="gap:10px" data-t-self-progress>
     <div class="row between" style="gap:8px;flex-wrap:wrap"><div class="kicker">Самообучение: прогресс</div><span class="small muted">блоки: ${stressDone}/${blocks.length} · колоды: ${deckDone}/${decks.length}</span></div>
-    ${has ? `<div class="self-progress-grid">${stressRows}${deckRows}</div>
+    ${has ? `<div class="self-progress-grid">${stressRows}${deckRows}${customRows}</div>
       <div class="kicker" style="margin-top:2px">Мои ошибки${errs.length ? ` (${errs.length})` : ""}</div><div data-t-self-errors>${errHTML}</div>`
       : `<p class="muted small">Ученик ещё не занимался в новой базе.</p>`}</div>`;
 }
@@ -399,10 +417,116 @@ function studentBoardsHTML(s, c){
   }).join("");
   return `<div class="card stack" style="gap:8px">${head}<p class="small muted" data-t-board-summary>всего пометок ${marksN} на ${sheetN} листах</p><div class="boards-list">${body}</div></div>`;
 }
+/* ---------- база самообучения: встроенные задания и конструктор своих наборов ---------- */
+function ssState(s){
+  if (T.ssSid !== s.id){ T.ssSid = s.id; T.sbase = false; T.snew = false; T.ssEdit = null; T.ssKind = null; }
+  return T;
+}
+function ssMaterials(s){
+  return (T.mats || []).filter(m => m && m.kind === "tasks" && m.lesson_id === "self" && (!m.course || m.course === s.course) && (!m.student_id || m.student_id === s.id));
+}
+const ssIsStress = m => m?.data?.kind === "self-stress";
+const ssIsDeck = m => m?.data?.kind === "self-deck";
+const ssWords = m => (Array.isArray(m?.data?.words) ? m.data.words : []);
+const ssCards = m => (Array.isArray(m?.data?.cards) ? m.data.cards : []);
+function ssViewerHTML(s){
+  const D = window.SELF_DATA || {}, blocks = (D.stress && D.stress.blocks) || [], decks = D.decks || [];
+  const totalWords = blocks.reduce((a, b) => a + ((b.words || []).length), 0);
+  const stress = blocks.map((b, i) => `<details class="ss-set" data-ss-stress-block="${i}" data-t-self-base-stress="${i}" data-words="${(b.words || []).length}"><summary>Блок ${i + 1} · ${esc(b.title)} · ${(b.words || []).length} слов</summary><div class="ss-words">${(b.words || []).map(w => `<span class="ss-word">${esc(w)}</span>`).join("")}</div></details>`).join("");
+  const deckHtml = decks.map((d, i) => `<details class="ss-set" data-ss-deck="${i}" data-t-self-base-deck="${i}" data-cards="${(d.cards || []).length}"><summary>${esc(d.emoji || "🃏")} ${esc(d.title)} · ${(d.cards || []).length} карточек</summary><div class="ss-cards">${(d.cards || []).map(c => `<div class="ss-card"><b>${esc(c.f)}</b><span class="small muted"> → ${esc(c.b)}</span></div>`).join("")}</div></details>`).join("");
+  const own = ssMaterials(s).map(m => {
+    const st = ssIsStress(m), n = st ? ssWords(m).length : ssCards(m).length, scope = m.student_id ? "one" : "all";
+    const preview = st ? ssWords(m).map(w => `<span class="ss-word">${esc(w)}</span>`).join("") : ssCards(m).map(c => `<div class="ss-card"><b>${esc(c.f)}</b><span class="small muted"> → ${esc(c.b)}</span></div>`).join("");
+    return `<div class="ss-set ss-custom" data-ss-set="${esc(m.id)}" data-t-custom-set="${esc(m.id)}" data-id="${esc(m.id)}" data-kind="${st ? "stress" : "deck"}" data-scope="${scope}">
+      <div class="row between" style="gap:8px;flex-wrap:wrap"><div style="min-width:0"><b>${esc(m.title || "Набор")}</b> <span class="chip">${st ? "ударения" : "карточки"}</span> <span class="chip">${scope === "one" ? "только этому ученику" : "весь курс"}</span> <span class="small muted">${n} ${st ? "слов" : "карточек"}</span></div>
+        <div class="row" style="gap:6px"><button class="btn ghost sm" data-act="ss-edit" data-id="${esc(m.id)}">Изменить</button><button class="btn ghost sm" data-act="ss-del" data-id="${esc(m.id)}">Удалить</button></div></div>
+      <details><summary class="small">Показать содержимое</summary><div class="${st ? "ss-words" : "ss-cards"}">${preview}</div></details></div>`;
+  }).join("");
+  return `<div class="ss-viewer" data-ss-viewer>
+    <div class="kicker">Встроенная база: ударения</div><p class="small muted">${blocks.length} блоков · ${totalWords} слов</p>${stress}
+    <div class="kicker" style="margin-top:10px">Встроенная база: карточки</div>${deckHtml}
+    <div class="kicker" style="margin-top:10px">Свои наборы</div>${own ? `<div class="stack" style="gap:8px">${own}</div>` : `<p class="small muted">Вы пока не создавали своих наборов.</p>`}</div>`;
+}
+function ssEditMaterial(s){ const id = T.ssEdit; if (!id) return null; return (T.mats || []).find(m => +m.id === +id) || null; }
+const SS_HINT = kind => kind === "deck" ? "По одной карточке в строке: вопрос | ответ." : "По одному слову в строке; ударная гласная — ЗАГЛАВНОЙ (звонИть).";
+function ssFormHTML(s){
+  const mat = ssEditMaterial(s);
+  const kind = mat ? (ssIsDeck(mat) ? "deck" : "stress") : (T.ssKind || "stress");
+  const title = mat ? String(mat.title || "") : "";
+  const scope = mat && mat.student_id ? "one" : "all";
+  const body = mat ? (kind === "deck" ? ssCards(mat).map(c => `${c.f} | ${c.b}`).join("\n") : ssWords(mat).join("\n")) : "";
+  return `<form class="ss-form card stack" id="ss-form" data-ss-form style="gap:8px">
+    <div class="kicker">${mat ? "Изменить набор" : "Новый набор"}</div>
+    <label for="ss-kind">Тип</label><select id="ss-kind" data-ss-type><option value="stress" ${kind === "stress" ? "selected" : ""}>Ударения</option><option value="deck" ${kind === "deck" ? "selected" : ""}>Карточки</option></select>
+    <label for="ss-title">Название</label><input id="ss-title" maxlength="120" value="${esc(title)}" placeholder="Например: Слова из блока 5">
+    <label for="ss-scope">Кому</label><select id="ss-scope" data-ss-scope><option value="all" ${scope === "all" ? "selected" : ""}>Весь курс</option><option value="one" ${scope === "one" ? "selected" : ""}>Только этому ученику</option></select>
+    <label for="ss-body">${kind === "deck" ? "Карточки" : "Слова"}</label><textarea id="ss-body" data-ss-text rows="8" placeholder="${kind === "deck" ? "абонент | пользователь (телефонный абонент)" : "звонИть\nкрАны"}">${esc(body)}</textarea>
+    <p class="small muted ss-hint" id="ss-hint">${SS_HINT(kind)}</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm" type="button" data-act="ss-save">Сохранить</button><button class="btn ghost sm" type="button" data-act="ss-cancel">Отмена</button></div></form>`;
+}
+function selfBaseHTML(s, c){
+  ssState(s);
+  const n = ssMaterials(s).length;
+  return `<div class="card stack" id="student-selfbase" data-t-selfbase data-t-self-base style="gap:10px">
+    <div class="row between" style="gap:8px;flex-wrap:wrap"><div class="kicker">База самообучения: задания и конструктор</div>
+      <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn ghost sm" data-act="ss-view" data-ss-open>${T.sbase ? "Скрыть базу" : "Показать базу"}</button>${T.snew ? `<button class="btn ghost sm" data-act="ss-cancel">Отмена</button>` : `<button class="btn sm" data-act="ss-new" data-ss-new>Создать набор</button>`}</div></div>
+    <p class="small muted">${T.sbase ? "Все встроенные задания и ваши наборы – ученик видит их в разделе «Самообучение»." : "Встроенные слова и карточки + свои наборы: смотрите, что решает ученик, и добавляйте своё."}${n ? ` · своих наборов: ${n}` : ""}</p>
+    ${T.sbase ? ssViewerHTML(s) : ""}
+    ${T.snew ? ssFormHTML(s) : ""}</div>`;
+}
+async function ssSave(s, btn){
+  const title = ($("#ss-title")?.value || "").trim().slice(0, 120);
+  const kind = $("#ss-kind")?.value === "deck" ? "deck" : "stress";
+  const scope = $("#ss-scope")?.value === "one" ? "one" : "all";
+  const lines = ($("#ss-body")?.value || "").split("\n").map(x => x.trim()).filter(Boolean);
+  if (!title){ toast("Укажите название набора"); return; }
+  if (!lines.length){ toast(kind === "deck" ? "Добавьте хотя бы одну карточку" : "Добавьте хотя бы одно слово"); return; }
+  if (lines.length > 100){ toast(kind === "deck" ? "Не больше 100 карточек" : "Не больше 100 слов"); return; }
+  let data;
+  if (kind === "stress"){
+    const words = [], seen = new Set();
+    for (let i = 0; i < lines.length; i++){
+      const p = window.SELF_DATA?.parseStressWord ? SELF_DATA.parseStressWord(lines[i]) : null;
+      if (!p){ toast(`Строка ${i + 1}: «${lines[i]}» — отметьте ударную гласную заглавной`); return; }
+      if (seen.has(p.plain)) continue;
+      seen.add(p.plain); words.push(p.word);
+    }
+    if (!words.length){ toast("Не получилось разобрать слова"); return; }
+    data = {kind: "self-stress", words};
+  } else {
+    const cards = [];
+    for (let i = 0; i < lines.length; i++){
+      const k = lines[i].indexOf("|"), f = k > 0 ? lines[i].slice(0, k).trim() : "", b = k > 0 ? lines[i].slice(k + 1).trim() : "";
+      if (!f || !b){ toast(`Строка ${i + 1}: формат «вопрос | ответ»`); return; }
+      cards.push({f: f.slice(0, 200), b: b.slice(0, 500)});
+    }
+    data = {kind: "self-deck", emoji: "🃏", cards};
+  }
+  if (!sb){ toast("Нет связи с сервером"); return; }
+  if (btn) btn.disabled = true;
+  const scopeId = scope === "one" ? s.id : null;
+  if (T.ssEdit){
+    const mid = +T.ssEdit, m = (T.mats || []).find(x => +x.id === mid);
+    if (!m){ toast("Набор не найден"); if (btn) btn.disabled = false; return; }
+    const {error} = await sb.from("materials").update({title, student_id: scopeId, data}).eq("id", mid);
+    if (error){ if (btn) btn.disabled = false; toast("Не сохранилось: " + error.message); return; }
+    Object.assign(m, {title, student_id: scopeId, data});
+    toast("Набор изменён – ученик увидит обновление");
+  } else {
+    const {data: row, error} = await sb.from("materials").insert({course: s.course, lesson_id: "self", kind: "tasks", student_id: scopeId, title, data}).select().single();
+    if (error){ if (btn) btn.disabled = false; toast("Не сохранилось: " + error.message); return; }
+    if (row) T.mats.push(row);
+    toast("Набор сохранён – ученик увидит его в самообучении");
+  }
+  T.snew = false; T.ssEdit = null; T.ssKind = null; T.sbase = true;
+  cmd(s.id, "refresh", {msg: "Учитель добавил задания в самообучение"});
+  if (s.pair_id) cmd(s.pair_id, "refresh", {msg: "Учитель добавил задания в самообучение"});
+  render();
+}
 function studentAllHTML(s, c){
   if (pending(s)) return "";
   ensureBoards(s);
-  return `<div class="stack" id="student-all" data-t-student-all style="gap:14px">${selfProgressHTML(s)}${studentBaseHTML(s, c)}${studentBoardsHTML(s, c)}</div>`;
+  return `<div class="stack" id="student-all" data-t-student-all style="gap:14px">${selfProgressHTML(s)}${studentBaseHTML(s, c)}${studentBoardsHTML(s, c)}${selfBaseHTML(s, c)}</div>`;
 }
 
 function aiReportHTML(s, x){
@@ -843,6 +967,7 @@ const PRICE = k => (T.me?.prices || {})[k] ?? {basic:100, materials:300, full:50
 const fmtD = x => x ? new Date(x).toLocaleDateString("ru-RU", {day:"numeric", month:"long", year:"numeric"}) : "";
 function subBanner(){
   const m = T.me; if (!m || m.role === "developer") return "";
+  if (m.free) return "";   // доступ открыт без подписки – баннеры не нужны
   const left = m.paid_until ? Math.ceil((new Date(m.paid_until) - Date.now()) / 864e5) : -1;
   if (!m.active) return `<div class="card row between" style="margin-bottom:16px;outline:2px solid var(--bad)"><p><b>Подписка закончилась.</b> Ученики и материалы сохранены; чтобы добавлять новых учеников и пользоваться базой, продлите подписку.</p><button class="btn sm" data-view="sub">Продлить</button></div>`;
   if (m.trial || left <= 5) return `<div class="card row between" style="margin-bottom:16px"><p>${m.trial ? "Пробный период" : "Подписка"}: осталось ${left} дн. (до ${fmtD(m.paid_until)}).</p><button class="btn sm ghost" data-view="sub">${m.trial ? "Выбрать тариф" : "Продлить"}</button></div>`;
@@ -850,6 +975,14 @@ function subBanner(){
 }
 function viewSub(){
   const m = T.me || {};
+  if (m.free) return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Доступ</span><h1>Всё открыто</h1>
+      <p>Все материалы, встроенная база, нейросеть и тренажёры доступны бесплатно — без подписки и оплаты. Приглашайте учеников и пользуйтесь всем сразу.</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
+    <div class="grid2" style="margin-top:18px">
+      <div class="card stack" style="gap:8px"><div class="kicker">Включено</div><h3 style="margin:0">Встроенная база</h3><p class="small muted">Готовые курсы ОГЭ, ЕГЭ и школьной программы, материалы, тесты и ключи.</p></div>
+      <div class="card stack" style="gap:8px"><div class="kicker">Включено</div><h3 style="margin:0">Нейросеть</h3><p class="small muted">Анализ ученика, план, проверка сочинений, генерация заданий и конструирование уроков.</p></div>
+      <div class="card stack" style="gap:8px"><div class="kicker">Включено</div><h3 style="margin:0">Ученики и тренажёры</h3><p class="small muted">Неограниченно учеников, самообучение, тесты по темам, доска и видеозвонок.</p></div>
+      <div class="card stack" style="gap:8px"><div class="kicker">Оплата не нужна</div><h3 style="margin:0">Ничего не блокируется</h3><p class="small muted">Подписки, пробные периоды и ограничения тарифов отключены.</p></div>
+    </div>`;
   return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Подписка</span><h1>Тарифы</h1>
       <p>${m.role === "developer" ? "У разработчика открыто всё." : m.active ? `Сейчас: «${esc((PLANS.find(p => p.k === m.active) || {}).n || "")}»${m.trial ? " (пробный период)" : ""} до ${fmtD(m.paid_until)}.` : "Подписки сейчас нет."}</p><img class="cat" data-m src="${U.mascot()}" alt=""></section>
     <div class="grid2" style="margin-top:18px">${PLANS.map(p => `<div class="card stack ${m.active === p.k && !m.trial ? "accent" : ""}" style="gap:10px">
@@ -1130,7 +1263,7 @@ function render(){
   else if (!T.session) html = viewLogin();
   else html = T.view === "student" ? viewStudent() : T.view === "board" ? viewBoard() : T.view === "work" ? viewWork() : T.view === "room" ? viewRoom() : viewStudents();
   const cur = ["students","student","board","room"].includes(T.view) ? "students" : ["course","lesson"].includes(T.view) ? "course" : T.view;
-  const nav = [["students","Ученики",I.users],["course","Материалы и база",I.book],["methodology","Методика курса",I.method],["sub","Подписка",I.code.replace(/<path[^>]*\/>/, '<path d="M3 7h18v10H3zM3 11h18"/>')],["look","Оформление",I.pen]];
+  const nav = [["students","Ученики",I.users],["course","Материалы и база",I.book],["methodology","Методика курса",I.method],["sub",T.me?.free ? "Доступ" : "Подписка",I.code.replace(/<path[^>]*\/>/, '<path d="M3 7h18v10H3zM3 11h18"/>')],["look","Оформление",I.pen]];
   $("#app").innerHTML = `<div class="shell">
     <div class="drawer-back" ${T.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${T.drawer ? "open" : ""}" aria-label="Меню">
@@ -1616,6 +1749,13 @@ document.addEventListener("paste", e => {
 document.addEventListener("change", async e => {
   if (e.target.id === "call-url" || e.target.id === "room-url"){ const s = T.students.find(x => x.id === (e.target.id === "room-url" ? T.room?.sid : T.sel)); if (s && await saveCall(s, e.target.value)) render(); return; }
   if (e.target.id === "qz-count"){ T.qzCount = Math.max(1, Math.min(10, +e.target.value || 3)); return; }
+  if (e.target.id === "ss-kind"){
+    T.ssKind = e.target.value === "deck" ? "deck" : "stress";
+    const hint = document.getElementById("ss-hint");
+    if (hint) hint.textContent = T.ssKind === "deck" ? "По одной карточке в строке: вопрос | ответ." : "По одному слову в строке; ударная гласная — ЗАГЛАВНОЙ (звонИть).";
+    const lbl = document.querySelector('label[for="ss-body"]'); if (lbl) lbl.textContent = T.ssKind === "deck" ? "Карточки" : "Слова";
+    return;
+  }
   if (e.target.dataset.qzTopic){
     const s = T.students.find(x => x.id === T.sel); if (!s) return;
     const st = qzState(s), lid = e.target.dataset.qzTopic;
@@ -1718,6 +1858,23 @@ document.addEventListener("click", async e => {
     const s = T.students.find(x => x.id === T.sel); if (!s) return;
     T.bcache = T.bcache || {}; T.bcache[s.id] = null;
     ensureBoards(s); render(); toast("Обновляю доску ученика…"); return;
+  }
+  if (a === "ss-view"){ T.sbase = !T.sbase; render(); return; }
+  if (a === "ss-new"){ T.snew = true; T.ssEdit = null; T.ssKind = null; T.sbase = true; render(); return; }
+  if (a === "ss-cancel"){ T.snew = false; T.ssEdit = null; T.ssKind = null; render(); return; }
+  if (a === "ss-edit"){
+    const mid = +t.dataset.id; if (!mid) return;
+    T.ssEdit = mid; T.snew = true; T.sbase = true; T.ssKind = null; render(); return;
+  }
+  if (a === "ss-save"){ const s = T.students.find(x => x.id === T.sel); if (s) await ssSave(s, t); return; }
+  if (a === "ss-del"){
+    const s = T.students.find(x => x.id === T.sel), mid = +t.dataset.id; if (!s || !mid) return;
+    if (!t.dataset.sure){ t.dataset.sure = "1"; t.textContent = "Точно удалить?"; return; }
+    const {error} = await sb.from("materials").delete().eq("id", mid);
+    if (error){ toast("Не удалилось: " + error.message); return; }
+    T.mats = (T.mats || []).filter(m => +m.id !== mid);
+    if (+T.ssEdit === mid){ T.ssEdit = null; T.snew = false; }
+    render(); toast("Набор удалён"); cmd(s.id, "refresh", {msg: "Учитель убрал набор из самообучения"}); return;
   }
   if (a === "covered-toggle"){
     const s = T.students.find(x => x.id === T.sel), lid = t.dataset.lid; if (!s || !lid) return;
@@ -2020,5 +2177,6 @@ document.addEventListener("click", async e => {
   T.routeReady = true;
 })();
 /* аддитивный хук для e2e: состояние кабинета и хелперы прогресса/доски */
-window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards};
+window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards,
+  ssSets: () => { const s = T.students.find(x => x.id === T.sel); try { return (s && window.SELF_DATA?.customSets) ? SELF_DATA.customSets(T.mats, s.course, s.id) : {blocks: [], decks: []}; } catch(_){ return {blocks: [], decks: []}; } }};
 })();

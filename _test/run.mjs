@@ -14,9 +14,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function runFile(file) {
+function runFile(file, extraEnv) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [file], { cwd: path.dirname(__dirname), stdio: "inherit", env: process.env });
+    const p = spawn(process.execPath, [file], { cwd: path.dirname(__dirname), stdio: "inherit", env: { ...process.env, ...(extraEnv || {}) } });
     let done = false;
     const finish = code => { if (done) return; done = true; resolve(code == null ? 1 : code); };
     p.on("error", e => { console.error("Не удалось запустить " + file + ": " + e.message); finish(2); });
@@ -30,13 +30,15 @@ async function main() {
   const suites = [
     ["Мок Supabase (без браузера)", path.join(__dirname, "mock-selftest.mjs")],
     ["Доска (стенд board.html)", path.join(__dirname, "board.mjs")],
-    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs")],
+    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "a,b1,b2,b3,Q1,Q2,Q3,Q4,S1,S2,S3,S4,T1,U2" }],
+    /* U1 отдельно: вкладки делят localStorage, и в одном процессе сессия rowB может перетереть rowA */
+    ["E2E (U1: база самообучения и конструктор)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "U1" }],
   ];
   const results = [];
-  for (const [name, file] of suites) {
+  for (const [name, file, extraEnv] of suites) {
     console.log("\n══════════ " + name + " ══════════");
     if (!fs.existsSync(file)) { console.error("Нет файла: " + file); results.push([name, 2]); continue; }
-    const code = await runFile(file);
+    const code = await runFile(file, extraEnv);
     results.push([name, code]);
   }
   console.log("\n══════════ ИТОГ ══════════");

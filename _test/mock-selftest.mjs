@@ -260,5 +260,23 @@ ok(!!swBad.error, "student_save_work слишком большие data → erro
 const srBad = await student.client.rpc("student_submit_result", { p_code: TOKEN_B, p_lesson: "self:stress:0", p_score: 5, p_total: 3, p_kind: "self" });
 ok(!!srBad.error, "student_submit_result score > total → error (bad score)", srBad.error);
 
+// 13. свои наборы учителя (конструктор самообучения): materials kind "tasks"/lesson_id "self",
+//     учитель создаёт/правит/удаляет, ученик получает их в student_state.materials
+const setIns = await teacher.client.from("materials")
+  .insert({ kind: "tasks", lesson_id: "self", course: "math-5", title: "Слова от учителя",
+    data: { kind: "self-stress", words: ["звонИть", "тОрты", "бАнты"] }, shared: false, student_id: null })
+  .select().single();
+ok(setIns.data && setIns.data.id && setIns.data.teacher_id === TEACHER_ID && setIns.data.data.kind === "self-stress" && setIns.data.data.words.length === 3, "materials insert: свой stress-набор (kind=tasks, lesson_id=self, teacher_id)", setIns.data);
+const setsList = await teacher.client.from("materials").select("*").eq("kind", "tasks").eq("lesson_id", "self").eq("course", "math-5");
+ok(setsList.data && setsList.data.length === 1 && setsList.data[0].title === "Слова от учителя", "materials select: учитель видит свои наборы (kind+lesson_id+course)", setsList.data && setsList.data.map(m => m.title));
+const stMats = await student.client.rpc("student_state", { p_code: TOKEN_B });
+ok(stMats.data && (stMats.data.materials || []).some(m => m.id === setIns.data.id && m.data && m.data.kind === "self-stress"), "student_state.materials: ученик получает свой набор учителя", stMats.data && (stMats.data.materials || []).slice(-2));
+const setUpd = await teacher.client.from("materials").update({ title: "Слова от учителя 2" }).eq("id", setIns.data.id);
+const stMats2 = await student.client.rpc("student_state", { p_code: TOKEN_B });
+ok(!setUpd.error && (stMats2.data.materials || []).some(m => m.id === setIns.data.id && m.title === "Слова от учителя 2"), "materials update: новое название видно ученику", stMats2.data && (stMats2.data.materials || []).find(m => m.id === setIns.data.id));
+const setDel = await teacher.client.from("materials").delete().eq("id", setIns.data.id);
+const leftSets = await teacher.client.from("materials").select("id").eq("kind", "tasks").eq("lesson_id", "self");
+ok(!setDel.error && (leftSets.data || []).length === 0, "materials delete: свой набор удалён", leftSets.data);
+
 console.log(`\nИтог self-test мока: ${passed}/${passed + failed} PASS, ${Date.now() - t0} мс`);
 process.exit(failed ? 1 : 0);
