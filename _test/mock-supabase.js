@@ -157,11 +157,16 @@
       async remove() { return { data: {}, error: null }; },
     };
   }
-  /* Детерминированная «нейросеть»: generate_tasks отдаёт 2-3 вопроса с объяснением и темой.
-     Форма ответа = data, который возвращает ai() в teacher.js: { title, mini:[], test:[{q,o,a,e,tag}] }. */
+  /* Детерминированная «нейросеть»:
+     - generate_tasks → {title, mini, test:[{q,o,a,e,tag}]};
+     - build_lesson (Lead: для любого предмета/класса) → полноценный урок {title, learn, theory, practice, test, method};
+     - generate_theory / generate_content / content_edit → блоки теории/практики/тестов (для «Сгенерировать материал»). */
   function mockAiResult(action, body) {
+    const topic = String(body.topic || body.title || "Тема").slice(0, 200);
+    const subject = String(body.subject || body.subj || "rus").slice(0, 20);
+    const grade = body.grade != null ? String(body.grade) : "";
+    const tag = topic;
     if (action === "generate_tasks") {
-      const topic = String(body.topic || "Тема").slice(0, 200);
       const want = Math.max(1, Math.min(3, +body.count || 3));       // в моке не больше 3 вопросов
       const test = [];
       for (let i = 0; i < want; i++) {
@@ -170,10 +175,68 @@
           o: [`Вариант А (${i + 1})`, `Вариант Б (${i + 1})`, `Вариант В (${i + 1})`, `Вариант Г (${i + 1})`],
           a: i % 4,
           e: `Объяснение ИИ по теме «${topic}», вопрос ${i + 1}: верный вариант отмечен в ключе.`,
-          tag: topic,
+          tag,
         });
       }
       return { title: "ИИ-задания: " + topic, mini: [], test, meta: { action: "generate_tasks", mock: true } };
+    }
+    if (action === "build_lesson") {
+      const theory = [
+        { h: `Теория: ${topic}`, t: `ИИ-объяснение по теме «${topic}» (${subject}${grade ? ", " + grade + " класс" : ""}).`, list: ["правило", "пример"], ex: "Пример применения.", mini: [] },
+        { h: `Теория: ${topic} — подробнее`, t: `Блок 2: исключения, разбор типичной ошибки и алгоритм применения по теме «${topic}».`, list: ["исключение"], ex: "Разбор ошибки.", mini: [] },
+      ];
+      const practice = [
+        { t: `Практика: ${topic} — задание 1`, key: "Ответ 1", items: ["Ответ 1", "Ответ 2"] },
+        { t: `Практика: ${topic} — задание 2`, key: "Ответ 2", items: ["Ответ 2", "Ответ 1"] },
+      ];
+      const test = [
+        { q: `Тест: ${topic} — вопрос 1`, o: ["Верный 1", "Неверный 1", "Неверный 2", "Неверный 3"], a: 0, e: `Объяснение к вопросу 1 по теме «${topic}».`, tag, pn: null },
+        { q: `Тест: ${topic} — вопрос 2`, o: ["Неверный 1", "Верный 2", "Неверный 2", "Неверный 3"], a: 1, e: `Объяснение к вопросу 2 по теме «${topic}».`, tag, pn: null },
+      ];
+      return {
+        title: `${topic}`,
+        learn: [`${topic}: что нужно знать`, `${topic}: алгоритм`],
+        theory, practice, test,
+        hw: [`ДЗ по теме «${topic}»`],
+        method: { focus: `Методика ИИ: как объяснить «${topic}» ученику ${grade || ""} класса по предмету «${subject}».` },
+        meta: { action: "build_lesson", mock: true, subject, grade },
+      };
+    }
+    /* edit_lesson (кнопки «Сгенерировать материал» в панели учителя): theory → {blocks}, practice → {tasks} */
+    if (action === "edit_lesson") {
+      const kind = String(body.kind || "theory").slice(0, 20);
+      if (kind === "practice" || kind === "tasks") {
+        const tasks = [1, 2].map(i => ({ t: `ИИ-задание ${i}: ${topic}`, key: `Ответ ${i}`, items: [`Ответ ${i}`, `Другой вариант ${i}`] }));
+        return { title: `ИИ-практика: ${topic}`, tasks, meta: { action: "edit_lesson", kind, mock: true } };
+      }
+      const blocks = [1, 2].map(i => ({
+        h: `ИИ-блок ${i}: ${topic}`,
+        t: `Сгенерированное объяснение ${i} по теме «${topic}» (${subject}${grade ? ", " + grade + " класс" : ""}).`,
+        list: [`правило ${i}`, `пример ${i}`],
+        ex: `Пример ${i} по теме «${topic}».`,
+        mini: [],
+      }));
+      return { title: `ИИ-теория: ${topic}`, blocks, meta: { action: "edit_lesson", kind, mock: true } };
+    }
+    if (action === "generate_theory" || action === "generate_content" || action === "content_edit" || action === "generate_material") {
+      return {
+        title: `ИИ-материал: ${topic}`,
+        theory: [
+          { h: `ИИ: ${topic}`, t: `Сгенерированное объяснение по теме «${topic}» (${subject}${grade ? ", " + grade + " класс" : ""}).` },
+          { h: `ИИ: ${topic} — пример`, t: `Пример и типичная ошибка по теме «${topic}».` },
+        ],
+        practice: [
+          { q: `ИИ-задание 1: ${topic}`, a: "Ответ 1", key: "Ответ 1" },
+          { q: `ИИ-задание 2: ${topic}`, a: "Ответ 2", key: "Ответ 2" },
+        ],
+        test: [
+          { q: `ИИ-тест: ${topic} — вопрос 1`, o: ["Верный", "Неверный", "Неверный"], a: 0, e: `Объяснение по теме «${topic}».`, tag },
+          { q: `ИИ-тест: ${topic} — вопрос 2`, o: ["Неверный", "Верный", "Неверный"], a: 1, e: `Объяснение-2 по теме «${topic}».`, tag },
+        ],
+        mini: [{ q: `Мини: ${topic}`, a: "Ответ" }],
+        method: `Методика по теме «${topic}».`,
+        meta: { action, mock: true, subject, grade },
+      };
     }
     return { title: "", mini: [], test: [], meta: { action, mock: true } };
   }

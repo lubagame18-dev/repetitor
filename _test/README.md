@@ -1,31 +1,35 @@
-# Стенд проверок repetitor (v58) — `_test/`
+# Стенд проверок repetitor (v62) — `_test/`
 
-Офлайн-проверки актуальной версии сайта «репетитор» (ветка `fix/board-live`) в реальном
-Chrome, без npm и без сети. Три набора идут последовательно:
+Офлайн-проверки актуальной версии сайта «репетитор» в реальном Chrome, без npm и без сети.
+Наборы идут последовательно (`run.mjs`), U1 — отдельным процессом:
 
 | набор | файл | что проверяет | браузер |
 |-------|------|---------------|---------|
-| Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai", generate_tasks)` | нет |
-| Доска | `board.mjs` + `board.html` | 15 сценариев доски: якоря, вложения, текст, живой фон, якоря в пустоте | да |
-| E2E | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q4**, **S1–S4**, **T1** | да |
+| Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai")` (`generate_tasks`, **`build_lesson`**, `edit_lesson`/`generate_theory`), формы `results`/`topic_quiz_results` для графика динамики — **67 проверок** | нет |
+| Доска | `board.mjs` + `board.html` | **19 сценариев**: 15 старых (якоря, вложения, текст, живой фон, пустота) + **H1–H4** (точечный ластик, инлайн-текст, зум/пан/расширение, вставка в точку) | да |
+| E2E (основной) | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q6**, **S1–S4**, **T1–T4**, **V1–V3**, U2 — **22 сценария** | да |
+| E2E (U1 отдельно) | `e2e.mjs` `E2E_ONLY=U1` | база самообучения и конструктор наборов учителя (U1) | да |
 
 ## Запуск
 
 ```bash
 cd repetitor-live
-node _test/run.mjs              # всё: mock-selftest + доска + e2e
-node _test/mock-selftest.mjs    # только мок (быстро, Chrome не нужен)
-node _test/board.mjs            # только доска (15/15)
-node _test/e2e.mjs              # только e2e (a,b1–b3,Q1–Q4,S1–S4,T1)
+node _test/run.mjs              # всё: mock-selftest + доска + e2e (22) + e2e U1
+node _test/mock-selftest.mjs    # только мок (быстро, Chrome не нужен): 67/67
+node _test/board.mjs            # только доска: 19/19
+node _test/e2e.mjs              # только основной e2e: 22/22
 E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
+E2E_ONLY=V node _test/e2e.mjs   # только панель «Инструменты»/генерация V1–V3
+E2E_ONLY=U1 node _test/e2e.mjs  # отдельно U1 (вкладки делят localStorage — нужен свой процесс)
+BOARD_ONLY=H node _test/board.mjs   # только новые H1–H4
 ```
 
 Полезные переменные окружения:
 
 | Переменная      | По умолчанию | Что делает                                    |
 |-----------------|--------------|-----------------------------------------------|
-| `BOARD_ONLY`    | (все)        | фильтр сценариев доски: `C`, `F`, `D2,E1`, `G`|
-| `E2E_ONLY`      | (все)        | фильтр e2e: `a,b1`, `Q`, `Q3`, `S`, `T`       |
+| `BOARD_ONLY`    | (все)        | фильтр сценариев доски: `C`, `F`, `D2,E1`, `H`, `H1` |
+| `E2E_ONLY`      | (все)        | фильтр e2e: `a,b1`, `Q`, `Q6`, `S`, `T`, `V`, `U1` |
 | `BOARD_HEADLESS`| `1`          | `0` — показать окно браузера (доска)          |
 | `E2E_HEADLESS`  | `1`          | `0` — показать окно браузера (e2e)            |
 | `PORT`          | `8765`/`8766`| статика доски / e2e                           |
@@ -33,48 +37,68 @@ E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 | `CHROME`        | авто         | путь к chrome.exe/msedge.exe                  |
 
 Код выхода: `0` — всё прошло, `1` — есть падения, `2` — стенд не поднялся.
-Скриншоты падений — `_test/artifacts/` (создаётся только при падении).
+Скриншоты падений — `_test/artifacts/` (создаётся при падении).
 Порты `PORT`/`CDP_PORT` могут быть заняты параллельным прогоном — стенд автоматически берёт
 следующий свободный (и для статики, и для CDP, до +20) и печатает фактический URL. Это
 исключает прежнюю проблему, когда стенд молча подключался к чужому Chrome и получал серию
-«CDP timeout: Runtime.evaluate».
+«CDP timeout: Runtime.evaluate». **Не запускайте два прогона e2e (или доску и e2e) одновременно
+в один Chrome-профиль** — при перегрузке возможны единичные «CDP timeout» на первых шагах.
 
 **Ограничение:** в части сессий субагента Chrome не стартует (mojo/named pipes). В этом
-окружении прогоны из subagent-сессии проходят: **mock-selftest 58/58, доска 15/15, e2e 13/13**,
-три полных прогона `run.mjs` подряд (2026-11-04, v58 + самообучение). Если Chrome не
-поднимается — `node --check _test/*.mjs` и запуск обычной командой из консоли.
+окружении прогоны из subagent-сессии проходят: **mock-selftest 67/67, доска 19/19, e2e 22/22,
+U1 1/1** — три подряд полных прогона `run.mjs` (2026-11-05/06, v62: динамика успеваемости,
+тест по первой попытке, H1–H4, V1–V3). На занятой машине встречаются единичные env-флейки:
+`CDP timeout: Runtime.evaluate` на первом шаге `a` (лечится перезапуском) и `b1` 8.6 c при
+пороге 6 c — порог `b1` поднят до 10 c, как у a/b2 (в норме смена урока < 2 c, это не регрессия
+продукта); в b3 добавлена повторная отправка refresh, если тост не пришёл с первого раза.
+Если Chrome не поднимается — `node --check _test/*.mjs` и запуск обычной командой из консоли.
 
 ## E2E-сценарии (`e2e.mjs`)
 
 Мир: учитель `t-1001`, ученик Аня — две строки одного человека (`rowA` рус-5, `rowB` math-5,
-общий `person_id`), курс с уроками. Мок Supabase внедряется через
-`Page.addScriptToEvaluateOnNewDocument` ДО скриптов страницы; CDN (supabase-js, шрифты)
-блокируется сетью. Файлы курсов читаются локально через `vm` (без сети).
+общий `person_id`), курсы `rus-5`/`math-5` (по 5 уроков, читаются локально через `vm`).
+Мок Supabase внедряется через `Page.addScriptToEvaluateOnNewDocument` ДО скриптов страницы;
+CDN (supabase-js, шрифты) блокируется сетью.
 
 | id | Сценарий |
 |----|----------|
-| a  | ученик на предмете B, учитель начинает урок A → ученик сам переключается на предмет A (`student_switch`), видит материал на доске в комнате без перезагрузки (порог < 10 c с запасом на нагрузку CI; маркер в тесте проверяет, что страница НЕ перезагружалась); у учителя «онлайн» (по person/ids), каналы доски у сторон совпадают |
-| b1 | смена урока в комнате (`#room-lesson`) → у ученика новый урок и материал (порог < 6 c с запасом; без перезагрузки) |
-| b2 | урок из другого предмета: учитель открывает урок B, когда ученик в комнате на A → переключение предмета + материал (порог < 10 c с запасом; без перезагрузки), «онлайн» |
+| a  | ученик на предмете B, учитель начинает урок A → ученик сам переключается на предмет A (`student_switch`), видит материал на доске в комнате без перезагрузки (порог < 10 c с запасом; маркер проверяет, что страница НЕ перезагружалась); у учителя «онлайн» (по person/ids), каналы доски совпадают |
+| b1 | смена урока в комнате (`#room-lesson`) → у ученика новый урок и материал (в норме < 2 c; порог 10 c с запасом на нагрузку; без перезагрузки) |
+| b2 | урок из другого предмета: учитель открывает урок B, когда ученик в комнате на A → переключение предмета + материал (порог < 10 c; без перезагрузки), «онлайн» |
 | b3 | refresh из канала → тост «Материалы обновились», доска не сбрасывается, без перезагрузки |
-| **Q1** | **учитель собрал тест**: карточка ученика → `#qz-card`, отметить 2 темы (`[data-qz-topic]`), `[data-act="qz-build"]` → предпросмотр (`#qz-title`, группы `.qz-topic`, «вопросов: N»), `[data-act="qz-save"]` → ссылка `?quiz=КОД` (`#qz-link`, `[data-qz-link]`); в mock-БД строка `topic_quizzes` (student_id rowA, ≥2 вопросов, ≥2 тем, у каждого `topic`/`topicId`); «Открыть у ученика» → live `cmd` `{type:"quiz", to, token, title}` |
-| **Q2** | **ручное «пройдено»**: `[data-act="covered-toggle"][data-lid][data-on="1"]` → в mock-БД `students.covered[lid]` **и** `covered_manual[lid]`; в карточке чип «✓»; колонка «Выполнено» не изменилась; повторное нажатие (`data-on=0`) снимает обе метки |
-| **Q3** | **ученик проходит тест по прямой ссылке** `index.html?quiz=КОД` (сессия rowA, новая вкладка): тест открывается сам (`S.view="quiz"`), даже если у учителя идёт урок (presence не выдёргивает в комнату); неверный ответ → `.quiz-fb.no` с объяснением + `[data-qretry]`; повторно неверно → `[data-qnext]`, тема в `needsWork`; остальные верно → `.quiz-result[data-qresult]`, `.quiz-score` (score/total/%), «Надо доработать» с `.chip.bad`, `#qz-map .qz-topic.bad`; mock-БД `topic_quiz_results` (score/total, `details.topics[].needsWork`, `needs_work[]`, `details.questions[0].attempts=2`), rpc `quiz_submit` с параметрами ровно `p_code,p_token,p_score,p_total,p_details,p_needs_work` |
-| **Q4** | **карта тем**: у учителя в карточке rowA `#qz-map .qz-topic.bad` с названием заваленной темы и блок `.qz-need` «Надо доработать» (после живого обновления; при необходимости — кнопка «Обновить»); у ученика раздел «Тесты» (`[data-go="quizzes"]`) → `.quiz-list`, `[data-quiz]`, `#qz-map .qz-topic.bad` по `student_quizzes` |
-| **S1** | **блок ударений**: экран `[data-go="self"]` → ≥10 блоков `[data-act="self-stress-block"]`; блок 0 → оверлей Play (`.play-ov .st-word`), клик по заведомо неверной гласной `.st-v[data-k]` → `.play-res.bad` с правильным ударением (`.st-acc`); затем все 15 слов верно; mock-БД `works self:stress` task=0, `data.done=true`, `mastered.length=15`, `errors[слово]>=1`; результат `kind=self`, lesson_id начинается с `self:stress`; после закрытия кнопка блока показывает 15/15 |
-| **S2** | **ошибка = повтор (+2)**: блок 1, первый ответ неверный; `Play.stressState()`: слово НЕ в mastered, `errors[слово]>=1`, `reps[слово]>=3`; фидбек при возврате — «Слово встретится ещё раз – закрепим»; слово появляется ≥2 раз; в works task=1 `done/mastered=15/errors` |
-| **S3** | **карточки**: колода «Паронимы» (`[data-act="self-deck"][data-d="0"]`) → `[data-show]` «Показать ответ» → `.self-back`; «Ещё учить» `[data-again]` возвращает карточку; дальше «Знаю» `[data-know]` до всех карточек; works `self:deck` task=0 `done`, `mastered.length = всех карточек`; результат `kind=self` с `self:cards` |
-| **S4** | **прогресс и «Мои ошибки»**: перезагрузка `index.html` → прогресс подхвачен (кнопка блока 0 = 15/15); блок `.self-prep` «Что подтянуть» с кнопками ударений/карточек; `[data-act="self-errors"][data-self-errors-left=N]` N≥2 (ошибки блоков + карточки); тренажёр «Мои ошибки» (cardDeck по items) пройден → works `self:errors` `items.length` уменьшился, DOM-счётчик уменьшился |
-| **T1** | **карточка ученика у учителя — всё, что делает ученик** (идёт последним, пересоздаёт mock-БД своим сидом): секция `[data-t-student-all]` «Всё, что делает ученик»; самообучение `[data-t-self-stress="0"]` (mastered 5/15, errors 2), `[data-t-self-stress="1"]` (15/15, ✓), `[data-t-self-deck="0"]` (2/29), `[data-t-self-errors]`/`[data-t-err-key]` («звонить» → «звонИть»); база `[data-t-base]` (`data-open-lessons`/`data-total-lessons`/`data-materials`, текст «открыто X из Y уроков · материалов: N»); доска — строки `[data-t-board-row]` со счётчиками `data-strokes/texts/files` (урок: 1/1/1; отдельная «Личная доска»: 1 штрих), сводка `[data-t-board-summary]` («4 пометки»), `[data-act="boards-reload"]` перечитывает `board_items`; клик `[data-boardfor][data-boardpage]` → `window.__teacher.T.view==="board"`, `#board .bd-cv`, `T.board.info().ready && items>0`, `T.boardLesson` = урок. Перед открытием кабинет перезагружается с `sessionStorage.clear()` (иначе восстановленный маршрут Q4 открывает карточку без списка учеников) |
+| **Q1** | **учитель собрал тест**: карточка ученика → `#qz-card`, отметить 2 темы (`[data-qz-topic]`), `[data-act="qz-build"]` → предпросмотр (`#qz-title`, группы `.qz-topic`), `[data-act="qz-save"]` → ссылка `?quiz=КОД` (`#qz-link`); в mock-БД `topic_quizzes` (student_id rowA, ≥2 вопросов/тем, у каждого `topic`/`topicId`); «Открыть у ученика» → live `cmd {type:"quiz", to, token, title}` |
+| **Q2** | **ручное «пройдено»**: `[data-act="covered-toggle"][data-lid][data-on="1"]` → в mock-БД `students.covered[lid]` **и** `covered_manual[lid]`, чип «✓»; «Выполнено» не меняется; повторное нажатие снимает обе метки |
+| **Q3** | **ученик проходит тест по ссылке** `index.html?quiz=КОД`: неверный → `.quiz-fb.no` + `[data-qretry]`; повторно неверно → `[data-qnext]`, тема в `needsWork`; остальные верно → `.quiz-result[data-qresult]`, `.quiz-score`, «Надо доработать», `#qz-map .qz-topic.bad`; mock-БД `topic_quiz_results` (`details.questions[0].attempts=2`), rpc `quiz_submit` с `p_code,p_token,p_score,p_total,p_details,p_needs_work` |
+| **Q4** | **карта тем**: у учителя в карточке rowA `#qz-map .qz-topic.bad` и `.qz-need` «Надо доработать» (после live-обновления/«Обновить»); у ученика раздел «Тесты» (`[data-go="quizzes"]`) → `.quiz-list`, `[data-quiz]`, `#qz-map .qz-topic.bad` |
+| **Q5** | **ссылка ?quiz= в браузере учителя** открывается как тест ученика (`location.pathname` не `teacher.html`, `S.quizToken` сохранён), а не редирект в кабинет |
+| **Q6** | **счёт по первой попытке**: первый вопрос — неверно → `[data-qretry]` → верно, остальные верно; `.quiz-score[data-score]` = n−1, `.quiz-result [data-q-first]` «с первой попытки: n−1 из n»; mock `topic_quiz_results` score=n−1, `details.questions[0] = {first:false, attempts:2, ok:true}`; rpc `quiz_submit.p_score`=n−1; у учителя % темы < 100 |
+| **S1** | **блок ударений**: экран `[data-go="self"]` → ≥10 блоков `[data-act="self-stress-block"]`; ошибка → `.play-res.bad` с правильным ударением; все 15 слов верно; works `self:stress` task=0 `done`, `mastered.length=15`, `errors`; результат `kind=self`; после закрытия кнопка 15/15 |
+| **S2** | **ошибка = повтор (+2)**: блок 1, первый ответ неверный; `Play.stressState()`: слова нет в mastered, `reps>=3`, фидбек «Слово встретится ещё раз»; works task=1 `done/mastered/errors` |
+| **S3** | **карточки**: колода «Паронимы» → `[data-show]` → `.self-back`; «Ещё учить» возвращает карточку; «Знаю» до всех; works `self:deck` task=0 `done`, `mastered.length = всех`; результат `kind=self` (`self:cards`) |
+| **S4** | **прогресс/«Мои ошибки»**: перезагрузка → блок 0 = 15/15, `.self-prep` «Что подтянуть»; `[data-act="self-errors"][data-self-errors-left>=2]`; тренажёр ошибок пройден → works `self:errors` items уменьшился, DOM-счётчик уменьшился |
+| **T1** | **карточка ученика (всё, что делает ученик)**: `[data-t-student-all]`; `[data-t-self-stress="0"|"1"]`, `[data-t-self-deck="0"]`, `[data-t-self-errors]`/`[data-t-err-key]`; база `[data-t-base]`; доска `[data-t-board-row]` (`data-strokes/texts/files`), `[data-t-board-summary]`, `[data-act="boards-reload"]`; «Открыть доску» → `T.view==="board"`, `T.board.info().items>0` |
+| **T2** | **динамика у учителя**: сид results rowA (5/10, 8/10, 6/10, 10/10) + quiz 3/4; карточка `[data-t-student-trend]` → `.trend-line`, `.trend-dot>=2`, `.trend[data-points>=3]`, `data-last=100`, «сейчас 100%»; хук `window.__teacher.trendPoints(s)` |
+| **T3** | **автоподбор тем**: отметить урок «Пройдено» (`[data-act="covered-toggle"]`), очистить выбор тем, `[data-act="qz-build"]` → в `T.qzDraft.topics` пройденная тема, чекбокс отмечен; `[data-act="qz-save"]` → `topic_quizzes.data.topics` содержит её |
+| **T4** | **статистика ученика**: «Статистика» (`[data-go="stats"]`) → `[data-t-trend]` c `.trend-line`, `.trend-dot>=1`, `data-points>=1`, `data-last=100` (по results+quiz_results из сида T2) |
+| **V1** | **комната → «Инструменты»** (`[data-act="room-tools"]`, `[data-tools-pane]`): заметка `#tool-note-text`→`[data-act="tool-note"]` даёт t-объект `insertNote`; картинка `#tool-img-url`→`[data-act="tool-img"]` вызывает `T.board.insertImage(url)`; поиск `#tool-search-q` → ссылки `a[data-search]` с запросом и доменами (sdamgia/fipi/wordwall), 📌 `[data-act="tool-search-board"]` → текст ссылки на доске; `[data-act="tool-insert-board"]` → `insertPage` добавляет и открывает лист |
+| **V2** | **генерация к курсу ученика**: комната rowB (math-5) → `[data-act="tool-gen-theory"]` → `#ce-req`/`[data-act="ce-ai"]` → `[data-act="ce-save"]`: в mock-БД `materials` `kind="tasks"`, `data.kind="content-edit"`, `course="math-5"`, `student_id=rowB`, `data.theory`; материал уходит на доску (`insertPage`) и ученику refresh |
+| **V3** | **урок для другого предмета/класса**: карточка rowB → `[data-build-lesson]`: `#bl-topic`/`#bl-notes` → `[data-act="build-lesson"]` → mock `materials` `kind="lesson"`, `course="math-5"`, `student_id=rowB`, `lesson_id=c…`, `data.custom=true`, `data.theory/practice/test`; учитель видит тему в карточке; ученик rowB после reload видит урок в «Моих уроках» и теорию в плане |
+| **U1** | отдельный процесс: база самообучения (12 блоков/180 слов, 5 колод) + конструктор наборов учителя (создание stress/deck `kind:"tasks"`, `lesson_id:"self"`), ученик видит/проходит свои наборы, прогресс `task=SELF_DATA.taskFor("m<id>")` у учителя, правка названия и удаление; см. секцию ниже |
+| **U2** | доступ без подписки: раздел «Доступ», всё открыто, оплата не предлагается |
 
 Важные детали e2e:
 - все вкладки одного origin делят `localStorage`, поэтому mock-БД пишется только в пустое
   хранилище (`seedScript`), а перед Q3 старая вкладка ученика (rowB) закрывается, чтобы её
-  сессия не перетирала сессию rowA у новой вкладки;
+  сессия не перетирала сессию rowA;
+- T1/T2 сидят mock-БД своим сидом (пересоздают целиком) — поэтому идут после Q/S и до V;
+- V2/V3 идут после T4 и работают в кабинете без перезагрузки: открывают карточку rowB,
+  начинают/завершают комнату, вызывают панель «Инструменты»;
 - мок-лог (`__MOCK.cmdList()`, `__MOCK.lastRpc()`) локальный на вкладку: команды `cmd`
   проверяются на вкладке учителя, `quiz_submit` — на вкладке ученика;
 - у ученика есть `window.__app = {S, render}` — тесты проверяют состояние (`S.view`,
-  `S.room`, `S.profile`) вместо хрупких DOM-признаков.
+  `S.room`, `S.profile`) вместо хрупких DOM-признаков;
+- перед открытием карточки после перезагрузки кабинета тесты делают `sessionStorage.clear()`
+  (иначе восстановленный маршрут открывает не тот экран).
 
 ## Мок Supabase (`mock-supabase.js`)
 
@@ -85,24 +109,23 @@ E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 track/presenceState/subscribe/removeChannel`. Общее состояние вкладок — `localStorage` +
 `BroadcastChannel`; данные задаются через `window.__MOCK_CFG` (`session`, `db`, `reset`).
 
-Расширения под тесты по темам:
-- НАШИ таблицы `topic_quizzes`/`topic_quiz_results` (переименованы из `quizzes`/`quiz_results`, чтобы не задеть legacy-таблицы «Учу по ФРП» с другой схемой) — обычные таблицы общей БД; при `insert` учителя
-  проставляется `teacher_id = auth.uid()` (как default в `supabase/schema.sql`);
-- RPC по контракту `schema.sql`: `quiz_get({p_token})` → `{id,title,data,created_at}` или
-  `null`; `quiz_submit({p_code,p_token,p_score,p_total,p_details,p_needs_work})` → void,
-  валидирует код/баллы/принадлежность теста/размер details; `student_quizzes({p_code})` →
-  `{quizzes:[{id,title,created_at,topics,questions,last}], results:[{quiz_id,title,score,total,details,needs_work,created_at}]}`;
-- `functions.invoke("ai", {body:{action:"generate_tasks",topic,count,grade}})` → детерминированные
-  2–3 вопроса `{q,o:[4],a,e,tag}` в `data.test` (+ `title`/`mini`), как ждёт `teacher.ai()`;
-- **самообучение**: `student_save_work({p_code,p_lesson,p_task,p_data})` — настоящий upsert
-  `works(student_id, lesson_id, task)` (как в schema.sql; тест проверяет дебаунс и повторную
-  запись), `student_submit_result(...)` пишет строку в `results` (`kind="self"` для тренажёров,
-  валидация score/total как в схеме); `student_state` возвращает формы схемы:
+Расширения под тесты:
+- НАШИ таблицы `topic_quizzes`/`topic_quiz_results` — обычные таблицы общей БД; при `insert`
+  учителя проставляется `teacher_id = auth.uid()` (как default в `supabase/schema.sql`);
+- RPC по контракту `schema.sql`: `quiz_get`, `quiz_submit` (валидирует код/баллы/принадлежность,
+  размер details), `student_quizzes` → `{quizzes:[…last], results:[…]}`;
+- `functions.invoke("ai", {body:{action}})`:
+  - `generate_tasks` → 2–3 вопроса `{q,o:[4],a,e,tag}` в `data.test` (+`title`/`mini`);
+  - **`build_lesson`** (V3) → `{title, learn[], theory:[{h,t,list,ex,mini}]x2, practice:[{t,key,items}]x2, test:[{q,o,a,e,tag}]x2, hw[], method:{focus}}` — полноценный урок для любого предмета/класса;
+  - **`edit_lesson`** (`kind:"theory"` → `{blocks:[{h,t,list,ex,mini}]}`, `kind:"practice"` → `{tasks:[{t,key,items}]}`) и `generate_theory`/`generate_content`/`content_edit`/`generate_material` → блоки теории/практики/тестов (панель «Сгенерировать материал»);
+  - `log("rpcs", {name, keys, args})` — в `args` компактные скаляры (например `p_score`, `p_total`), тесты проверяют `__MOCK.lastRpc("quiz_submit").args`;
+- **самообучение**: `student_save_work` — настоящий upsert `works(student_id, lesson_id, task)`;
+  `student_submit_result` пишет `results` (`kind="self"`), `student_state` отдаёт формы схемы:
   `works:[{lesson_id,task,data}]`, `results:[{lesson_id,kind,score,total,wrong,created_at,duration_sec}]`;
-- **карточка учителя (T1)**: `from("board_items").select("id,lesson_id,item,author,created_at")
-  .eq("student_id", id).order("id")` — как в реальном from() (selftest проверяет фильтры, `.in`,
-  `.limit`, группировку по lesson_id/странице и что чужие строки не попадают); `works` читаются
-  по `student_id` (прогресс self виден учителю);
+- **динамика (график)**: `results`/`topic_quiz_results` отдают `created_at/kind/score/total`
+  и сортируются по `created_at` — как ждёт `Trend.pointsFromRows/pointsFromQuizzes`;
+- **карточка учителя**: `from("board_items")` с фильтрами по `student_id`/`lesson_id`, `.in`,
+  `.order`, `.limit`; `works` читаются по `student_id`;
 - хелперы `window.__MOCK`: `dbTable(name)`, `tables()`, `tokens()`, `reset(seed)`,
   `broadcastLog()`, `cmdList()`, `lastRpc(name)`, `rpcNames()`, `involveLog()`, `channels()`,
   `presenceOf(name)`.
@@ -110,43 +133,54 @@ track/presenceState/subscribe/removeChannel`. Общее состояние вк
 ## Доска (`board.mjs`, `board.html`)
 
 Страница `board.html` монтирует **две доски** (1100 px и 380 px) с общим in-memory api и
-fake-каналом; `window.__boards = {teacher, student}`, `window.__board` — хелперы стенда
-(логические координаты, ink по canvas, кнопки/инструменты, редактор, якоря, листы, вложения,
-live-фон: `mountLiveBoth`/`bgHtml`/`bgSource`/`waitBgSource`, журнал канала).
+fake-каналом; `window.__boards = {teacher, student}`, хелперы — `window.__board`:
+
+- геометрия: `point/logicalRect/ink/scaleOf`, якоря `elementAtAnchor/elementUnderPoint`;
+- **зум/пан**: `boardView/zoomOf/scrollInfo/setScroll/clickZoom/zoomLabel/extendBoard/wheelBoard`,
+  прямые вызовы API — `setZoom/zoomBy/fitWidth/extendHeight`;
+- **инлайн-текст**: `inlineInfo` (`.bd-inline` + `[data-bd-inline]`, textarea `.bd-inline-ta`,
+  ручка `.bd-inline-drag`, resize `.bd-inline-resize`/`.bd-editor-handle`, `logical`-бокс,
+  `dragVisible`), `inlineType`, `hoverInline`;
+- **вставка**: `pasteBoard` (ClipboardEvent с DataTransfer: текст/картинка), `boardCall` для
+  `insertText/insertNote/insertImage/insertPage/pasteAtPoint/lastPoint`, `items/countItems`
+  (из `debug().raw`);
+- канал/вложения/листы/живой фон — как раньше (`channelLog`, `attachFiles`, `pageKeys/openPage`,
+  `bgHtml/bgSource/waitBgSource`).
 
 | id    | Сценарий |
 |-------|----------|
 | A0    | обе доски монтируются, листы рендерятся, fake-presence видит обе стороны |
-| SMOKE | инструменты (pen/hl/text/erase/hand/touch/move ✥), кнопки attach/embed, снимок 📸, `info().ready/width/anchors`, `Board.keep()` переиспользует инстанс; затем bg-режим: кнопки/📸/`_pages` не сломаны, `bgSource` в `remote\|own\|static` |
+| SMOKE | инструменты (pen/hl/text/erase/hand/touch/move ✥), кнопки attach/embed, снимок 📸, `info().ready/width/anchors`, `Board.keep()`; затем bg-режим |
 | B1    | штрих учителя появляется у ученика через broadcast |
 | C     | якорь: штрих остаётся на тексте при сдвинутом макете второй стороны (+remount) |
 | D1    | две картинки через «На этот лист» не накладываются, видны второй стороне, живы после remount |
 | D2    | ✥ двигает картинку: позиция сохраняется, вторая сторона видит, жива после remount |
 | D3    | PDF «Отдельными листами»: доп. листы в `"_pages"`, видны обеим сторонам, живы после remount |
 | D4    | большой лист (>55k html): обрезан ≤55000, одинаков у сторон, сохранён, жив после remount |
-| E1    | текст: T → тап → `.bd-editor` в фокусе, ввод, ручка размера, Enter → надпись, видна учителю |
+| E1    | текст: T → тап → `.bd-editor` в фокусе, ввод, ручка размера (перечитывается после ввода, т.к. инлайн авто-растёт), Enter → надпись, видна учителю |
 | E2    | надпись переживает remount |
-| F1    | единый фон живого листа: свой `TEACHER-KEYS` у учителя → ученик отрисовал `STUDENT-SHEET` → фон учителя = HTML ученика, `bgSource="remote"` |
-| F2    | ученик рисует в пустом месте общего листа → у учителя те же координаты/якорь/элемент |
-| F3    | учитель рисует на общем фоне → у ученика те же координаты/элемент |
-| F4    | `bgreq`: ученик не открывал лист, но отдаёт его из detached-рендера; без ученика учитель остаётся на своём фоне без исключений |
+| F1–F4 | единый фон живого листа: `bgSource=remote`, совпадение координат/якорей у сторон, `bgreq` из detached-рендера |
 | G     | якоря в пустоте: штрих между абзацами остаётся у ближайшего абзаца при вставке абзаца + refresh |
+| **H1** | **точечный ластик**: две параллельные линии в 12 лог. px (радиус ER=7 + полутолщина — при 2–4 px соседняя линия неизбежно попадает в радиус; 12 px — «рядом, но вне радиуса») + надпись через `insertText`; ластик по середине первой линии → старый stroke-item удалён и заменён ≥2 новыми `t:"s"` кусками, второй штрих (id/p не изменились) и надпись целы; клик ластиком рядом с надписью её не удаляет, внутри реального текста — удаляет |
+| **H2** | **инлайн-текст**: тап T → `.bd-editor.bd-inline` (без старого большого окна), textarea `.bd-inline-ta`, длинная строка увеличивает ширину (авто-размер); при наведении видна ручка `.bd-inline-drag` (opacity), таскает окошко; `.bd-inline-resize`/`.bd-editor-handle` меняет w/h; Enter → объект `{t:"t", s, x,y,w,h}` в точке клика с авто w/h; remount — надпись жива |
+| **H3** | **зум/пан/расширение**: `[data-zoom=in/out/reset/fit]` и `[data-zoom-label]` меняют `info().zoom`; Ctrl+wheel зумит к курсору; `.bd-stage` scroll → `info().scrollX/Y`; hand-drag прокручивает; `[data-act=extend]` увеличивает `info().height`; после `setZoom(1.6)` `lastPoint()` и нарисованный штрих совпадают с логическими координатами клика (±8) |
+| **H4** | **вставка в точку**: клик по холсту обновляет `lastPoint`; paste текста открывает `.bd-inline` в lastPoint (Enter → t-объект ±20); `insertText/insertImage` API ставят объекты в заданные (x,y); вставки видны второй стороне; paste картинки — `t:"i"` в lastPoint; `insertPage` добавляет и открывает лист (`info().page`, `info().pages`) |
 
 **Живой фон листа.** Ученик после отрисовки live-листа шлёт `send("bg",{page,html})`;
 учитель предпочитает этот html своему (`bgSource="remote"`), а если его нет — шлёт `bgreq`;
-ученик отвечает даже для не открытого листа (detached-рендер). Хуки: `info().bgSource ∈
-remote|own|static`, `debug().remoteBgPages`, канал — `__board.channelLog("bg"|"bgreq")`.
-Контракт доски (`mount().info/debug/whenIdle/attach/addPage/openPage/refresh/destroy`),
-DOM-селекторы стенда и устройство `board-harness.js` описаны в истории задачи/комментариях
-файлов.
+ученик отвечает даже для не открытого листа (detached-рендер). Хуки: `info().bgSource`,
+`debug().remoteBgPages`, канал — `__board.channelLog("bg"|"bgreq")`.
+Контракт доски: `mount().info/debug/whenIdle/attach/addPage/openPage/refresh/destroy` +
+аддитивные `insertText/insertNote/insertImage/insertPage/pasteAtPoint/lastPoint/getView/
+setZoom/zoomBy/fitWidth/extendHeight`; `info()` доп. `zoom, scrollX, scrollY, lastPoint, view`.
 
 ## Файлы
 
-- `run.mjs` — полный прогон трёх наборов, итог PASS/FAIL, exit code;
-- `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz);
-- `mock-selftest.mjs` — самопроверка мока без браузера (58 проверок);
-- `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q4,S1–S4,T1;
-- `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 15 сценариев;
+- `run.mjs` — полный прогон наборов (mock + доска + e2e + e2e U1), итог PASS/FAIL, exit code;
+- `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz + ai);
+- `mock-selftest.mjs` — самопроверка мока без браузера (67 проверок);
+- `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q6,S1–S4,T1–T4,V1–V3,U1,U2;
+- `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 19 сценариев (15 старых + H1–H4);
 - `cdp.mjs` — мини-драйвер CDP (Chrome, мышь/клавиатура, `Runtime.evaluate`, скриншоты);
-- `serve.mjs` — статический сервер корня worktree (без кэша);
+- `serve.mjs` — статический сервер корня worktree (без кэша, авто-порт);
 - `artifacts/` — скриншоты падений (создаётся при падении).

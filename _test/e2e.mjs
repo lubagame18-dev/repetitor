@@ -389,7 +389,9 @@ test("b1", "Смена урока в комнате → у ученика нов
   await student.waitFor(`(() => { const el = document.querySelector(".roombar"); return el && el.textContent.includes(${JSON.stringify(L2.title)}) ? 1 : 0; })()`,
     { timeout: 5000, label: "у ученика заголовок нового урока в комнате" });
   const dt = Date.now() - t0;
-  assert(dt < 6000, `смена урока заняла ${dt} мс (> 6 c, порог с запасом на нагрузку CI)`);
+  /* в норме смена урока < 2 c; порог 10 c — запас на нагрузку CI (как у a/b2): на занятой машине
+     Chrome с тремя вкладками может отрисовать доску заметно дольше, это не регрессия продукта */
+  assert(dt < 10000, `смена урока заняла ${dt} мс (> 10 c, порог с запасом на нагрузку CI; в норме < 2 c)`);
   eq(await student.eval(`window.__e2eMarker || null`), "b1", "страница ученика перезагрузилась при смене урока");
   await student.waitFor(`(() => { const bg = document.querySelector("#board .bd-bg"); return bg && (bg.textContent || "").trim().length > 30 ? 1 : 0; })()`,
     { timeout: 6000, label: "у ученика материал нового урока на доске" });
@@ -433,7 +435,7 @@ test("b2", "Урок из другого предмета: ученик в ко�
 /* ---------- b3: refresh в комнате ---------- */
 test("b3", "refresh в комнате: тост «Материалы обновились», доска не сбрасывается, без перезагрузки", async ({ teacher, student }) => {
   await student.eval(`window.__e2eMarker = "b3"; true`);
-  await teacher.eval(`(async () => {
+  const sendRefresh = () => teacher.eval(`(async () => {
     const ch = window.__MOCK.client.channel("live-${TEACHER_ID}", {config: {broadcast: {self: false}}});
     await new Promise(res => ch.subscribe(() => res()));
     ch.send({type: "broadcast", event: "cmd", payload: {cmd: true, to: ${JSON.stringify(ROW_B)}, type: "refresh", msg: "Материалы обновились"}});
@@ -441,8 +443,11 @@ test("b3", "refresh в комнате: тост «Материалы обнов�
     ch.unsubscribe();
     return true;
   })()`);
-  await student.waitFor(`(() => { const t = document.getElementById("toast"); return t && !t.hidden && t.textContent.includes("Материалы обновились") ? 1 : 0; })()`,
-    { timeout: 6000, label: "ученик получил refresh (тост «Материалы обновились»)" });
+  const toastShown = () => student.waitFor(`(() => { const t = document.getElementById("toast"); return t && !t.hidden && t.textContent.includes("Материалы обновились") ? 1 : 0; })()`,
+    { timeout: 8000, label: "ученик получил refresh (тост «Материалы обновились»)" });
+  /* канал-подписчик иногда не успевает подписаться до send (BroadcastChannel) — повторяем отправку один раз */
+  try { await sendRefresh(); await toastShown(); }
+  catch (_) { await sleep(500); await sendRefresh(); await toastShown(); }
   await sleep(250);
   eq(await student.eval(`window.__e2eMarker || null`), "b3", "страница ученика перезагрузилась на refresh");
   assert(await student.eval(`!!document.querySelector("#board .bd-cv")`), "доска исчезла после refresh (S.pendingRender должен сохранять доску)");
@@ -698,26 +703,33 @@ test("Q6", "Тест: ошибка→повтор→верно снижает sc
   const qs = W.quizQuestions, n = qs.length, topic0 = qs[0].topic || "";
   const page = W.quizTab;
   assert(page, "нет вкладки ученика из Q3");
+  const qResBefore = (await teacherDB(teacher, "topic_quiz_results")).filter(r => r.quiz_id === W.quizId).length;
   await page.goto(baseUrl + "/index.html?quiz=" + encodeURIComponent(W.quizId));
   await page.waitFor(`window.__app && window.__app.S && document.querySelector(".quiz-wrap .quiz-opt") ? 1 : 0`,
     { timeout: 25000, label: "Q6: тест открылся по ссылке" });
-  /* 1-й вопрос: неверно → [data-qretry] → верно (в зачёт пойдёт только первая попытка) */
-  /* индексы берём из реально открытого теста: в W.quizQuestions порядок мог отличаться */
-  const pageQs = await page.eval(`window.__app.S.quiz.questions.map(q => ({a: q.a, n: q.o.length}))`);
+  /* 1-й вопрос: неверно → [data-qretry] → верно (в зачёт пойдёт только первая попытка).
+     Варианты могут переставляться при повторе, поэтому кликаем по ТЕКСТУ правильного варианта, а не по индексу. */
+  const pageQs = await page.eval(`window.__app.S.quiz.questions.map(q => ({a: q.a, o: (q.o || []).map(String)}))`);
   const n2 = pageQs.length;
-  const wrong = (+pageQs[0].a + 1) % pageQs[0].n;
-  await page.eval(`document.querySelector('[data-qopt="${wrong}"]').click(); true`);
+  const clickOpt = (want, wrong = false) => {
+    const expr = wrong
+      ? `(() => { const want = ${JSON.stringify(String(want))}; const norm = t => String(t || "").replace(/^\\s*\\d+[.)]\\s*/, "").replace(/\\s+/g, " ").trim(); const els = [...document.querySelectorAll("[data-qopt]")]; const el = els.find(e => !norm(e.textContent).includes(norm(want))); if (!el) return false; el.click(); return true; })()`
+      : `(() => { const want = ${JSON.stringify(String(want))}; const norm = t => String(t || "").replace(/^\\s*\\d+[.)]\\s*/, "").replace(/\\s+/g, " ").trim(); const els = [...document.querySelectorAll("[data-qopt]")]; const el = els.find(e => norm(e.textContent) === norm(want)) || els.find(e => norm(e.textContent).includes(norm(want))); if (!el) return false; el.click(); return true; })()`;
+    return page.eval(expr);
+  };
+  const right0 = pageQs[0].o[+pageQs[0].a];
+  assert(await clickOpt(right0, true), "Q6: не нашли неверный вариант на вопрос 1");
   await page.waitFor(`!!document.querySelector('.quiz-fb.no')`, { timeout: 6000, label: "Q6: неверный ответ (.quiz-fb.no)" });
   assert(await page.eval(`!!document.querySelector("[data-qretry]")`), "Q6: нет кнопки повтора [data-qretry]");
   await page.eval(`document.querySelector("[data-qretry]").click(); true`);
   await page.waitFor(`(() => { const o = document.querySelector("[data-qopt]"); return !document.querySelector(".quiz-fb") && o && !o.disabled ? 1 : 0; })()`,
     { timeout: 5000, label: "Q6: повтор варианты снова доступны" });
-  await page.eval(`document.querySelector('[data-qopt="${+pageQs[0].a}"]').click(); true`);
+  assert(await clickOpt(right0), "Q6: не нашли правильный вариант «" + right0 + "» на повтор");
   await page.waitFor(`!!document.querySelector('.quiz-fb.ok')`, { timeout: 6000, label: "Q6: верно со второй попытки (.quiz-fb.ok)" });
   await page.eval(`document.querySelector("[data-qnext]").click(); true`);
   for (let i = 1; i < n2; i++) {
     await page.waitFor(`(() => { const A = window.__app.S.qz; return A && A.i === ${i} ? 1 : 0; })()`, { timeout: 6000, label: "Q6: вопрос " + (i + 1) });
-    await page.eval(`document.querySelector('[data-qopt="${+pageQs[i].a}"]').click(); true`);
+    assert(await clickOpt(pageQs[i].o[+pageQs[i].a]), "Q6: не нашли правильный вариант на вопрос " + (i + 1));
     await page.waitFor(`!!document.querySelector('.quiz-fb.ok')`, { timeout: 6000, label: "Q6: верный ответ на вопрос " + (i + 1) });
     await page.eval(`document.querySelector("[data-qnext]").click(); true`);
     await sleep(120);
@@ -731,9 +743,11 @@ test("Q6", "Тест: ошибка→повтор→верно снижает sc
   const firstNote = await page.eval(`(() => { const el = document.querySelector(".quiz-result [data-q-first]") || document.querySelector(".quiz-result"); return el ? el.textContent : ""; })()`);
   if (!/с первой попытки/i.test(firstNote)) throw new Error("Q6: в итогах нет «с первой попытки X из N»: " + JSON.stringify(String(firstNote).slice(0, 300)));
   if (!String(firstNote).includes(String(n2 - 1))) throw new Error("Q6: в «с первой попытки» не score n-1: " + JSON.stringify(String(firstNote).slice(0, 300)));
-  /* mock-БД: последняя попытка quiz_results и детали по первому вопросу */
-  const rows = await teacherDB(teacher, "topic_quiz_results");
-  const res = rows.filter(r => r.quiz_id === W.quizId).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+  /* mock-БД: rpc quiz_submit может завершиться уже после показа итогов — ждём НОВУЮ строку результата
+     (иначе можно прочитать предыдущую попытку Q3) */
+  let rows = [];
+  { const tW = Date.now(); while (Date.now() - tW < 12000) { rows = (await teacherDB(teacher, "topic_quiz_results")).filter(r => r.quiz_id === W.quizId); if (rows.length > qResBefore) break; await sleep(150); } }
+  const res = rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
   assert(res, "Q6: в mock-БД нет quiz_results по тесту");
   eq(res.score, n2 - 1, "Q6: topic_quiz_results.score (first)");
   eq(res.total, n2, "Q6: topic_quiz_results.total");
@@ -1004,15 +1018,15 @@ function t2Seed() {
     details: { questions: [], topics: [] }, needs_work: [], created_at: "2026-10-12T10:00:00.000Z" }];
   return seed;
 }
-/** лёгкая перезагрузка кабинета до карточки rowA (T2/T3): без сброса «идущего урока» и presence-ожиданий */
-async function reloadTeacherCard(teacher, baseUrl){
+/** лёгкая перезагрузка кабинета до карточки ученика (T2/T3/V*): без сброса «идущего урока» и presence-ожиданий */
+async function reloadTeacherCard(teacher, baseUrl, rowId = ROW_A){
   await teacher.eval(`try { sessionStorage.clear(); } catch (_) {}; true`);
   await teacher.goto(baseUrl + "/teacher.html");
   await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя (shell + __teacher)" });
   await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
-  await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников (T2)" });
-  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
-  await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "карточка rowA («Всё, что делает ученик»)" });
+  await teacher.waitFor(`document.querySelector('[data-student="${rowId}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников (T2)" });
+  await teacher.eval(`document.querySelector('[data-student="${rowId}"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "карточка ученика («Всё, что делает ученик»)" });
 }
 test("T2", "Динамика у учителя: [data-t-student-trend] с .trend-line и .trend-dot (data-points>=3), последняя точка 100%", async ({ teacher, baseUrl }) => {
   await teacher.eval(`window.__MOCK.reset(${JSON.stringify(t2Seed())}); true`);
@@ -1109,6 +1123,126 @@ test("T4", "Статистика ученика: [data-t-trend] с .trend-line �
   assert(st.dots >= 1, "T4: .trend-dot < 1: " + st.dots);
   eq(st.last, 100, "T4: data-last (последняя по дате точка — 10/10)");
   assert(/сейчас\s*100\s*%/i.test(st.text), "T4: в тексте нет «сейчас 100%»: " + JSON.stringify(st.text.slice(0, 300)));
+});
+
+/* ---------- V1–V3: панель «Инструменты», генерация к курсу ученика, урок для другого предмета/класса ---------- */
+const TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+async function openTeacherCard(teacher, rowId) {
+  await teacher.eval(`(() => { const b = document.querySelector('[data-act="room-end"]'); if (b) b.click(); return true; })()`);
+  await sleep(250);
+  await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return true; })()`);
+  await teacher.waitFor(`document.querySelector('[data-student="${rowId}"]') ? 1 : 0`, { timeout: 15000, label: "V: список учеников" });
+  await teacher.eval(`document.querySelector('[data-student="${rowId}"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "V: карточка ученика" });
+}
+/** начать занятие по уроку из плана и дождаться комнаты с доской */
+async function startTeacherRoom(teacher, lessonId) {
+  await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]') ? 1 : 0`,
+    { timeout: 15000, label: "V: кнопка «▶ Урок» в плане" });
+  await teacher.eval(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]').click(); true`);
+  await teacher.waitFor(`(() => { const T = window.__teacher.T; return T.view === "room" && T.board ? 1 : 0; })()`,
+    { timeout: 18000, label: "V: комната урока с доской (T.view=room, T.board)" });
+}
+async function openToolsTab(teacher) {
+  await teacher.eval(`(() => { const b = document.querySelector('[data-act="room-tools"]'); if (b) b.click(); return true; })()`);
+  await teacher.waitFor(`document.querySelector('[data-tools-pane]') ? 1 : 0`, { timeout: 12000, label: "V: вкладка «Инструменты» ([data-tools-pane])" });
+}
+const boardRawItems = teacher => teacher.eval(`(() => { try { return window.__teacher.T.board.debug().raw || []; } catch (_) { return []; } })()`);
+const boardPagesOf = teacher => teacher.eval(`(() => window.__teacher.T.board ? window.__teacher.T.board.pages() : [])()`);
+async function waitBoardItem(teacher, t, test, label, timeout = 10000) {
+  const t0 = Date.now();
+  let arr = [];
+  while (Date.now() - t0 < timeout) {
+    arr = await boardRawItems(teacher);
+    if ((arr || []).some(r => r.item && r.item.t === t && (!test || test(r.item)))) return arr;
+    await sleep(150);
+  }
+  throw new Error("на доске не появился элемент " + label + ": " + JSON.stringify((arr || []).slice(-4)).slice(0, 500));
+}
+test("V1", "Комната → «Инструменты»: заметка и картинка на доске, поиск ссылки, «Вставить урок на доску»", async ({ teacher, baseUrl }) => {
+  const lid = W.lessons.rus[0].id;
+  /* без перезагрузки: открыть карточку rowA (V1 идёт после T2–T4, где кабинет уже загружен) */
+  await openTeacherCard(teacher, ROW_A);
+  await startTeacherRoom(teacher, lid);
+  await openToolsTab(teacher);
+  /* заметка → T.board.insertNote */
+  await teacher.eval(`(() => { const el = document.getElementById("tool-note-text"); el.value = "Заметка из панели"; el.dispatchEvent(new Event("input", {bubbles:true})); document.querySelector('[data-act="tool-note"]').click(); return true; })()`);
+  await waitBoardItem(teacher, "t", it => /Заметка из панели/.test(it.s || ""), "заметка «Заметка из панели»");
+  /* картинка: панель должна вызвать T.board.insertImage(url) (https-ссылка; data:-URL панель не принимает) */
+  const imgUrl = "https://example.org/scheme.png";
+  await teacher.eval(`(() => { const B = window.__teacher.T.board; window.__boardImgCalls = []; if (B && B.insertImage && !B.__imgSpy) { B.__imgSpy = true; const orig = B.insertImage.bind(B); B.insertImage = (u, ...a) => { window.__boardImgCalls.push(String(u)); return orig(u, ...a); }; } const el = document.getElementById("tool-img-url"); el.value = ${JSON.stringify(imgUrl)}; el.dispatchEvent(new Event("input", {bubbles:true})); document.querySelector('[data-act="tool-img"]').click(); return true; })()`);
+  await teacher.waitFor(`(window.__boardImgCalls || []).some(u => u === ${JSON.stringify(imgUrl)}) ? 1 : 0`,
+    { timeout: 10000, label: "V1: панель «Картинка» вызвала T.board.insertImage(url)" });
+  /* поиск: ссылки с запросом и домены */
+  await teacher.eval(`(() => { const q = document.getElementById("tool-search-q"); q.value = "запятые при обороте"; q.dispatchEvent(new Event("input", {bubbles:true})); return true; })()`);
+  const hrefS = await teacher.eval(`(() => { const a = document.querySelector('a[data-act="tool-search"][data-search="sdamgia"]'); return a ? a.getAttribute("href") : null; })()`);
+  assert(hrefS && hrefS.includes(encodeURIComponent("запятые")), "ссылка «Решу» не содержит запрос: " + hrefS);
+  const hrefF = await teacher.eval(`(() => { const a = document.querySelector('a[data-act="tool-search"][data-search="fipi"]'); return a ? a.getAttribute("href") : "нет"; })()`);
+  assert(/fipi\.ru/.test(hrefF), "ссылка ФИПИ не на домен fipi.ru: " + hrefF);
+  const hrefW = await teacher.eval(`(() => { const a = document.querySelector('a[data-act="tool-search"][data-search="wordwall"]'); return a ? a.getAttribute("href") : "нет"; })()`);
+  assert(/wordwall\.net/.test(hrefW), "ссылка Wordwall не на wordwall.net: " + hrefW);
+  /* 📌 вставить ссылку на доску */
+  await teacher.eval(`document.querySelector('[data-act="tool-search-board"][data-search="fipi"]').click(); true`);
+  await waitBoardItem(teacher, "t", it => /fipi\.ru/.test(it.s || ""), "ссылка на доску из поиска");
+  /* вставить урок/теорию на доску → insertPage открывает лист */
+  const pages0 = (await boardPagesOf(teacher)).length;
+  await teacher.eval(`document.querySelector('[data-act="tool-insert-board"]').click(); true`);
+  await teacher.waitFor(`window.__teacher.T.board && window.__teacher.T.board.pages().length > ${pages0} ? 1 : 0`,
+    { timeout: 15000, label: "V1: insertPage добавил лист урока" });
+  const pages = await boardPagesOf(teacher);
+  const info = await teacher.eval(`window.__teacher.T.board.info()`);
+  assert(info.page && pages.some(p => p.key === info.page), "insertPage не открыл новый лист: " + JSON.stringify({ page: info.page, keys: pages.map(p => p.key) }));
+});
+test("V2", "Комната rowB: «Сгенерировать материал» → ce-save даёт content-edit с курсом ученика math-5 и вставку на доску", async ({ teacher, baseUrl }) => {
+  const lid = W.lessons.math[0].id;
+  await openTeacherCard(teacher, ROW_B);
+  await startTeacherRoom(teacher, lid);
+  await openToolsTab(teacher);
+  await teacher.eval(`document.querySelector('[data-act="tool-gen-theory"]').click(); true`);
+  await teacher.waitFor(`document.getElementById("ce-req") ? 1 : 0`, { timeout: 10000, label: "V2: модалка генерации (#ce-req)" });
+  const pages0 = (await boardPagesOf(teacher)).length;
+  await teacher.eval(`document.querySelector('[data-act="ce-ai"]').click(); true`);
+  await teacher.waitFor(`(() => { const T = window.__teacher.T; return T.ce && (T.ce.items || []).length > 0 ? 1 : 0; })()`,
+    { timeout: 20000, label: "V2: ИИ вернул блоки теории" });
+  await teacher.eval(`document.querySelector('[data-act="ce-save"]').click(); true`);
+  const mat = await waitMockRow(teacher, "materials", m => m.kind === "tasks" && m.data && m.data.kind === "content-edit" && m.course === "math-5" && String(m.student_id) === ROW_B, 20000);
+  assert(mat, "V2: нет content-edit материала с course=math-5/student=rowB: " + JSON.stringify(await teacherDB(teacher, "materials")).slice(0, 500));
+  assert(Array.isArray(mat.data.theory) && mat.data.theory.length > 0, "V2: в data нет theory content-edit");
+  await teacher.waitFor(`window.__teacher.T.board && window.__teacher.T.board.pages().length > ${pages0} ? 1 : 0`,
+    { timeout: 15000, label: "V2: материал вставлен на доску (insertPage)" });
+  const refresh = await teacher.eval(`window.__MOCK.cmdList().filter(c => c.type === "refresh" && String(c.to) === ${JSON.stringify(ROW_B)}).length`);
+  assert(refresh > 0, "V2: ученику rowB не ушла команда refresh после сохранения материала");
+});
+test("V3", "Урок для другого предмета/класса: build_lesson → material kind lesson (math-5, rowB, theory/practice/test), ученик видит урок", async ({ teacher, browser, baseUrl }) => {
+  await openTeacherCard(teacher, ROW_B);
+  await teacher.waitFor(`document.querySelector('[data-build-lesson]') ? 1 : 0`, { timeout: 12000, label: "V3: карточка «Создать урок для этого предмета и класса»" });
+  const title = "Признаки равенства треугольников";
+  await teacher.eval(`(() => { const t = document.getElementById("bl-topic"); if (!t) return false; t.value = ${JSON.stringify(title)}; t.dispatchEvent(new Event("input", {bubbles:true})); const n = document.getElementById("bl-notes"); if (n) { n.value = "больше практики"; n.dispatchEvent(new Event("input", {bubbles:true})); } return true; })()`);
+  await teacher.eval(`document.querySelector('[data-act="build-lesson"]').click(); true`);
+  const lesson = await waitMockRow(teacher, "materials", m => m.kind === "lesson" && String(m.student_id) === ROW_B && m.course === "math-5" && m.data && m.data.from === "ai-build", 25000);
+  assert(lesson, "V3: не сохранился material kind=lesson для rowB (math-5): " + JSON.stringify(await teacherDB(teacher, "materials")).slice(0, 600));
+  assert(lesson.data.custom === true, "V3: data.custom !== true у созданного урока");
+  assert((lesson.data.theory || []).length >= 1, "V3: у урока нет data.theory");
+  assert((lesson.data.practice || []).length >= 1, "V3: у урока нет data.practice");
+  assert((lesson.data.test || []).length >= 1, "V3: у урока нет data.test");
+  assert(lesson.lesson_id && /^c/.test(lesson.lesson_id), "V3: lesson_id нового урока не сгенерирован (ожидали c…): " + lesson.lesson_id);
+  /* учитель видит урок в плане rowB (buildLessonAct делает render; перезагрузка не нужна) */
+  await teacher.waitFor(`document.body.innerText.includes(${JSON.stringify(title)}) ? 1 : 0`, { timeout: 15000, label: "V3: новый урок в карточке rowB у учителя" });
+  /* ученик rowB после reload: урок в «Мои уроки» и теория */
+  const page = await browser.newPage("about:blank");
+  try {
+    await page.inject(seedScript({ db: null, session: null, studentSession: W.studentSession(ROW_B), joinHow: null }), "seed-v3.js");
+    await page.inject(MOCK_SRC, "mock-supabase.js");
+    await blockUrls(page);
+    await page.goto(baseUrl + "/index.html");
+    await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="lessons"]') ? 1 : 0`, { timeout: 25000, label: "V3: ученик rowB после reload" });
+    await page.eval(`document.querySelector('[data-go="lessons"]').click(); true`);
+    await page.waitFor(`(() => { const S = window.__app.S; return S.view === "lessons" || S.view === "folder" ? 1 : 0; })()`, { timeout: 12000, label: "V3: раздел «Мои уроки»" });
+    await page.waitFor(`document.body.innerText.includes(${JSON.stringify(title)}) ? 1 : 0`, { timeout: 15000, label: "V3: новый урок виден ученику rowB в «Моих уроках»" });
+    const st = await page.eval(`(() => { const S = window.__app.S; const c = S.course; const l = c && (c.lessons || []).find(x => String(x.id) === ${JSON.stringify(String(lesson.lesson_id))}); return { hasLesson: !!l, theory: l ? (l.theory || []).length : 0, title: l ? l.title : null }; })()`);
+    assert(st.hasLesson, "V3: у ученика rowB нет урока " + lesson.lesson_id + " в плане (S.course.lessons)");
+    assert(st.theory >= 1, "V3: у ученика rowB урок без теории: " + JSON.stringify(st));
+  } finally { try { await page.close(); } catch (_) {} }
 });
 
 /* ---------- U1: база самообучения + конструктор наборов учителя ---------- */

@@ -490,9 +490,11 @@ test("E1", "Текст: T → тап → .bd-editor в фокусе, ввод, �
   await page.cdp.send("Input.insertText", { text: "Проверка текста" });
   await page.waitFor(`(() => { const e = ${B}.textEditor(); return e && /Проверка текста/.test(e.value) ? 1 : 0; })()`,
     { timeout: 4000, label: "ввод текста в .bd-editor" });
-  // ручка изменения размера
-  const before = ed.box;
-  await page.drag(ed.handle.cx, ed.handle.cy, ed.handle.cx + 90, ed.handle.cy + 60, 10);
+  // ручка изменения размера (после ввода перечитываем: инлайн-редактор авто-растёт, старые координаты ручки устаревают)
+  const ed2 = await page.eval(`${B}.textEditor()`);
+  if (!ed2 || !ed2.handle) throw new Error("после ввода в .bd-editor пропала ручка размера .bd-editor-handle");
+  const before = ed2.box;
+  await page.drag(ed2.handle.cx, ed2.handle.cy, ed2.handle.cx + 90, ed2.handle.cy + 60, 10);
   await sleep(250);
   const after = await page.eval(`${B}.editorBoxNow()`);
   if (!after) throw new Error("окошко-редактор закрылось при перетаскивании ручки");
@@ -696,6 +698,272 @@ test("G", "Якоря в пустоте: штрих между абзацами 
   if (delta > 30 && Math.abs(inkT.bbox.cy - inkS.bbox.cy) < delta * 0.6) {
     throw new Error("штрих остался на абсолютном месте (y не сдвинулся вместе с абзацем: было " + inkS.bbox.cy.toFixed(1) + ", стало " + inkT.bbox.cy.toFixed(1) + ", сдвиг макета " + delta.toFixed(1) + ")");
   }
+});
+
+/* ---------- task-24: H1–H4 (точечный ластик, инлайн-текст, зум/пан, вставка в точку) ---------- */
+const sideItems = (page, side) => page.eval(`${B}.items(${JSON.stringify(side)})`);
+async function waitSideItems(page, side, pred, label, timeout = 8000) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < timeout) {
+    try { last = await sideItems(page, side); } catch (_) { last = null; }
+    if (Array.isArray(last) && pred(last)) return last;
+    await sleep(100);
+  }
+  throw new Error("не дождались items(«" + side + "»): " + label + " (последние: " + JSON.stringify((last || []).slice(-6)).slice(0, 600) + ")");
+}
+const bcall = (page, side, method, ...args) =>
+  page.eval(`(async () => await ${B}.boardCall(${JSON.stringify(side)}, ${JSON.stringify(method)}${args.map(a => ", " + JSON.stringify(a)).join("")}))()`);
+const infoSide = (page, side) => page.eval(`${B}.info(${JSON.stringify(side)})`);
+const viewSide = (page, side) => page.eval(`${B}.boardView(${JSON.stringify(side)})`);
+const inlineSide = (page, side) => page.eval(`${B}.inlineInfo(${JSON.stringify(side)})`);
+const scrollSide = (page, side) => page.eval(`${B}.scrollInfo(${JSON.stringify(side)})`);
+const itemsOfType = (arr, t) => (arr || []).filter(r => r.item && r.item.t === t);
+async function hoverAt(page, side, lx, ly) {
+  const p = await page.eval(`${B}.point(${JSON.stringify(side)}, ${JSON.stringify(lx)}, ${JSON.stringify(ly)})`);
+  if (!p) return false;
+  await page.mouse("mouseMoved", p.x, p.y);
+  return true;
+}
+async function tapScreen(page, x, y) {
+  await page.mouse("mouseMoved", x, y);
+  await page.mouse("mousePressed", x, y);
+  await page.mouse("mouseReleased", x, y);
+}
+async function tapAt(page, side, lx, ly) {
+  const p = await page.eval(`${B}.point(${JSON.stringify(side)}, ${JSON.stringify(lx)}, ${JSON.stringify(ly)})`);
+  if (!p) throw new Error("не получили экранную точку для (" + lx + "," + ly + ")");
+  await tapScreen(page, p.x, p.y);
+  return p;
+}
+async function waitInline(page, side, timeout = 5000) {
+  const t0 = Date.now();
+  let inf = null;
+  while (Date.now() - t0 < timeout) {
+    inf = await inlineSide(page, side);
+    if (inf && inf.exists) return inf;
+    await sleep(100);
+  }
+  throw new Error("не появился инлайн-редактор .bd-inline на доске «" + side + "»");
+}
+
+test("H1", "Точечный ластик: разбивает один штрих, но не трогает соседний штрих и надпись; надпись — только клик внутри", async ({ page }) => {
+  await fresh(page);
+  /* две параллельные линии в 12 логических px: радиус точечного ластика ER=7 + полутолщина штриха, поэтому 2–4 px неизбежно задели бы соседнюю; 12 px — «соседняя рядом, но вне радиуса» */
+  const y1 = 260, y2 = 272, x0 = 120, x1 = 320;
+  await drawStroke(page, "teacher", [[x0, y1], [x0 + 50, y1], [x0 + 100, y1], [x0 + 150, y1], [x1, y1]]);
+  await drawStroke(page, "teacher", [[x0, y2], [x0 + 50, y2], [x0 + 100, y2], [x0 + 150, y2], [x1, y2]]);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const note = await bcall(page, "teacher", "insertText", "подпись рядом", 600, 60);
+  if (!note) throw new Error("insertText не создал надпись рядом (нужна для H1)");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const before = await sideItems(page, "teacher");
+  const strokes0 = itemsOfType(before, "s");
+  const notes0 = itemsOfType(before, "t");
+  if (strokes0.length < 2) throw new Error("не нарисовались 2 штриха: " + strokes0.length);
+  if (!notes0.length) throw new Error("нет t-надписи перед ластиком");
+  const ids0 = new Set(before.map(r => r.id));
+  /* проход ластиком по ПЕРВОМУ штриху: точка берётся с учётом якорного сдвига (штрих мог сместиться после вставки надписи) */
+  await page.eval(`${B}.setTool("teacher","erase")`);
+  let cur = await page.eval(`${B}.currentTool("teacher")`);
+  if (cur !== "erase") { await page.eval(`${B}.clickButton("teacher", /ластик/i)`); await sleep(150); cur = await page.eval(`${B}.currentTool("teacher")`); }
+  if (cur !== "erase") throw new Error("не включился точечный ластик (data-tool=erase), текущий инструмент: " + cur);
+  const ep = await page.eval(`(() => {
+    const b = ${B}; const dbg = b.debug("teacher");
+    const it = dbg.raw.filter(r => r.item && r.item.t === "s").sort((a, c) => +a.id - +c.id)[0];
+    if (!it) return null;
+    const a = it.item.a, box = a ? (dbg.anchorBoxes || []).find(x => x.i === +a.i) : null;
+    const sh = box ? [box.x - a.ox, box.y - a.oy] : [0, 0];
+    const mid = it.item.p[Math.floor(it.item.p.length / 2)];   // середина штриха, чтобы стереть кусок и получить 2 куска
+    return { x: mid[0] + sh[0], y: mid[1] + sh[1], shift: sh };
+  })()`);
+  if (!ep) throw new Error("не нашли первый штрих для ластика");
+  const epScr = await page.eval(`${B}.point("teacher", ${JSON.stringify(ep.x)}, ${JSON.stringify(ep.y)})`);
+  await page.drag(epScr.x - 3, epScr.y, epScr.x + 3, epScr.y, 4);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const after = await waitSideItems(page, "teacher", arr => itemsOfType(arr, "s").some(r => !ids0.has(r.id)), "появились куски стёртого штриха");
+  const ids1 = new Set(after.map(r => r.id));
+  const newStrokes = itemsOfType(after, "s").filter(r => !ids0.has(r.id));
+  if (!(newStrokes.length >= 2)) throw new Error("после точечного ластика нет 2 кусков штриха: новых " + newStrokes.length);
+  if ([strokes0[0].id, strokes0[1].id].every(id => ids1.has(id))) throw new Error("старый штрих не удалён/не разбит: ids не изменились");
+  /* соседний (второй) штрих цел */
+  const secondNow = after.find(r => r.id === strokes0[1].id);
+  if (!secondNow) throw new Error("соседний штрих исчез — ластик задел соседнюю линию");
+  if ((secondNow.item.p || []).length !== (strokes0[1].item.p || []).length) throw new Error("соседний штрих изменился: " + JSON.stringify(secondNow.item.p));
+  /* надпись цела после ластика по штриху */
+  if (!after.some(r => r.id === notes0[0].id)) throw new Error("надпись исчезла после ластика по штриху");
+  /* клик ластиком рядом с надписью — не удаляет */
+  const npt = await page.eval(`${B}.point("teacher", 600, 60)`);
+  await tapScreen(page, npt.x + 160, npt.y + 90);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  let after2 = await sideItems(page, "teacher");
+  if (!after2.some(r => r.id === notes0[0].id)) throw new Error("ластик рядом с надписью удалил её (должен только внутри)");
+  /* клик ВНУТРИ надписи — удаляет */
+  const npt2 = await page.eval(`${B}.point("teacher", 620, 68)`);
+  await tapScreen(page, npt2.x, npt2.y);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  after2 = await sideItems(page, "teacher");
+  if (after2.some(r => r.id === notes0[0].id)) throw new Error("клик ластиком внутри надписи не удалил её");
+});
+
+test("H2", "Инлайн-текст: .bd-inline в точке, авто-размер, hover-ручка-перетаскивание и resize, Enter → объект t; remount", async ({ page }) => {
+  await fresh(page);
+  await page.eval(`${B}.setTool("teacher","text")`);
+  await tapAt(page, "teacher", 200, 320);
+  let inf = await waitInline(page, "teacher");
+  if (await page.eval(`!!document.querySelector("#bd-teacher .bd-editor:not(.bd-inline)")`)) throw new Error("открылся старый большой .bd-editor вместо инлайн .bd-inline");
+  const w0 = inf.logical && inf.logical.w, h0 = inf.logical && inf.logical.h;
+  /* авто-размер: длинная строка должна увеличить окошко (не фикс 140×70) */
+  await page.eval(`${B}.inlineType("teacher", ${JSON.stringify("Длинная надпись для проверки авто-размера инлайн-редактора")})`);
+  await sleep(250);
+  inf = await waitInline(page, "teacher");
+  const w1 = inf.logical && inf.logical.w;
+  if (!(w1 > w0 + 10)) throw new Error("инлайн-редактор не вырос по ширине (авто-размер): " + w0 + " → " + w1);
+  /* hover: ручка-перетаскивание появляется */
+  await page.mouse("mouseMoved", inf.box.cx, inf.box.cy);
+  await sleep(150);
+  inf = await waitInline(page, "teacher");
+  if (!inf.drag) throw new Error("нет ручки-перетаскивания .bd-inline-drag");
+  if (!inf.dragVisible) throw new Error("ручка .bd-inline-drag не видна при наведении (opacity)");
+  /* таскаем окошко за ручку */
+  const beforeX = inf.logical.x, beforeY = inf.logical.y, dragPt = { x: inf.drag.cx, y: inf.drag.cy };
+  await page.drag(dragPt.x, dragPt.y, dragPt.x + 60, dragPt.y + 40, 6);
+  await sleep(200);
+  inf = await waitInline(page, "teacher");
+  if (!(inf.logical.x > beforeX + 15 && inf.logical.y > beforeY + 8)) throw new Error("ручка .bd-inline-drag не таскает окошко: (" + beforeX + "," + beforeY + ") → (" + inf.logical.x + "," + inf.logical.y + ")");
+  /* resize за угол */
+  if (!inf.resize) throw new Error("нет ручки resize (.bd-inline-resize/.bd-editor-handle)");
+  const wBefore = inf.logical.w, rp = { x: inf.resize.cx, y: inf.resize.cy };
+  await page.drag(rp.x, rp.y, rp.x + 70, rp.y + 50, 6);
+  await sleep(200);
+  inf = await waitInline(page, "teacher");
+  if (!(inf.logical.w > wBefore + 10)) throw new Error("resize за угол не изменил ширину: " + wBefore + " → " + inf.logical.w);
+  /* Enter — сохранить */
+  await page.eval(`(() => { const i = ${B}.inlineInfo("teacher"); i.ta.focus(); i.ta.value = "Длинная надпись для проверки авто-размера инлайн-редактора"; i.ta.dispatchEvent(new Event("input", {bubbles:true})); return true; })()`);
+  await page.key("Enter");
+  const items = await waitSideItems(page, "teacher", arr => itemsOfType(arr, "t").length > 0, "объект t после Enter");
+  const tItems = itemsOfType(items, "t");
+  const item = tItems[tItems.length - 1].item;
+  if (!/Длинная надпись/.test(item.s || "")) throw new Error("объект t не содержит введённый текст: " + JSON.stringify(item.s));
+  if (!(item.w >= 110 && item.w <= 470 && item.h >= 20 && item.h <= 320)) throw new Error("w/h не авто-размер (ожидали 110..470 × 20..320): " + JSON.stringify({ w: item.w, h: item.h }));
+  if (Math.abs(item.x - 200) > 60 || Math.abs(item.y - 320) > 90) throw new Error("объект t не в районе точки клика (с учётом перетаскивания): " + JSON.stringify({ x: item.x, y: item.y }));
+  /* remount — надпись жива */
+  await page.eval(`${B}.remountReady("teacher")`);
+  await waitSideItems(page, "teacher", arr => itemsOfType(arr, "t").some(r => String(r.item.s || "").includes("Длинная надпись")), "надпись после remount", 10000);
+});
+
+test("H3", "Зум/пан/расширение: кнопки и колесо меняют info().zoom, scroll/hand-drag работают, «Расширить» растит height, рисование после зума — в логических координатах", async ({ page }) => {
+  await fresh(page);
+  const info0 = await infoSide(page, "teacher");
+  if (info0.zoom == null) throw new Error("в info() нет zoom (board.js без task-23?)");
+  const z0 = +info0.zoom;
+  if (!(await page.eval(`${B}.clickZoom("teacher","in")`))) throw new Error("нет кнопки [data-zoom=in]");
+  await sleep(200);
+  const z1 = +(await infoSide(page, "teacher")).zoom;
+  if (!(z1 > z0 + 0.01)) throw new Error("кнопка «+» не увеличила zoom: " + z0 + " → " + z1);
+  await page.eval(`${B}.clickZoom("teacher","reset")`); await sleep(200);
+  const zr = +(await infoSide(page, "teacher")).zoom;
+  if (Math.abs(zr - 1) > 0.02) throw new Error("кнопка «100%» не даёт zoom=1: " + zr);
+  await page.eval(`${B}.clickZoom("teacher","out")`); await sleep(200);
+  if (!(+(await infoSide(page, "teacher")).zoom < zr - 0.01)) throw new Error("кнопка «−» не уменьшила zoom");
+  await page.eval(`${B}.clickZoom("teacher","fit")`); await sleep(200);
+  const zf = +(await infoSide(page, "teacher")).zoom;
+  if (!(zf > 0.2)) throw new Error("кнопка «По ширине» не сработала: zoom=" + zf);
+  await page.eval(`${B}.fitWidth("teacher")`); await sleep(150);
+  const zb = +(await infoSide(page, "teacher")).zoom;
+  await page.eval(`${B}.wheelBoard("teacher", {deltaY: -240, ctrlKey: true})`);
+  await sleep(250);
+  const za = +(await infoSide(page, "teacher")).zoom;
+  if (!(za > zb + 0.01)) throw new Error("Ctrl+wheel не зумит: " + zb + " → " + za);
+  /* scroll + info().scrollY */
+  await page.eval(`${B}.fitWidth("teacher")`); await sleep(150);
+  const si = await scrollSide(page, "teacher");
+  if (!si) throw new Error("нет скроллируемого контейнера доски (.bd-stage)");
+  await page.eval(`${B}.setScroll("teacher", {top: 120})`); await sleep(150);
+  const infoS = await infoSide(page, "teacher");
+  if (!(infoS.scrollY > 50)) throw new Error("scrollTop не отражается в info().scrollY: " + JSON.stringify({ scrollY: infoS.scrollY }));
+  /* hand-drag прокручивает */
+  await page.eval(`${B}.setScroll("teacher", {top: 0})`);
+  await page.eval(`${B}.setTool("teacher","hand")`);
+  const sc0 = +(await infoSide(page, "teacher")).scrollY || 0;
+  const p0 = await page.eval(`${B}.point("teacher", 400, 500)`);
+  await page.drag(p0.x, p0.y, p0.x, p0.y - 200, 8);
+  await sleep(300);
+  const sc1 = +(await infoSide(page, "teacher")).scrollY || 0;
+  if (!(sc1 > sc0 + 50)) throw new Error("hand-drag не прокрутил доску: " + sc0 + " → " + sc1);
+  /* «Расширить лист» */
+  const h0 = +(await infoSide(page, "teacher")).height;
+  if (!(await page.eval(`${B}.extendBoard("teacher")`))) throw new Error("нет кнопки «Расширить лист» ([data-act=extend])");
+  await sleep(250);
+  const h1 = +(await infoSide(page, "teacher")).height;
+  if (!(h1 > h0)) throw new Error("«Расширить лист» не увеличил info().height: " + h0 + " → " + h1);
+  /* рисование после зума: lastPoint и штрих — в логических координатах */
+  await page.eval(`${B}.fitWidth("teacher")`); await sleep(150);
+  await page.eval(`${B}.setZoom("teacher", 1.6)`); await sleep(250);
+  await page.eval(`${B}.setTool("teacher","pen")`);
+  await tapAt(page, "teacher", 300, 400);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const lp = await page.eval(`${B}.lastPoint("teacher")`);
+  if (!lp) throw new Error("lastPoint() пуст после клика при zoom=1.6");
+  if (Math.abs(lp.x - 300) > 8 || Math.abs(lp.y - 400) > 8) throw new Error("lastPoint не совпал с логической точкой клика при zoom=1.6: " + JSON.stringify(lp));
+  const arr = await sideItems(page, "teacher");
+  const stroke = itemsOfType(arr, "s").pop();
+  if (stroke && (Math.abs(stroke.item.p[0][0] - 300) > 8 || Math.abs(stroke.item.p[0][1] - 400) > 8)) throw new Error("штрих после зума не в логических координатах: " + JSON.stringify(stroke.item.p[0]));
+});
+
+test("H4", "Вставка в точку: paste текста/картинки и API insertText/insertImage/insertPage — объект в точке клика и виден второй стороне", async ({ page, fixtures }) => {
+  await fresh(page);
+  /* клик по холсту запоминает lastPoint */
+  await page.eval(`${B}.setTool("teacher","pen")`);
+  await tapAt(page, "teacher", 520, 520);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const lp = await page.eval(`${B}.lastPoint("teacher")`);
+  if (!lp) throw new Error("lastPoint() пуст после клика по доске (H4)");
+  /* paste текста → .bd-inline в lastPoint, Enter → t-объект рядом */
+  const pasteText = "Вставка из буфера";
+  await page.eval(`${B}.pasteBoard("teacher", {text: ${JSON.stringify(pasteText)}})`);
+  const inf = await waitInline(page, "teacher");
+  if (!String(inf.value || "").includes(pasteText)) throw new Error("текст из paste не попал в .bd-inline: " + JSON.stringify(inf.value));
+  await page.eval(`${B}.inlineInfo("teacher").ta.focus(); true`);
+  await page.key("Enter");
+  let arr = await waitSideItems(page, "teacher", a => itemsOfType(a, "t").some(r => String(r.item.s || "").includes(pasteText)), "t-объект после paste текста");
+  const tItem = itemsOfType(arr, "t").find(r => String(r.item.s || "").includes(pasteText)).item;
+  if (Math.abs(tItem.x - lp.x) > 20 || Math.abs(tItem.y - lp.y) > 20) throw new Error("вставленный текст не в точке последнего клика: " + JSON.stringify({ item: { x: tItem.x, y: tItem.y }, lp }));
+  /* API insertText / insertImage в точку */
+  const note = await bcall(page, "teacher", "insertText", "API-текст", 150, 700);
+  if (!note) throw new Error("insertText(text, x, y) не вернул объект");
+  const img = await bcall(page, "teacher", "insertImage", "data:image/png;base64," + fixtures.files.image1.b64, 350, 720);
+  if (!img) throw new Error("insertImage(url, x, y) не вернул объект");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  arr = await sideItems(page, "teacher");
+  const apiT = itemsOfType(arr, "t").find(r => r.item.s === "API-текст");
+  const apiI = itemsOfType(arr, "i").find(r => String(r.item.src || "").startsWith("data:image/png"));
+  if (!apiT || Math.abs(apiT.item.x - 150) > 3 || Math.abs(apiT.item.y - 700) > 3) throw new Error("insertText не встал в (150,700): " + JSON.stringify(apiT && apiT.item));
+  if (!apiI || Math.abs(apiI.item.x - 350) > 3 || Math.abs(apiI.item.y - 720) > 3) throw new Error("insertImage не встал в (350,720): " + JSON.stringify(apiI && apiI.item));
+  await waitSideItems(page, "student", a => itemsOfType(a, "t").some(r => r.item.s === "API-текст") && itemsOfType(a, "i").length > 0, "вставки из API видны второй стороне");
+  /* paste картинки — в lastPoint */
+  await page.eval(`${B}.setTool("teacher","pen")`);
+  await tapAt(page, "teacher", 200, 640);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const lp2 = await page.eval(`${B}.lastPoint("teacher")`);
+  const imgsBefore = itemsOfType(await sideItems(page, "teacher"), "i").length;
+  await page.eval(`${B}.pasteBoard("teacher", {b64: ${JSON.stringify(fixtures.files.image2.b64)}, type: "image/png", name: "paste.png"})`);
+  const pasted = await waitSideItems(page, "teacher", a => itemsOfType(a, "i").length > imgsBefore, "картинка из paste-буфера появилась", 6000);
+  /* paste на document слышат ОБЕ доски стенда: проверяем, что картинка появилась в точке lastPoint кликнувшей (teacher) стороны */
+  const nearImg = itemsOfType(pasted, "i").find(r => Math.abs(r.item.x - lp2.x) <= 20 && Math.abs(r.item.y - lp2.y) <= 20);
+  if (!nearImg) {
+    const imgs = itemsOfType(pasted, "i").map(r => ({ x: r.item.x, y: r.item.y }));
+    throw new Error("картинка из paste не в точке клика: " + JSON.stringify({ imgs, lp: lp2 }));
+  }
+  /* insertPage открывает новый лист (board-dev: open + broadcast) */
+  const key = await bcall(page, "teacher", "insertPage", "API-лист", "<div class='bd-sheet'><p>Лист из API</p></div>", true);
+  if (!key) throw new Error("insertPage не вернул ключ листа");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const tInfo = await infoSide(page, "teacher");
+  if (tInfo.page !== key) throw new Error("insertPage не открыл новый лист: page=" + tInfo.page + ", key=" + key);
+  const keys = await page.eval(`${B}.pageKeys("teacher")`);
+  if (!keys.includes(key)) throw new Error("нового листа нет в списке листов: " + JSON.stringify(keys));
+  if (!(tInfo.pages || []).some(p => p.key === key)) throw new Error("insertPage не добавил лист в info().pages");
 });
 
 /* ---------- раннер ---------- */

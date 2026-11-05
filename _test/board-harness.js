@@ -421,25 +421,27 @@
   function visible(sel) { return [...document.querySelectorAll(sel)].filter(isVisible); }
 
   function textEditor() {
-    let el = visible(".bd-editor")[0] || null;
+    let el = visible(".bd-editor")[0] || visible(".bd-inline")[0] || null;
     let raw = null;
     if (el) {
       raw = el.matches("textarea,[contenteditable='true'],[contenteditable='']")
         ? el
-        : (el.querySelector("textarea.bd-editor-ta, textarea, [contenteditable='true']") || el);
+        : (el.querySelector("textarea.bd-editor-ta, .bd-inline-ta, textarea, [contenteditable='true']") || el);
     } else {
-      const boxes = visible("textarea, [contenteditable='true'], [contenteditable=''], .bd-input");
+      const boxes = visible("textarea, [contenteditable='true'], [contenteditable=''], .bd-input, .bd-inline");
       const box = boxes[boxes.length - 1] || null;
       if (!box) return null;
       raw = box;
-      el = box.closest(".bd-editor") || box;
+      el = box.closest(".bd-editor, .bd-inline") || box;
     }
     const br = el.getBoundingClientRect();
     let handle = null;
-    const hs = visible(".bd-editor-handle");
+    const hs = visible(".bd-editor-handle, .bd-inline-resize, .bd-inline-handle, [data-bd-resize], [data-resize]");
     if (hs.length) {
-      const r = hs[hs.length - 1].getBoundingClientRect();
-      handle = { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2, by: "class", cls: "bd-editor-handle" };
+      const hEl = hs[hs.length - 1];
+      const r = hEl.getBoundingClientRect();
+      const cls = String(hEl.className && hEl.className.baseVal !== undefined ? hEl.className.baseVal : hEl.className || "");
+      handle = { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2, by: "class", cls, el: hEl };
     } else {
       // запасной поиск ручки (если класс другой): маленький элемент у правого нижнего угла
       for (const cand of document.querySelectorAll("body *")) {
@@ -680,6 +682,133 @@
     throw new Error("у доски «" + side + "» нет attach(files) и input[type=file] — вложения недоступны");
   }
 
+  /* ---------- task-24: зум/пан, инлайн-текст, вставка в точку, API доски ---------- */
+  function apiNames(side) { const h = handles[side]; return h ? Object.keys(h) : []; }
+  async function boardCall(side, method, ...args) {
+    const h = handles[side];
+    if (!h || typeof h[method] !== "function") throw new Error("у доски «" + side + "» нет API " + method + "()");
+    const res = await h[method](...args);
+    try { return res === undefined ? null : JSON.parse(JSON.stringify(res)); } catch (_) { return res; }
+  }
+  function lastPoint(side) {
+    try { const h = handles[side]; if (h && typeof h.lastPoint === "function") return h.lastPoint(); } catch (_) {}
+    const i = info(side); return i && i.lastPoint ? i.lastPoint : null;
+  }
+  function boardView(side) {
+    try { const h = handles[side]; if (h && typeof h.getView === "function") return h.getView(); } catch (_) {}
+    const i = info(side);
+    return i ? { zoom: i.zoom, scale: i.scale, scrollX: i.scrollX, scrollY: i.scrollY } : null;
+  }
+  function zoomOf(side) { const v = boardView(side); return v && v.zoom != null ? +v.zoom : null; }
+  /** скроллируемый контейнер доски (stage) */
+  function scrollEl(side) {
+    const r = root(side); if (!r) return null;
+    let el = cv(side);
+    while (el && el !== r.parentElement) {
+      const cs = getComputedStyle(el);
+      if (/(auto|scroll)/.test(cs.overflowY + cs.overflowX) && (el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2)) return el;
+      el = el.parentElement;
+    }
+    return r.querySelector(".bd-stage");
+  }
+  function scrollInfo(side) {
+    const el = scrollEl(side);
+    if (!el) return null;
+    return { top: el.scrollTop, left: el.scrollLeft, maxTop: Math.max(0, el.scrollHeight - el.clientHeight), maxLeft: Math.max(0, el.scrollWidth - el.clientWidth), h: el.clientHeight, w: el.clientWidth };
+  }
+  function setScroll(side, { top, left } = {}) {
+    const el = scrollEl(side); if (!el) return false;
+    if (top != null) el.scrollTop = top;
+    if (left != null) el.scrollLeft = left;
+    el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    try { handles[side] && handles[side].relayout && handles[side].relayout(); } catch (_) {}
+    return true;
+  }
+  function zoomBtn(side, kind) { const r = root(side); return r ? r.querySelector('[data-zoom="' + kind + '"]') : null; }
+  function clickZoom(side, kind) {
+    const b = zoomBtn(side, kind);
+    if (b) { b.click(); return true; }
+    const texts = { in: /\+|увелич/i, out: /−|уменьш/i, reset: /100\s*%/, fit: /по\s*ширине|fit/i };
+    return clickButton(side, texts[kind] || new RegExp(kind, "i"));
+  }
+  function zoomLabel(side) { const el = root(side) && root(side).querySelector("[data-zoom-label]"); return el ? el.textContent : null; }
+  function extendBtn(side) {
+    const r = root(side); if (!r) return null;
+    return r.querySelector('[data-act="extend"], [data-extend]') || [...r.querySelectorAll("button")].find(b => /расшир/i.test((b.title || "") + (b.textContent || ""))) || null;
+  }
+  function extendBoard(side) { const b = extendBtn(side); if (!b) return false; b.click(); return true; }
+  function setZoom(side, z, cx, cy) { const h = handles[side]; if (!h || typeof h.setZoom !== "function") throw new Error("нет setZoom у «" + side + "»"); h.setZoom(z, cx, cy); return true; }
+  function zoomBy(side, d) { const h = handles[side]; if (!h || typeof h.zoomBy !== "function") throw new Error("нет zoomBy у «" + side + "»"); h.zoomBy(d); return true; }
+  function fitWidth(side) { const h = handles[side]; if (!h || typeof h.fitWidth !== "function") throw new Error("нет fitWidth у «" + side + "»"); h.fitWidth(); return true; }
+  function wheelBoard(side, { deltaY = -120, ctrlKey = true, altKey = false, lx = 400, ly = 300 } = {}) {
+    const c = cv(side); if (!c) return false;
+    const p = point(side, lx, ly); if (!p) return false;
+    const mk = () => new WheelEvent("wheel", { deltaY, ctrlKey, altKey, bubbles: true, cancelable: true, clientX: p.x, clientY: p.y });
+    c.dispatchEvent(mk());
+    const stage = scrollEl(side) || c.parentElement;
+    if (stage) stage.dispatchEvent(mk());
+    return true;
+  }
+  /** инлайн-редактор текста: `.bd-inline` (старые `.bd-editor`-классы сохраняются) */
+  function inlineInfo(side) {
+    if (side === undefined) side = "teacher";
+    const r = root(side) || document;
+    const el = [...r.querySelectorAll(".bd-inline, [data-bd-inline]")].find(isVisible) || null;
+    if (!el) return { exists: false };
+    const ta = el.querySelector(".bd-inline-ta, .bd-editor-ta, textarea");
+    const dragEl = el.querySelector(".bd-inline-drag, [data-bd-inline-drag]");
+    const resizeEl = el.querySelector(".bd-inline-resize, .bd-editor-handle, [data-bd-inline-resize]");
+    const c = cvRect(side), s = scaleOf(side), br = el.getBoundingClientRect();
+    const box = { x: br.left, y: br.top, w: br.width, h: br.height, cx: br.left + br.width / 2, cy: br.top + br.height / 2 };
+    const logical = c && s ? { x: (br.left - c.left) / s, y: (br.top - c.top) / s, w: br.width / s, h: br.height / s } : null;
+    const rectOf = e => { if (!e) return null; const q = e.getBoundingClientRect(); return { x: q.left, y: q.top, w: q.width, h: q.height, cx: q.left + q.width / 2, cy: q.top + q.height / 2 }; };
+    const dragStyle = dragEl ? getComputedStyle(dragEl) : null;
+    return {
+      exists: true, el, ta, box, logical,
+      drag: rectOf(dragEl), resize: rectOf(resizeEl),
+      dragVisible: !!(dragStyle && +dragStyle.opacity > 0.05 && dragStyle.display !== "none"),
+      value: ta && ta.value != null ? ta.value : "",
+      focused: !!(document.activeElement && (el.contains(document.activeElement) || document.activeElement === ta)),
+    };
+  }
+  function inlineType(side, text) {
+    const inf = inlineInfo(side);
+    if (!inf.exists || !inf.ta) throw new Error("нет .bd-inline textarea на доске «" + side + "»");
+    const ta = inf.ta;
+    ta.focus();
+    ta.value = String(text);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+  /** hover по инлайн-редактору (появляется ручка-перетаскивание) */
+  function hoverInline(side, where = "center") {
+    const inf = inlineInfo(side);
+    if (!inf.exists) return false;
+    const b = inf.box;
+    const p = where === "drag" && inf.drag ? { x: inf.drag.cx, y: inf.drag.cy } : { x: b.cx, y: b.cy };
+    const fire = (target, evName, Ev) => { try { target.dispatchEvent(new Ev(evName, { bubbles: true, clientX: p.x, clientY: p.y })); } catch (_) {} };
+    fire(inf.el, "mousemove", MouseEvent); fire(inf.el, "mouseover", MouseEvent);
+    fire(inf.el, "pointermove", PointerEvent); fire(document.body, "mousemove", MouseEvent);
+    return true;
+  }
+  /** paste: ClipboardEvent с DataTransfer на document (текст и/или картинка) */
+  function pasteBoard(side, { text = "", b64 = "", type = "image/png", name = "paste.png" } = {}) {
+    const dt = new DataTransfer();
+    if (text) dt.setData("text/plain", String(text));
+    if (b64) {
+      const bin = atob(b64), u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      try { dt.items.add(new File([u8], name, { type })); } catch (e) { console.error("paste file", e); }
+    }
+    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    document.dispatchEvent(ev);
+    return true;
+  }
+  /** элементы доски: [{id, item}] из debug().raw (клон) */
+  function items(side) { const d = debug(side); return d && Array.isArray(d.raw) ? d.raw : []; }
+  function itemsJson(side) { try { return JSON.stringify(items(side)); } catch (_) { return "[]"; } }
+  function countItems(side, t) { return items(side).filter(r => (t == null || (r.item && r.item.t === t))).length; }
+
   window.__board = {
     LESSON, CHANNEL, W, PAGE_HTML_MAX, PAGE_KEY, LIVE_PAGES, sleep, clone,
     HUB, api, store, dump, storeAll, seed, clearStore,
@@ -694,5 +823,8 @@
     bgEl, bgHtml, bgSource, bgDebug, waitBgSource, waitBgContains, elementAtAnchor, elementUnderPoint,
     channelLog, channelHas, channelClear, waitChannel,
     makeFile, attachFiles,
+    apiNames, boardCall, lastPoint, boardView, zoomOf, scrollEl, scrollInfo, setScroll,
+    zoomBtn, clickZoom, zoomLabel, extendBtn, extendBoard, setZoom, zoomBy, fitWidth, wheelBoard,
+    inlineInfo, inlineType, hoverInline, pasteBoard, items, itemsJson, countItems,
   };
 })();

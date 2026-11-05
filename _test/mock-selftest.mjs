@@ -180,6 +180,17 @@ ok(!aiRes.error && Array.isArray(aiTest) && aiTest.length === 2 && aiTest.every(
 ok(aiTest && aiTest.every(q => q.tag === "Урок 1"), "у вопросов ИИ tag = тема", aiTest && aiTest.map(q => q.tag));
 const ai3 = await teacher.client.functions.invoke("ai", { body: { action: "generate_tasks", topic: "Тема", count: 9 } });
 ok(ai3.data.test.length === 3, "мок ИИ отдаёт не больше 3 вопросов", ai3.data.test.length);
+/* build_lesson (task-24/25): полноценный урок для любого предмета/класса */
+const aiLesson = await teacher.client.functions.invoke("ai", { body: { action: "build_lesson", subject: "hist", grade: 6, topic: "Древняя Русь" } });
+const L = aiLesson.data || {};
+ok(!aiLesson.error && L.title && Array.isArray(L.theory) && L.theory.length === 2 && L.theory.every(x => x.h && x.t)
+  && Array.isArray(L.practice) && L.practice.length === 2 && Array.isArray(L.test) && L.test.length === 2 && L.method,
+  "functions.invoke ai build_lesson → {title,theory[2],practice[2],test[2],method}",
+  { title: L.title, theory: (L.theory || []).length, practice: (L.practice || []).length, test: (L.test || []).length, method: !!L.method });
+/* generate_theory/generate_content — для кнопки «Сгенерировать материал» в панели учителя */
+const aiTheory = await teacher.client.functions.invoke("ai", { body: { action: "generate_theory", topic: "Спряжение", subject: "rus", grade: 5 } });
+ok(aiTheory.data && Array.isArray(aiTheory.data.theory) && aiTheory.data.theory.length >= 1 && Array.isArray(aiTheory.data.test),
+  "functions.invoke ai generate_theory → theory + test (для «Сгенерировать материал»)", aiTheory.data && { theory: (aiTheory.data.theory || []).length, test: (aiTheory.data.test || []).length });
 
 // 8. quiz_get / student_quizzes: контракт schema.sql
 const qg = await student.client.rpc("quiz_get", { p_token: QZ_ID });

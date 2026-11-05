@@ -21,8 +21,23 @@
    * ЯКОРЯ В ПУСТЫХ МЕСТАХ: если пометка стоит в пустоте (самый маленький содержащий элемент –
      корневой .bd-sheet/обёртка > ~40% листа), якорь берётся у ближайшего содержательного блока
      (p, li, td/th, h1-h4, table, img, div с текстом): предпочтительно выше точки, иначе ниже;
-   * хуки для тестов: mount() возвращает info/whenIdle/attach/addPage/openPage, info().bgSource
-     ("remote"|"own"|"static"), debug().remoteBgPages. */
+   * хуки для тестов: mount() возвращает info/whenIdle/attach/addPage/openPage/pages/refresh,
+     info().bgSource ("remote"|"own"|"static"), debug().remoteBgPages.
+
+   v63 «доска как Miro» (дополнительно):
+   * точечный ластик: ER=7, стирает только реально под точкой; штрих делится на куски,
+     надпись/картинка удаляются только при точном попадании; видимый круг-курсор .bd-erasecur;
+   * инлайн-текст .bd-inline вместо большого окна: textarea без «Готово», авто-размер
+     (120..460 × до 300 логических), Enter – сохранить, Shift+Enter – перенос, Esc – отмена,
+     blur – сохранить; при наведении/фокусе ручка-перетаскивание ✥ .bd-inline-drag,
+     правый нижний угол .bd-inline-resize (старые классы .bd-editor/.bd-editor-handle сохранены);
+   * зум/пан: scale = CSS px на логический px, ручной зум 0.5..3, кнопки −/100%/+ /По ширине,
+     колесо Ctrl/Alt/Meta – зум к точке под курсором, «рука» таскает холст (scroll .bd-stage),
+     «Расширить лист»; рисование/якоря считаются от rect канваса (учитывают скролл и масштаб);
+   * вставка в точку: paste текста открывает .bd-inline в lastPoint, картинка из буфера и
+     drag&drop файлов вставляются в точку; API для панели учителя: insertText/insertNote/
+     insertImage/insertPage/pasteAtPoint/getView/setZoom/zoomBy/fitWidth/extendHeight/lastPoint;
+   * заполнение .blank на основном листе: тап T по пропуску открывает редактор над ним. */
 window.Board = (() => {
   const W = 800;                        // логическая ширина листа
   const COLORS = ["#24183d", "#7b4cf5", "#ee5fa8", "#1f9d55", "#d6334a"];
@@ -33,6 +48,11 @@ window.Board = (() => {
   const TEXT_LINE = 28;
   const TEXT_MAX = 4000;
   const DEFAULT_TEXT_W = 260;
+  const TEXT_MIN_W = 120;               // авто-ширина инлайн-редактора
+  const TEXT_MAX_W = 460;               // авто-ширина/максимум логических px
+  const TEXT_MAX_H = 300;               // авто-высота инлайн-редактора
+  const ZOOM_MIN = 0.5, ZOOM_MAX = 3;   // ручной зум: CSS px на логический px
+  const ER = 7;                         // радиус точечного ластика (логические px)
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const rid = () => Math.random().toString(36).slice(2, 10);
   const toast = t => { try { if (window.U && typeof U.toast === "function") U.toast(t); } catch (_) {} };
@@ -52,7 +72,7 @@ window.Board = (() => {
     let mine = [];                     // id своих объектов для «Отменить»
     let tool = "pen", color = COLORS[0], drawing = null, moving = null, textTap = null;
     let scale = 1, height = 1400;
-    let editor = null;                 // окошко-редактор текста
+    let editor = null;                 // инлайн-редактор текста
     let saving = 0, openTok = 0;
     let bdEls = [], bdBoxes = [], bdMap = new Map();
     let anchorsDirty = true, boxesDirty = true, lastScale = 0, lastBgH = -1;
@@ -63,6 +83,15 @@ window.Board = (() => {
     const me = rid();
     let channel = null, lastCursor = 0, lastDraft = 0, draftBuf = [];
     const imgCache = new Map(); const pageCache = new Map();
+    /* вид: масштаб/скролл/последняя точка; инлайн-текст, ластик-курсор, панорама рукой */
+    let fitMode = true;                // «По ширине»: scale = stage.clientWidth / W
+    let zoom = 1;                      // абсолютный масштаб, CSS px на логический px
+    let extraHeight = 0;               // кнопка «Расширить лист»
+    let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
+    let pan = null;                    // перетаскивание холста инструментом «рука»
+    let lastGrow = 0;                  // авто-расширение высоты при рисовании у нижнего края
+    let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
+    let lastWheelSig = "", lastWheelAt = 0;      // дедупликация повторно отправленного wheel-события
 
     /* ---------- общий фон «живого» листа: ученик – источник правды ----------
        На уроке живой лист собирается по-разному: у учителя roomPane (ключи, ответы, подсказки,
@@ -89,7 +118,14 @@ window.Board = (() => {
           <button data-tool="text" title="Текст">T</button>
           <button data-tool="move" title="Переместить">✥</button>
           <button data-tool="erase" title="Ластик: стирает только то, по чему провести" aria-label="Ластик"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg></button>
-          <button data-tool="hand" title="Листать">✋</button>
+          <button data-tool="hand" title="Листать холст рукой">✋</button>
+          <button data-zoom="out" title="Уменьшить (зум)" aria-label="Уменьшить">−</button>
+          <button data-zoom="reset" title="Масштаб 100%" data-zoom-label aria-label="Масштаб 100%">100%</button>
+          <button data-zoom="in" title="Увеличить (зум)" aria-label="Увеличить">+</button>
+          <button data-zoom="fit" title="По ширине" aria-label="По ширине">⇔</button>
+          <button data-act="extend" title="Расширить лист">↕</button>
+          <button data-act="insert-text" title="Вставить текст или заметку в последнюю точку">📝</button>
+          <button data-act="insert-image" title="Вставить картинку по ссылке">🖼</button>
           ${COLORS.map(c => `<button class="bd-color" data-color="${c}" style="--bc:${c}" aria-label="Цвет"></button>`).join("")}
           <button data-tool="touch" title="Работать с сайтом или презентацией (нажимать внутри)">👆</button>
           <button data-act="attach" title="Прикрепить файл (фото, PDF-презентация, документ)">📎</button>
@@ -103,10 +139,12 @@ window.Board = (() => {
         <div class="bd-bg"></div>
         <canvas class="bd-cv"></canvas>
         <div class="bd-cursors"></div>
+        <div class="bd-erasecur" hidden></div>
       </div></div></div>
       <div class="bd-menu" hidden role="menu" aria-label="Быстрые действия"></div>`;
     const $ = s => root.querySelector(s);
     const stage = $(".bd-stage"), wrap = $(".bd-wrap"), bg = $(".bd-bg"), cv = $(".bd-cv"), ctx = cv.getContext("2d"), curLayer = $(".bd-cursors");
+    const eraseCur = $(".bd-erasecur");
 
     /* ---------- координаты и якоря к элементам листа ----------
        Ученик подчёркивает предложение, у учителя лист свёрстан иначе (другие поля/шрифт/масштаб) –
@@ -198,12 +236,18 @@ window.Board = (() => {
       return {i, dx:+(p[0] - best.x).toFixed(2), dy:+(p[1] - best.y).toFixed(2), ox:+best.x.toFixed(2), oy:+best.y.toFixed(2), tag:best.el.tagName};
     }
 
-    /* ---------- размеры и перерисовка ---------- */
+    /* ---------- размеры, масштаб и перерисовка ---------- */
+    function fitScale(){ const w = Math.max(0, stage.clientWidth || root.clientWidth || 0); return w > 0 ? w / W : 1; }
+    function updateZoomLabel(){
+      const b = root.querySelector("[data-zoom-label]");
+      if (b) b.textContent = Math.round(scale * 100) + "%";
+    }
     function layout(){
       const bar = root.querySelector(".bd-bar"), side = root.querySelector(".bd-side .bd-tools");
       if (bar && side){ const top = 66 + bar.offsetHeight + 6; side.style.top = `calc(${top}px + env(safe-area-inset-top,0px))`; side.style.maxHeight = `calc(100vh - ${top + 10}px)`; }
-      const stageW = Math.max(0, Math.round(stage.clientWidth || root.clientWidth || 0));
-      scale = stageW > 0 ? stageW / W : 1;
+      if (fitMode) zoom = fitScale();
+      else zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+      scale = zoom;
       bg.style.width = W + "px"; bg.style.transform = `scale(${scale})`;
       if (anchorsDirty) markAnchors();
       const bgH = bg.scrollHeight;
@@ -214,19 +258,53 @@ window.Board = (() => {
         else if (it.t === "i"){ const [w2, h2] = imageSize(it); maxY = Math.max(maxY, it.y + h2); }
         else { maxY = Math.max(maxY, it.y + (it.h || textHeight(it))); }
       });
-      height = Math.max(1400, bgH + 200, maxY + 300);
-      const cssW = stageW > 0 ? stageW : W;
-      wrap.style.height = height * scale + "px";
+      height = Math.max(1400, bgH + 200, maxY + 300) + extraHeight;
+      const cssW = Math.max(1, Math.round(W * scale));
+      const cssH = Math.max(1, Math.round(height * scale));
       wrap.style.width = cssW + "px";
+      wrap.style.height = cssH + "px";
       const dpr = window.devicePixelRatio || 1;
       cv.width = Math.max(1, Math.round(cssW * dpr));
-      cv.height = Math.max(1, Math.round(height * scale * dpr));
+      cv.height = Math.max(1, Math.round(cssH * dpr));
       cv.style.width = cssW + "px";
-      cv.style.height = height * scale + "px";
+      cv.style.height = cssH + "px";
       ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+      updateZoomLabel();
       redraw();
       placeEditor();
       placeCursors();
+      placeEraseCur();
+    }
+    /* экран -> логические координаты листа (учитывает скролл и масштаб через rect канваса) */
+    function toLogical(clientX, clientY){ const r = cv.getBoundingClientRect(); const s = scale || 1; return [Math.round((clientX - r.left) / s * 10) / 10, Math.round((clientY - r.top) / s * 10) / 10]; }
+    function viewCenterLogical(){
+      const sr = stage.getBoundingClientRect(), r = cv.getBoundingClientRect();
+      return [Math.round((sr.left + sr.width / 2 - r.left) / scale), Math.round((sr.top + sr.height / 2 - r.top) / scale)];
+    }
+    function clampZoom(z){ z = +z; if (!Number.isFinite(z)) z = 1; return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)); }
+    function setZoom(z, clientX, clientY){
+      const zz = clampZoom(z);
+      let lx, ly, cx, cy;
+      if (clientX != null && clientY != null){ const r = cv.getBoundingClientRect(); lx = (clientX - r.left) / scale; ly = (clientY - r.top) / scale; cx = clientX; cy = clientY; }
+      else { [lx, ly] = viewCenterLogical(); const sr = stage.getBoundingClientRect(); cx = sr.left + sr.width / 2; cy = sr.top + sr.height / 2; }
+      fitMode = false; zoom = zz; layout();
+      const sr = stage.getBoundingClientRect();
+      stage.scrollLeft = Math.max(0, Math.round(lx * scale - (cx - sr.left)));
+      stage.scrollTop = Math.max(0, Math.round(ly * scale - (cy - sr.top)));
+      placeEraseCur();
+      return scale;
+    }
+    function zoomBy(d){ return setZoom(scale + (+d || 0)); }
+    function fitWidth(){ fitMode = true; zoom = 1; layout(); stage.scrollLeft = 0; stage.scrollTop = 0; return scale; }
+    function extendHeight(px){ extraHeight += Math.max(100, Math.round(+px || 800)); layout(); return height; }
+    function getView(){ return {zoom:scale, scale, scrollX:stage.scrollLeft, scrollY:stage.scrollTop, x:Math.round(stage.scrollLeft / scale), y:Math.round(stage.scrollTop / scale)}; }
+    function maybeGrowHeight(p){
+      if (!p || p[1] < height - 120) return;
+      const now = performance.now();
+      if (now - lastGrow < 500) return;
+      lastGrow = now;
+      extraHeight += Math.max(300, Math.round(height * 0.25));
+      layout();
     }
     /* после КАЖДОЙ установки innerHTML листа: разметить/перемерить якоря, дождаться картинок и шрифтов */
     function afterSheet(){
@@ -291,7 +369,16 @@ window.Board = (() => {
     function textHeight(t){ return Math.max(TEXT_LINE, textLines(t).length * TEXT_LINE); }
     function drawText(t){
       const lines = textLines(t);
-      ctx.save(); ctx.fillStyle = t.c || COLORS[0]; ctx.font = TEXT_FONT; ctx.textBaseline = "top";
+      ctx.save(); ctx.font = TEXT_FONT;
+      if (t.note){
+        const widest = Math.max(TEXT_MIN_W, ...lines.map(l => ctx.measureText(l || " ").width)) + 16;
+        const hh = Math.max(TEXT_LINE, lines.length * TEXT_LINE) + 10;
+        ctx.fillStyle = "rgba(123,76,245,.12)";
+        ctx.strokeStyle = "rgba(123,76,245,.35)"; ctx.lineWidth = 1;
+        if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(t.x - 6, t.y - 5, widest, hh, 8); ctx.fill(); ctx.stroke(); }
+        else ctx.fillRect(t.x - 6, t.y - 5, widest, hh);
+      }
+      ctx.fillStyle = t.c || COLORS[0]; ctx.font = TEXT_FONT; ctx.textBaseline = "top";
       lines.forEach((line, i) => { if (line) ctx.fillText(line, t.x, t.y + i * TEXT_LINE); });
       ctx.restore();
     }
@@ -339,6 +426,20 @@ window.Board = (() => {
       }
       return null;
     }
+    /* пропуск для заполнения на основном листе (.blank / input / span.blank) под точкой тапа */
+    function blankAt(p){
+      let best = null, area = Infinity;
+      for (const b of bdBoxes){
+        const el = b.el;
+        if (!el || !el.matches || b.w <= 0 || b.h <= 0) continue;
+        if (!(el.matches(".blank, span.blank, input, textarea") || (el.classList && el.classList.contains("blank")))) continue;
+        if (p[0] >= b.x && p[0] <= b.x + b.w && p[1] >= b.y && p[1] <= b.y + b.h){
+          const a = b.w * b.h;
+          if (a < area){ area = a; best = b; }
+        }
+      }
+      return best;
+    }
 
     /* ---------- лист ---------- */
     function stepPage(dir){
@@ -355,14 +456,7 @@ window.Board = (() => {
       if (e.key === "ArrowLeft" || e.key === "PageUp") { stepPage(-1); }
     };
     document.addEventListener("keydown", onKey);
-    /* свайп по доске для листания (инструмент «рука») */
-    let swipeX = null;
-    wrap.addEventListener("pointerdown", e => { if (tool === "hand") swipeX = e.clientX; });
-    wrap.addEventListener("pointerup", e => {
-      if (tool !== "hand" || swipeX == null) return;
-      const dx = e.clientX - swipeX; swipeX = null;
-      if (Math.abs(dx) > 60) stepPage(dx < 0 ? 1 : -1);
-    });
+    /* инструмент «рука» теперь панорамирует холст (см. pointer-обработчики канваса) */
     function renderPageButtons(){
       const box = root.querySelector(".bd-pages"); if (!box) return;
       box.innerHTML = `<button data-pstep="-1" title="Предыдущий лист" aria-label="Предыдущий лист">‹</button>` +
@@ -593,6 +687,16 @@ window.Board = (() => {
       if (broadcast) send("addpage", {key, label: p.label, html: clean});
       return key;
     }
+    /* вставка нового листа из панели учителя: добавить, открыть у себя и показать ученику */
+    function insertPageAt(label, html, broadcast, opts){
+      const bcast = broadcast !== false;
+      const key = addPageP(label, html, bcast);
+      if (!opts || opts.open !== false){
+        openPage(key);
+        if (o.role === "teacher" && bcast) send("page", {page:key});
+      }
+      return key;
+    }
     async function syncPages(){
       let rows = [];
       try { rows = await o.api.load(PAGE_KEY) || []; } catch (_) { return; }
@@ -623,13 +727,26 @@ window.Board = (() => {
     }
 
     /* ---------- рисование ---------- */
+    function placeEraseCur(ev){
+      if (!eraseCur) return;
+      if (tool !== "erase"){ eraseCur.hidden = true; return; }
+      eraseCur.hidden = false;
+      const d = Math.max(10, Math.round(2 * ER * scale));
+      eraseCur.style.width = eraseCur.style.height = d + "px";
+      if (ev && ev.clientX != null){
+        const r = wrap.getBoundingClientRect();
+        eraseCur.style.left = (ev.clientX - r.left - d / 2) + "px";
+        eraseCur.style.top = (ev.clientY - r.top - d / 2) + "px";
+      }
+    }
     function setTool(t){
       tool = t;
       root.querySelectorAll("[data-tool]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === t)));
-      cv.style.touchAction = t === "hand" ? "pan-y" : "none";
-      cv.style.cursor = t === "hand" ? "grab" : t === "text" ? "text" : t === "move" ? "move" : t === "erase" ? `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\'><circle cx=\'16\' cy=\'16\' r=\'12\' fill=\'rgba(255,255,255,.6)\' stroke=\'%23555\' stroke-width=\'1.5\'/></svg>').replace(/%2523/g, "%23")}") 16 16, cell` : "crosshair";
+      cv.style.touchAction = "none";
+      cv.style.cursor = t === "hand" ? "grab" : t === "text" ? "text" : t === "move" ? "move" : t === "erase" ? "none" : "crosshair";
       cv.style.pointerEvents = t === "touch" ? "none" : "";
       bg.style.pointerEvents = t === "touch" ? "auto" : "";
+      if (eraseCur) eraseCur.hidden = t !== "erase";
     }
     function setColor(c){ color = c; root.querySelectorAll("[data-color]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.color === c))); }
 
@@ -692,46 +809,81 @@ window.Board = (() => {
       } finally { saving--; }
     }
 
-    /* ---------- окошко-редактор текста ---------- */
+    /* ---------- инлайн-редактор текста: маленькое окошко в точке, без «окна» и «Готово» ---------- */
+    function autoSizeInline(ed){
+      const el = ed.el, ta = ed.ta;
+      let cs = null; try { cs = getComputedStyle(ta); } catch (_) {}
+      const fs = Math.max(16, Math.min(34, Math.round(22 * scale)));
+      const lh = Math.round(fs * TEXT_LINE / 22);
+      ta.style.fontSize = fs + "px";
+      ta.style.lineHeight = lh + "px";
+      const padX = 26, padY = 12;
+      /* минимум 180 CSS px: окошко не «прыгает» при вводе короткой строки (и ручка размера остаётся на месте) */
+      const minCssW = Math.max(180, TEXT_MIN_W * scale);
+      const maxPx = Math.max(minCssW, Math.min(TEXT_MAX_W * scale, (stage.clientWidth || 360) - 24));
+      if (!ed.manual){
+        ctx.save();
+        ctx.font = `600 ${fs}px ${(cs && cs.fontFamily) || "Manrope, system-ui, sans-serif"}`;
+        const lines = String(ta.value || "").split("\n");
+        let widest = 0;
+        for (const L of lines) widest = Math.max(widest, ctx.measureText(L || " ").width);
+        if (!widest) widest = ctx.measureText("Печатайте").width;
+        ctx.restore();
+        const cssW = Math.min(maxPx, Math.max(minCssW, widest + padX));
+        el.style.width = Math.round(cssW) + "px";
+        ed.w = cssW / scale;
+      } else {
+        const cssW = Math.min(maxPx, Math.max(minCssW, ed.w * scale));
+        el.style.width = Math.round(cssW) + "px";
+        ed.w = cssW / scale;
+      }
+      const maxH = Math.max(lh + padY, TEXT_MAX_H * scale);
+      const minH = lh + padY;
+      ta.style.height = "auto";
+      let need = Math.max(minH, ta.scrollHeight + 4);
+      if (ed.manual) need = Math.max(need, ed.h * scale);
+      const cssH = Math.min(maxH, Math.max(minH, need));
+      el.style.height = Math.round(cssH) + "px";
+      ta.style.height = Math.max(1, Math.round(cssH - padY)) + "px";
+      ed.h = cssH / scale;
+    }
     function openEditor(opts){
       opts = opts || {};
       if (editor) closeEditor(true);
-      const startX = opts.x != null ? opts.x : 40;
-      const startY = opts.y != null ? opts.y : 40;
-      const startW = opts.w || DEFAULT_TEXT_W;
-      const startH = opts.h || TEXT_LINE * 3;
-      const stageW = stage.clientWidth || 360;
+      const startX = opts.x != null ? +opts.x : 40;
+      const startY = opts.y != null ? +opts.y : 40;
       const el = document.createElement("div");
-      el.className = "bd-editor";
-      el.innerHTML = `<textarea class="bd-editor-ta" placeholder="Текст… (Enter – готово, Shift+Enter – новая строка)" aria-label="Текст на доске"></textarea>` +
-        `<div class="bd-editor-tools"><button type="button" data-ed="done">Готово</button></div>` +
-        `<span class="bd-editor-handle" title="Изменить размер"></span>`;
+      el.className = "bd-editor bd-inline";
+      el.setAttribute("data-bd-inline", "");
+      el.innerHTML = `<span class="bd-inline-drag" data-bd-inline-drag title="Перетащить" aria-hidden="true">✥</span>` +
+        `<textarea class="bd-inline-ta bd-editor-ta" data-bd-inline-ta placeholder="Печатайте… (Enter – готово)" aria-label="Текст на доске"></textarea>` +
+        `<span class="bd-inline-resize bd-editor-handle" data-bd-inline-resize title="Изменить размер"></span>`;
       wrap.appendChild(el);
       const ta = el.querySelector("textarea");
       ta.value = opts.s || "";
-      let cssW = Math.round(startW * scale);
-      cssW = Math.min(Math.max(cssW, 140), Math.max(140, stageW - 16));
-      let cssH = Math.max(70, Math.round(startH * scale));
-      el.style.width = cssW + "px";
-      el.style.height = cssH + "px";
-      el.style.left = Math.max(0, Math.min(Math.round(startX * scale), Math.max(0, stageW - cssW - 8))) + "px";
-      el.style.top = Math.max(0, Math.round(startY * scale)) + "px";
       const ed = {
         el, ta, id: opts.id || null, c: opts.c || color,
-        x: (parseFloat(el.style.left) || 0) / scale,
-        y: (parseFloat(el.style.top) || 0) / scale,
-        w: cssW / scale, h: cssH / scale,
+        x: Math.round(startX), y: Math.round(startY),
+        w: opts.w ? +opts.w : TEXT_MIN_W, h: opts.h ? +opts.h : TEXT_LINE,
+        manual: !!(opts.w || opts.h), note: !!opts.note, blank: opts.blank || null,
         closed: false, armed: false, innerDown: false
       };
       editor = ed;
-      try { ta.style.fontSize = Math.max(16, Math.min(26, Math.round(22 * scale))) + "px"; } catch (_) {}
+      el.style.left = Math.round(ed.x * scale) + "px";
+      el.style.top = Math.round(ed.y * scale) + "px";
+      autoSizeInline(ed);
       const stop = e => { e.stopPropagation(); };
       ["pointerdown", "mousedown", "click", "dblclick", "touchstart", "wheel"].forEach(t => el.addEventListener(t, stop, {passive:false}));
-      /* нажатия внутри окошка (ручка, кнопка, сам textarea) не должны его закрывать */
       el.addEventListener("pointerdown", e => { ed.innerDown = true; e.stopPropagation(); });
       el.addEventListener("pointerup", () => { ed.innerDown = false; });
       el.addEventListener("pointercancel", () => { ed.innerDown = false; });
       el.addEventListener("keydown", e => e.stopPropagation());
+      /* «наведение»: синтетические mousemove/mouseover (тесты) и реальные — показывают ручку ✥ */
+      const markHover = () => { try { el.classList.add("bd-hover"); } catch (_) {} };
+      el.addEventListener("pointermove", markHover, {passive:true});
+      el.addEventListener("mousemove", markHover, {passive:true});
+      el.addEventListener("pointerdown", markHover, {passive:true});
+      ta.addEventListener("input", () => autoSizeInline(ed));
       ta.addEventListener("keydown", e => {
         if (e.isComposing) return;
         if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey){ e.preventDefault(); closeEditor(true); }
@@ -748,26 +900,51 @@ window.Board = (() => {
           closeEditor(ed.armed);
         }, 0);
       });
-      const doneBtn = el.querySelector("[data-ed=done]");
-      doneBtn.addEventListener("pointerdown", stop);
-      doneBtn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); closeEditor(true); });
-      /* ручка изменения размера */
+      /* ручка-перетаскивание ✥: появляется при наведении на окошко */
+      const drag = el.querySelector(".bd-inline-drag");
+      let ds = null;
+      drag.addEventListener("pointerdown", e => {
+        e.preventDefault(); e.stopPropagation();
+        ed.innerDown = true;
+        ds = {sx:e.clientX, sy:e.clientY, x:ed.x, y:ed.y};
+        try { drag.setPointerCapture(e.pointerId); } catch (_) {}
+      });
+      drag.addEventListener("pointermove", e => {
+        if (!ds || editor !== ed) return;
+        ed.x = Math.round(ds.x + (e.clientX - ds.sx) / scale);
+        ed.y = Math.round(ds.y + (e.clientY - ds.sy) / scale);
+        el.style.left = Math.round(ed.x * scale) + "px";
+        el.style.top = Math.round(ed.y * scale) + "px";
+      });
+      const endDrag = e => {
+        if (!ds) return; ds = null;
+        ed.innerDown = false;
+        try { drag.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (editor === ed){ try { ta.focus({preventScroll:true}); } catch (_) {} }
+      };
+      drag.addEventListener("pointerup", endDrag);
+      drag.addEventListener("pointercancel", endDrag);
+      /* ручка изменения размера (правый нижний угол) */
       const handle = el.querySelector(".bd-editor-handle");
       let rs = null;
       handle.addEventListener("pointerdown", e => {
         e.preventDefault(); e.stopPropagation();
+        ed.innerDown = true;
         rs = {sx:e.clientX, sy:e.clientY, w:el.offsetWidth, h:el.offsetHeight};
+        ed.manual = true;
         try { handle.setPointerCapture(e.pointerId); } catch (_) {}
       });
       handle.addEventListener("pointermove", e => {
-        if (!rs) return;
-        const w = Math.max(140, Math.round(rs.w + e.clientX - rs.sx));
-        const h = Math.max(70, Math.round(rs.h + e.clientY - rs.sy));
+        if (!rs || editor !== ed) return;
+        const w = Math.max(TEXT_MIN_W * scale, Math.round(rs.w + e.clientX - rs.sx));
+        const h = Math.max(24, Math.round(rs.h + e.clientY - rs.sy));
         el.style.width = w + "px"; el.style.height = h + "px";
-        if (editor === ed){ ed.w = w / scale; ed.h = h / scale; }
+        ta.style.height = Math.max(1, h - 12) + "px";
+        ed.w = w / scale; ed.h = h / scale;
       });
       const endResize = e => {
         if (!rs) return; rs = null;
+        ed.innerDown = false;
         try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
         if (editor === ed){ try { ta.focus({preventScroll:true}); } catch (_) {} }
       };
@@ -786,20 +963,22 @@ window.Board = (() => {
         else if (n > 0) setTimeout(() => later(n - 1), 40);
       });
       later(3);
+      return ed;
     }
     function closeEditor(save){
       const ed = editor;
       if (!ed) return;
       editor = null; ed.closed = true;
-      const x = Math.round((parseFloat(ed.el.style.left) || 0) / scale);
-      const y = Math.round((parseFloat(ed.el.style.top) || 0) / scale);
-      const w2 = Math.max(80, Math.round(ed.el.offsetWidth / scale));
-      const h2 = Math.max(40, Math.round(ed.el.offsetHeight / scale));
+      /* размеры берём из авто-размера (ed.w/ed.h), а не из offsetWidth: там ещё рамка 1px */
+      const w2 = Math.max(TEXT_MIN_W, Math.round(ed.w || (ed.el.offsetWidth / scale)));
+      const h2 = Math.max(TEXT_LINE, Math.round(ed.h || (ed.el.offsetHeight / scale)));
       const text = String(ed.ta.value || "").trim();
       try { ed.el.remove(); } catch (_) {}
       if (!save) return;
       if (text){
-        const item = {t:"t", x, y, w:w2, h:h2, s:text.slice(0, TEXT_MAX), c:ed.c};
+        const item = {t:"t", x:Math.round(ed.x), y:Math.round(ed.y), w:w2, h:h2, s:text.slice(0, TEXT_MAX), c:ed.c};
+        if (ed.note) item.note = true;
+        if (ed.blank) item.blank = true;
         if (ed.id && items.has(String(ed.id))) replaceItem(ed.id, item, items.get(String(ed.id)));
         else addItem(item);
       } else if (ed.id && items.has(String(ed.id))){
@@ -808,13 +987,10 @@ window.Board = (() => {
     }
     function placeEditor(){
       if (!editor) return;
-      const stageW = stage.clientWidth || 360;
-      const cssW = Math.max(140, Math.round(editor.w * scale));
-      const cssH = Math.max(70, Math.round(editor.h * scale));
-      editor.el.style.width = cssW + "px";
-      editor.el.style.height = cssH + "px";
-      editor.el.style.left = Math.max(0, Math.min(Math.round(editor.x * scale), Math.max(0, stageW - cssW - 8))) + "px";
-      editor.el.style.top = Math.max(0, Math.round(editor.y * scale)) + "px";
+      const ed = editor;
+      ed.el.style.left = Math.round(ed.x * scale) + "px";
+      ed.el.style.top = Math.round(ed.y * scale) + "px";
+      autoSizeInline(ed);
     }
 
     /* ---------- перемещение объектов ---------- */
@@ -825,6 +1001,106 @@ window.Board = (() => {
       if (!mv.moved || (nx === Math.round(mv.orig.x) && ny === Math.round(mv.orig.y))){ redraw(); return; }
       const fallback = Object.assign({}, it, {x:mv.orig.x, y:mv.orig.y});
       await replaceItem(mv.id, Object.assign({}, it, {x:nx, y:ny}), fallback);
+    }
+
+    /* ---------- вставка в точку: текст/заметка/картинка, paste, API для панели учителя ---------- */
+    function autoTextBox(text){
+      const lines = wrapLines(text, TEXT_MAX_W);
+      ctx.save(); ctx.font = TEXT_FONT;
+      let widest = 0;
+      for (const L of lines) widest = Math.max(widest, ctx.measureText(L || " ").width);
+      ctx.restore();
+      const w = Math.min(TEXT_MAX_W, Math.max(TEXT_MIN_W, Math.ceil(widest) + 16));
+      const h = Math.min(TEXT_MAX_H, Math.max(TEXT_LINE, lines.length * TEXT_LINE + 8));
+      return {w, h};
+    }
+    function insertPoint(x, y){
+      if (x != null && y != null && Number.isFinite(+x) && Number.isFinite(+y)) return {x:Math.round(+x), y:Math.round(+y)};
+      return {x:Math.round(lastPoint.x), y:Math.round(lastPoint.y)};
+    }
+    async function insertTextItem(text, x, y, note){
+      text = String(text == null ? "" : text).trim();
+      if (x && typeof x === "object"){ const op = x; x = op.x; y = op.y; if (op.note != null) note = !!op.note; }
+      if (!text) return null;
+      const pt = insertPoint(x, y);
+      const {w, h} = autoTextBox(text);
+      const item = {t:"t", x:pt.x, y:pt.y, w, h, s:text.slice(0, TEXT_MAX), c: note ? COLORS[1] : color};
+      if (note) item.note = true;
+      await addItem(item);
+      return item;
+    }
+    function imageRatio(url){
+      return new Promise(res => {
+        let done = false;
+        const fin = r => { if (!done){ done = true; res(r); } };
+        try {
+          const im = new Image();
+          im.onload = () => fin(im.width && im.height ? im.width / im.height : 1.5);
+          im.onerror = () => fin(1.5);
+          im.src = url;
+          setTimeout(() => fin(1.5), 3000);
+        } catch (_) { fin(1.5); }
+      });
+    }
+    async function insertImageItem(url, x, y, w){
+      if (x && typeof x === "object"){ const op = x; x = op.x; y = op.y; if (op.w != null) w = op.w; }
+      url = String(url == null ? "" : url).trim();
+      if (!url) return null;
+      const pt = insertPoint(x, y);
+      const ratio = await imageRatio(url);
+      const width = Math.min(800, Math.max(60, +w || 420));
+      const item = {t:"i", x:pt.x, y:pt.y, w:width, h:Math.round(width / ratio), ratio, src:url};
+      await addItem(item);
+      return item;
+    }
+    async function insertImagesAt(files, at){
+      let px = Math.round((at && at.x != null) ? at.x : lastPoint.x);
+      let py = Math.round((at && at.y != null) ? at.y : lastPoint.y);
+      let made = 0;
+      for (const f of files){
+        const list = await imageFileToItems(f);
+        for (const it of list){
+          const width = 420, hh = width / (it.ratio || 1.5);
+          addItem({t:"i", x:px, y:py, w:width, h:hh, ratio:it.ratio, src:it.src});
+          py += hh + 20; made++;
+        }
+      }
+      return made;
+    }
+    async function pasteAtPoint(){
+      if (lastClipFiles && lastClipFiles.length){
+        const made = await insertImagesAt(lastClipFiles, lastPoint);
+        if (made) return {kind:"image", count:made};
+      }
+      if (lastClipText){
+        openEditor({x:lastPoint.x, y:lastPoint.y, s:lastClipText});
+        return {kind:"text"};
+      }
+      try {
+        const list = await navigator.clipboard.read();
+        for (const ci of list){
+          let handled = false;
+          for (const type of (ci.types || [])){
+            if (/^image\//.test(type)){
+              const blob = await ci.getType(type);
+              const f = new File([blob], "clip.png", {type});
+              lastClipFiles = [f];
+              const made = await insertImagesAt([f], lastPoint);
+              if (made){ handled = true; return {kind:"image", count:made}; }
+            }
+          }
+          if (handled) continue;
+          const txt = await ci.getType("text/plain").then(b => b.text()).catch(() => "");
+          if (txt){ lastClipText = txt; openEditor({x:lastPoint.x, y:lastPoint.y, s:txt}); return {kind:"text"}; }
+        }
+      } catch (_) {}
+      return null;
+    }
+    function zoomAction(kind){
+      if (kind === "in") return zoomBy(Math.max(0.1, scale * 0.2));
+      if (kind === "out") return zoomBy(-Math.max(0.1, scale * 0.2));
+      if (kind === "reset") return setZoom(1);
+      if (kind === "fit") return fitWidth();
     }
 
     /* ---------- указатели ---------- */
@@ -839,8 +1115,17 @@ window.Board = (() => {
       if (e.pointerType === "touch" && Date.now() - penSeen < 4000) return;   // ладонь, пока пишут стилусом
       if (e.pointerType === "mouse" && e.button !== 0) return;
       if (drawing && drawing.pid !== e.pointerId){ end(); return; }         // второй палец – это не рисунок
-      if (tool === "hand") return;
+      if (tool === "hand"){                                                  // панорама холста рукой
+        e.preventDefault();
+        pan = {sx:e.clientX, sy:e.clientY, l:stage.scrollLeft, t:stage.scrollTop};
+        try { cv.setPointerCapture(e.pointerId); } catch(_) {}
+        cv.style.cursor = "grabbing";
+        return;
+      }
       const p = pos(e);
+      lastPoint = {x:p[0], y:p[1]};
+      maybeGrowHeight(p);
+      placeEraseCur(e);
       lpClear();
       if (e.pointerType !== "mouse"){ const x = e.clientX, y = e.clientY; lp = {x, y, timer: setTimeout(() => { lp = null; cancelStroke(); openMenu(x, y); }, 550)}; }
       if (tool === "text"){   // редактор создаётся на pointerup: в pointerdown фокус теряется
@@ -865,6 +1150,8 @@ window.Board = (() => {
     });
     cv.addEventListener("pointermove", e => {
       const p = pos(e), now = performance.now();
+      placeEraseCur(e);
+      if (pan){ stage.scrollLeft = pan.l - (e.clientX - pan.sx); stage.scrollTop = pan.t - (e.clientY - pan.sy); return; }
       if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 8) lpClear();
       if (now - lastCursor > 45 && (!drawing || drawing.pid === e.pointerId)){ lastCursor = now; send("cursor", {x:p[0], y:p[1], a:anchorAt(p)}); }
       if (moving){
@@ -887,27 +1174,46 @@ window.Board = (() => {
         if (Math.hypot(q[0] - last[0], q[1] - last[1]) > 260) continue;      // случайный скачок указателя – пропускаем
         drawing.p.push(q); draftBuf.push(q); drawSeg(last, q, drawing);
       }
+      maybeGrowHeight(p);
       if (drawing.p.length > 1500) drawing.p = drawing.p.filter((_, i2) => i2 % 2 === 0 || i2 === drawing.p.length - 1);
       if (now - lastDraft > 50 && draftBuf.length > 1){ lastDraft = now; send("draft", {sid:drawing.sid, c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf, a:drawing.a}); draftBuf = [draftBuf[draftBuf.length - 1]]; }
     });
-    /* ластик стирает только то, по чему провели: линия делится на куски, стёртое пропадает */
-    const ER = 12;
+    /* ластик стирает ТОЛЬКО то, по чему провели: линия делится на куски, стёртое пропадает */
+    function textInkHit(it, p){
+      const lines = wrapLines(it.s, it.w || DEFAULT_TEXT_W);
+      if (!lines.length) return false;
+      ctx.save(); ctx.font = TEXT_FONT;
+      let hit = false;
+      for (let i = 0; i < lines.length; i++){
+        const y0 = it.y + i * TEXT_LINE, y1 = y0 + TEXT_LINE;
+        if (p[1] < y0 || p[1] > y1) continue;
+        const wl = ctx.measureText(lines[i] || "").width;
+        if (p[0] >= it.x && p[0] <= it.x + Math.max(8, wl) + 4){ hit = true; break; }
+      }
+      ctx.restore();
+      return hit;
+    }
     function eraseAt(pt){
       const d = drawing; if (!d?.erase) return; let changed = false;
       const drop = id => { items.delete(id); if (id.startsWith("er")) d.made.delete(id); else d.gone.add(id); changed = true; };
       [...items.entries()].forEach(([id, it]) => {
-        if (it.t !== "s") return;
-        /* штрих с якорем сдвинут к текущему положению элемента – проверяем в его координатах */
-        const [dx, dy] = it.a ? shiftFor(it.a) : [0, 0];
-        const rx = pt[0] - dx, ry = pt[1] - dy;
-        const r2 = (ER + (it.w || 3) / 2) ** 2;
-        if (!it.p.some(q => (q[0] - rx) ** 2 + (q[1] - ry) ** 2 < r2)) return;
-        const runs = []; let cur = [];
-        it.p.forEach(q => { if ((q[0] - rx) ** 2 + (q[1] - ry) ** 2 < r2){ if (cur.length) runs.push(cur); cur = []; } else cur.push(q); }); if (cur.length) runs.push(cur);
-        drop(id);
-        runs.filter(x => x.length > 1).forEach(pp => { const nid = "er" + rid(), ni = {...it, p: pp}; items.set(nid, ni); d.made.set(nid, ni); });
+        if (it.t === "s"){
+          /* штрих с якорем сдвинут к текущему положению элемента – проверяем в его координатах */
+          const [dx, dy] = it.a ? shiftFor(it.a) : [0, 0];
+          const rx = pt[0] - dx, ry = pt[1] - dy;
+          const r2 = (ER + (it.w || 3) / 2) ** 2;
+          if (!it.p.some(q => (q[0] - rx) ** 2 + (q[1] - ry) ** 2 < r2)) return;
+          const runs = []; let cur = [];
+          it.p.forEach(q => { if ((q[0] - rx) ** 2 + (q[1] - ry) ** 2 < r2){ if (cur.length) runs.push(cur); cur = []; } else cur.push(q); }); if (cur.length) runs.push(cur);
+          drop(id);
+          runs.filter(x => x.length > 1).forEach(pp => { const nid = "er" + rid(), ni = {...it, p: pp}; items.set(nid, ni); d.made.set(nid, ni); });
+        } else if (it.t === "i"){
+          const b = itemBox(it);
+          if (b && contains(b, pt)) drop(id);        // картинка – только если точка реально внутри
+        } else if (it.t === "t"){
+          if (textInkHit(it, pt)) drop(id);          // надпись – только по закрашенному тексту, не по bbox
+        }
       });
-      const other = hitOf(pt, ["i", "t"]); if (other) drop(other);   // надпись или картинка – целиком
       if (changed) redraw();
     }
     async function eraseCommit(d){
@@ -920,6 +1226,7 @@ window.Board = (() => {
     function end(e){
       if (e && drawing && drawing.pid !== e.pointerId) return;
       lpClear();
+      if (pan){ pan = null; cv.style.cursor = "grab"; return; }
       if (moving){
         const mv = moving; moving = null;
         commitMove(mv);
@@ -932,10 +1239,16 @@ window.Board = (() => {
         const cy = e.clientY != null ? e.clientY : t.cy;
         if (Math.abs(cx - t.cx) > 10 || Math.abs(cy - t.cy) > 10) return;   // это был свайп, не клик
         if (editor){ closeEditor(true); return; }
+        /* заполнение пропуска на основном листе: тап T по .blank/input – редактор прямо над ним */
+        const bl = blankAt([t.x, t.y]);
+        if (bl){
+          openEditor({x:bl.x, y:bl.y, w:Math.min(TEXT_MAX_W, Math.max(TEXT_MIN_W, Math.round(bl.w))), h:Math.max(TEXT_LINE, Math.round(bl.h)), blank:true});
+          return;
+        }
         const hitId = hitOf([t.x, t.y], ["t"]);
         if (hitId){
           const it = items.get(hitId);
-          if (it){ openEditor({x:it.x, y:it.y, w:it.w, h:it.h, s:it.s, c:it.c, id:hitId}); return; }
+          if (it){ openEditor({x:it.x, y:it.y, w:it.w, h:it.h, s:it.s, c:it.c, note:it.note, id:hitId}); return; }
         }
         openEditor({x:t.x, y:t.y});
         return;
@@ -948,8 +1261,8 @@ window.Board = (() => {
       if (d.p.length) addItem(d);
     }
     cv.addEventListener("pointerup", end);
-    cv.addEventListener("pointercancel", () => { moving = null; textTap = null; drawing = null; });
-    cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") end(e); });
+    cv.addEventListener("pointercancel", e => { pan = null; moving = null; textTap = null; drawing = null; try { cv.style.cursor = tool === "hand" ? "grab" : cv.style.cursor; } catch (_) {} placeEraseCur(e); });
+    cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse"){ placeEraseCur(); end(e); } });
 
     /* снимок листа: всё, что на нём – задания, ответы, пометки ручкой */
     async function snapshot(){
@@ -1221,8 +1534,10 @@ window.Board = (() => {
       addItem({t:"i", x: x == null ? 40 : x, y: y == null ? nextFreeY() : y, w:width, h:hh, ratio:ratio || 1.5, src});
       return hh;
     }
-    async function attachInline(files){
-      let y = nextFreeY(), made = 0;
+    async function attachInline(files, at){
+      let y = (at && at.y != null) ? Math.round(at.y) : nextFreeY();
+      const x0 = (at && at.x != null) ? Math.round(at.x) : 40;
+      let made = 0;
       for (const f of files){
         let shots = [];
         if (/^image\//.test(f.type)) shots = await imageFileToItems(f);
@@ -1230,7 +1545,7 @@ window.Board = (() => {
         else if (/^video\//.test(f.type)) shots = await videoFrames(f, ITEM_MAX);
         else if (/\.(docx|pptx)$/i.test(f.name)){ toast("Документы добавляются отдельными листами доски."); await attachPages([f]); continue; }
         else { toast("Формат «" + f.name + "» пока не преобразуется в картинки. Прикрепите фото, PDF или документ."); continue; }
-        for (const it of shots){ const hh = addImage(it.src, it.ratio, 40, y, 480); y += hh + 30; made++; }
+        for (const it of shots){ const hh = addImage(it.src, it.ratio, x0, y, 480); y += hh + 30; made++; }
       }
       if (made) toast("Материал добавлен на доску");
     }
@@ -1254,27 +1569,67 @@ window.Board = (() => {
         toast("Не удалось добавить материал отдельными листами");
       }
     }
-    async function handleFiles(files){
+    async function handleFiles(files, at){
       const list = Array.from(files || []).filter(Boolean);
       if (!list.length) return;
       const dest = await askDestination(list);
       if (!dest) return;
-      if (dest === "inline") await attachInline(list);
+      if (dest === "inline") await attachInline(list, at);
       else await attachPages(list);
     }
     fileInput.addEventListener("change", () => { if (fileInput.files?.length) handleFiles([...fileInput.files]); fileInput.value = ""; });
     wrap.addEventListener("dragover", e => { e.preventDefault(); dropHint.style.display = "flex"; });
     wrap.addEventListener("dragleave", () => { dropHint.style.display = "none"; });
-    wrap.addEventListener("drop", e => { e.preventDefault(); dropHint.style.display = "none"; if (e.dataTransfer?.files?.length) handleFiles([...e.dataTransfer.files]); });
+    wrap.addEventListener("drop", e => {
+      e.preventDefault(); dropHint.style.display = "none";
+      const ds = e.dataTransfer; if (!ds) return;
+      const files = [...(ds.files || [])].filter(Boolean);
+      if (!files.length) return;
+      /* вставка в ТОЧКУ дропа (логические координаты с учётом скролла и зума) */
+      const p = pos(e);
+      lastPoint = {x:p[0], y:p[1]};
+      handleFiles(files, {x:p[0], y:p[1]});
+    });
     const onPaste = e => {
       if (!root.isConnected) return;
-      const files = [...(e.clipboardData?.files || [])];
-      if (files.length) { e.preventDefault(); handleFiles(files); }
+      /* если печатают в поле/редакторе – не мешаем обычной вставке текста */
+      const ae = document.activeElement;
+      if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || "") || ae.isContentEditable)) return;
+      const cd = e.clipboardData; if (!cd) return;
+      const files = [...(cd.files || [])];
+      const imgs = files.filter(f => /^image\//i.test(f.type || ""));
+      let text = "";
+      try { text = cd.getData("text/plain") || ""; } catch (_) {}
+      if (imgs.length){
+        e.preventDefault();
+        lastClipFiles = imgs;
+        insertImagesAt(imgs, lastPoint);
+        return;
+      }
+      if (files.length){ e.preventDefault(); lastClipFiles = []; handleFiles(files, lastPoint); return; }
+      if (text && text.trim()){
+        e.preventDefault();
+        lastClipText = text;
+        openEditor({x:lastPoint.x, y:lastPoint.y, s:text});
+      }
     };
     document.addEventListener("paste", onPaste);
 
     root.addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
+      if (b.dataset.zoom){ zoomAction(b.dataset.zoom); return; }
+      if (b.dataset.act === "extend"){ extendHeight(800); return; }
+      if (b.dataset.act === "insert-text"){ openEditor({x:lastPoint.x, y:lastPoint.y}); return; }
+      if (b.dataset.act === "insert-image"){
+        if (root.querySelector(".bd-insertform")) return;
+        const f = document.createElement("form"); f.className = "bd-insertform card";
+        f.innerHTML = `<b>Вставить картинку по ссылке</b><p class="small muted" style="margin:4px 0 8px">Ссылка на изображение (https://…) или data:-адрес. Картинка появится в последней точке клика на листе.</p>
+          <input name="u" placeholder="https://…" required style="width:100%"><div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap"><label class="small">Ширина <input name="w" type="number" value="420" min="60" max="800" step="20" style="width:90px"></label><button class="btn sm">Вставить</button><button type="button" class="btn ghost sm" data-x>Отмена</button></div>`;
+        root.querySelector(".bd-bar").after(f); f.u.focus();
+        f.addEventListener("submit", ev => { ev.preventDefault(); const url = f.u.value.trim(); const w = f.w.value; f.remove(); if (url) insertImageItem(url, lastPoint.x, lastPoint.y, w); });
+        f.querySelector("[data-x]").onclick = () => f.remove();
+        return;
+      }
       if (b.dataset.act === "attach") fileInput.click();
       if (b.dataset.act === "embed"){
         if (root.querySelector(".bd-embedform")) return;
@@ -1387,6 +1742,17 @@ window.Board = (() => {
     renderWho();
 
     /* ---------- запуск ---------- */
+    /* колесо с Ctrl/Alt/Meta – зум к точке под курсором; обычное колесо – нативный скролл */
+    const onWheel = e => {
+      if (!(e.ctrlKey || e.altKey || e.metaKey)) return;
+      e.preventDefault();
+      const now = performance.now();
+      const sig = e.clientX + "," + e.clientY + "," + e.deltaY + "," + (e.ctrlKey ? 1 : 0) + (e.altKey ? 1 : 0) + (e.metaKey ? 1 : 0);
+      if (sig === lastWheelSig && now - lastWheelAt < 80) return;   // одно событие могли прислать и на canvas, и на stage
+      lastWheelSig = sig; lastWheelAt = now;
+      setZoom(scale * (e.deltaY > 0 ? 0.9 : 1.1), e.clientX, e.clientY);
+    };
+    stage.addEventListener("wheel", onWheel, {passive:false});
     let roT = 0; const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(layout, 30); }); ro.observe(stage); ro.observe(bg);
     setTool("pen"); setColor(COLORS[0]);
 
@@ -1416,17 +1782,24 @@ window.Board = (() => {
         pages: pagesArr.map(p => ({key:p.key, label:p.label, htmlLen:(p.html || "").length, saved:!!p.saved})),
         pageHtmlLen: cur ? (cur.html || "").length : 0,
         bgSource,
-        editor: editor ? {open:true, id:editor.id || null, text:editor.ta.value} : null
+        zoom: scale,
+        scrollX: stage.scrollLeft,
+        scrollY: stage.scrollTop,
+        lastPoint: {x:lastPoint.x, y:lastPoint.y},
+        view: getView(),
+        editor: editor ? {open:true, id:editor.id || null, inline:true, text:editor.ta.value, note:!!editor.note} : null
       };
     }
     function destroy(){
       try { ro.disconnect(); } catch (_) {}
       clearTimeout(roT);
       clearTimeout(bgSendT); clearTimeout(bgReqT);
+      try { stage.removeEventListener("wheel", onWheel); } catch (_) {}
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onDocDown, true);
       document.removeEventListener("paste", onPaste);
       lpClear();
+      pan = null;
       if (editor){ const ed = editor; editor = null; ed.closed = true; try { ed.el.remove(); } catch (_) {} }
       peers.forEach(p => { if (p.el){ try { p.el.remove(); } catch (_) {} } });
       drafts.clear();
@@ -1461,6 +1834,17 @@ window.Board = (() => {
       whenIdle: async () => { await readyP; while (saving > 0) await delay(50); return info(); },
       attach: files => handleFiles(files),
       addPage: (label, html, broadcast) => addPageP(label, html, broadcast),
+      insertPage: (label, html, broadcast, opts) => insertPageAt(label, html, broadcast, opts),
+      insertText: (text, x, y) => insertTextItem(text, x, y, false),
+      insertNote: (text, x, y, opts) => insertTextItem(text, x, y, true),
+      insertImage: (url, x, y, w) => insertImageItem(url, x, y, w),
+      pasteAtPoint: () => pasteAtPoint(),
+      lastPoint: () => ({x:lastPoint.x, y:lastPoint.y}),
+      getView: () => getView(),
+      setZoom: (z, cx, cy) => setZoom(z, cx, cy),
+      zoomBy: d => zoomBy(d),
+      fitWidth: () => fitWidth(),
+      extendHeight: px => extendHeight(px),
       openPage,
       pages: () => pagesArr.map(p => ({key:p.key, label:p.label, saved:!!p.saved})),
       debug(){

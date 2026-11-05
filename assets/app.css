@@ -712,3 +712,40 @@ body.play-open{overflow:hidden}
 .ss-hint{background:color-mix(in srgb,var(--sun) 26%,transparent);border-radius:10px;padding:7px 9px;margin:0}
 .ss-form .row{margin-top:2px}
 @media (max-width:560px){.ss-set>summary{font-size:.88rem}.ss-card{flex-direction:column;gap:2px}}
+/* ---------- комната учителя: панель «Инструменты» ---------- */
+.room-side .tabs{flex-wrap:wrap;gap:4px}
+.tools-pane{display:flex;flex-direction:column;gap:10px}
+.tools-pane .card{padding:10px 12px;border-radius:14px}
+.tools-pane textarea{min-height:64px}
+.tools-pane input[type=url],.tools-pane #tool-search-q{width:100%}
+.tools-pane .mat{border:1px solid var(--line);border-radius:12px;padding:6px 8px;background:var(--glass-2)}
+.tools-pane .mat .btn{margin-left:auto;flex:none}
+.tools-pane .accent{border-color:var(--violet)}
+@media (max-width:560px){.tools-pane .mat{flex-wrap:wrap}.tools-pane .mat .btn{width:100%;justify-content:center}}
+/* ---------- доска v63: зум/пан, инлайн-текст, точечный ластик ---------- */
+.bd-stage{overflow:auto;overscroll-behavior:contain;max-height:calc(100vh - 150px);border-radius:0 0 var(--r) var(--r)}
+.bd-wrap{border-radius:0}
+.bd-stage::-webkit-scrollbar{width:12px;height:12px}
+.bd-stage::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--violet) 30%,transparent);border-radius:999px;border:3px solid transparent;background-clip:content-box}
+.bd-stage::-webkit-scrollbar-track{background:transparent}
+/* компактные кнопки зума в боковой панели */
+.bd-side button[data-zoom-label]{font-size:11px;font-weight:800;letter-spacing:-.02em;padding:6px 0}
+.bd-side button[data-zoom="fit"],.bd-side button[data-act="extend"]{font-size:15px}
+/* инлайн-редактор: лёгкая рамка, без «окна», без кнопки «Готово» */
+.bd-editor.bd-inline{display:block;min-width:0;min-height:0;background:transparent;border:1px dashed color-mix(in srgb,var(--violet) 55%,transparent);border-radius:9px;box-shadow:none;overflow:visible;padding:0;box-sizing:border-box}
+.bd-editor.bd-inline:focus-within{border-color:var(--violet);box-shadow:0 0 0 2px color-mix(in srgb,var(--violet) 22%,transparent)}
+.bd-inline .bd-inline-ta{display:block;width:100%;height:100%;margin:0;padding:6px 10px;border:0;outline:0;resize:none;overflow:hidden;background:rgba(255,255,255,.92);color:#24183d;border-radius:8px;font:600 22px/28px Manrope,system-ui,sans-serif;-webkit-user-select:text;user-select:text;touch-action:auto;box-sizing:border-box}
+.bd-inline .bd-inline-ta::placeholder{color:#a79cc2;font-weight:600}
+.bd-inline-drag{position:absolute;left:-2px;top:-22px;width:24px;height:20px;display:grid;place-items:center;border-radius:7px;background:var(--violet);color:#fff;font-size:12px;line-height:1;cursor:grab;touch-action:none;opacity:0;pointer-events:auto;transition:opacity .12s;z-index:3;box-shadow:0 2px 6px rgba(36,24,61,.28)}
+.bd-inline:hover .bd-inline-drag,.bd-inline.bd-hover .bd-inline-drag,.bd-inline:focus-within .bd-inline-drag{opacity:1}
+.bd-inline-drag:active{cursor:grabbing;opacity:1}
+@media (hover:none){.bd-inline-drag{opacity:1}}
+.bd-inline-resize{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,transparent 0 50%,var(--violet) 50% 100%);cursor:nwse-resize;touch-action:none;opacity:.75;z-index:3}
+.bd-inline:hover .bd-inline-resize,.bd-inline:focus-within .bd-inline-resize{opacity:1}
+/* курсор ластика – видимый кружок ER */
+.bd-erasecur{position:absolute;z-index:6;box-sizing:border-box;border:1.5px solid #4b4458;border-radius:50%;background:rgba(255,255,255,.55);pointer-events:none;box-shadow:0 0 0 1px rgba(255,255,255,.8)}
+.bd-erasecur[hidden]{display:none}
+/* форма «картинка по ссылке» (как .bd-embedform) */
+.bd-insertform{margin:8px 0;padding:12px 14px}
+@media (max-width:560px){.bd-stage{max-height:calc(100vh - 130px)}}
+
