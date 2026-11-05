@@ -157,6 +157,7 @@ function liveStart(){
     if (m.type === "izlpick"){ S.labPick = m.key; LS.set("labPick", m.key); if (S.view === "folder" && S.course?.lessons.find(x => x.id === S.open)?.lab === "izl") S.sub = "lab"; render(); toast("Учитель выбрал текст для изложения: " + (m.title || "")); return; }
     if (m.type === "refresh"){
       await load();
+      if (S.view === "quizzes" && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")){ await loadQuizzes(true); }
       const focused = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
       if (!typing() || (S.view === "room" && !focused) || (S.view === "folder" && S.sub !== "board" && !focused)) render();
       else S.syncPending = true;   // не сбрасываем ввод – отрисуем, когда ученик закончит печатать
@@ -1692,7 +1693,7 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
     S.invite = invite;
     if (sb){ const {data} = await sb.rpc("invite_info", {p_invite: invite}); S.inviteInfo = data || false; if (data?.theme){ S.regTheme = data.theme; U.applyTheme(data.theme); } }
     else S.inviteInfo = {};
-  } else if (!sess?.token && sb && !qp.has("student")){
+  } else if (!sess?.token && sb && !qp.has("student") && !qp.has("quiz")){   /* ?quiz= – это тест ученика, не уводим в кабинет учителя */
     const {data} = await sb.auth.getSession(); if (data?.session){ location.replace("teacher.html"); return; }
   } else if (sess?.token){
     S.token = sess.token; S.profile = sess.profile; recompute();

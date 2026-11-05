@@ -653,7 +653,8 @@ async function qzSave(s){
   if (error){ toast("Не сохранилось: " + error.message); render(); return; }
   T.qzQuizzes = [row || {id, student_id: s.id, title, course: s.course, data, created_at: new Date().toISOString()}, ...(T.qzQuizzes || [])];
   T.qzSaved = T.qzQuizzes[0]; T.qzDraft = null; T.qzSel = new Set();
-  render(); toast("Тест сохранён. Ссылка готова – отправьте её ученику.");
+  try { cmd(s.id, "refresh", {msg: "Учитель собрал тест по темам – открой раздел «Тесты»"}); if (s.pair_id) cmd(s.pair_id, "refresh", {msg: "Учитель собрал тест по темам"}); } catch(_){}
+  render(); toast("Тест сохранён. Ссылка готова – ученик увидит тест в разделе «Тесты».");
 }
 async function qzCopy(id){
   const link = window.Quiz ? Quiz.link(id) : String(id || "");

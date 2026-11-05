@@ -761,7 +761,7 @@ $$;
 -- результат теста от ученика (только по своему коду доступа и только тест своего учителя)
 create or replace function public.quiz_submit(p_code text, p_token text, p_score int, p_total int, p_details jsonb default '{}'::jsonb, p_needs_work text[] default '{}')
 returns void language plpgsql security definer set search_path = public as $$
-declare sid uuid := student_id_by_code(p_code); st students; q quizzes;
+declare sid uuid := student_id_by_code(p_code); st students; q topic_quizzes;
 begin
   if sid is null then raise exception 'unknown code'; end if;
   if p_total < 0 or p_total > 200 or p_score < 0 or p_score > p_total then raise exception 'bad score'; end if;

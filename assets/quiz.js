@@ -10,8 +10,8 @@ window.Quiz = (() => {
     return [...r].map(x => ALPHA[x % ALPHA.length]).join("");
   }
   function link(id){
-    const base = location.origin + location.pathname.replace(/[^/]*$/, "");
-    return base + "index.html?quiz=" + encodeURIComponent(id);
+    try { const u = new URL("index.html", location.href); u.hash = ""; u.search = "?quiz=" + encodeURIComponent(id); return u.href; }
+    catch(_){ return location.origin + "/index.html?quiz=" + encodeURIComponent(id); }
   }
 
   /* вопросы из теста урока (массив l.test): {q, o:[...], a:index, e:"объяснение", tag:"тема"} */

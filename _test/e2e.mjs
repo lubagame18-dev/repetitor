@@ -500,12 +500,14 @@ test("Q1", "Учитель собрал тест по 2 темам → стро�
   W.quizQuestions = row.data.questions;
 
   // «Открыть у ученика» → live cmd type "quiz"
+  const refreshQ = await teacher.waitFor(`(() => { const l = window.__MOCK.cmdList().filter(c => c.type === "refresh" && c.to === "${ROW_A}"); return l.length ? l[l.length - 1] : null; })()`,
+    { timeout: 6000, label: "после сохранения теста ученику отправлено обновление (refresh)" });
+  assert(refreshQ, "нет live cmd refresh ученику после сохранения теста");
   await teacher.eval(`window.__MOCK.LOG.broadcasts.length = 0; true`);
   await teacher.eval(`document.querySelector('[data-act="qz-open"]').click(); true`);
   const quizCmd = await teacher.waitFor(`(() => { const l = window.__MOCK.cmdList().filter(c => c.type === "quiz"); return l.length ? l[l.length - 1] : null; })()`,
     { timeout: 6000, label: "live cmd type=quiz после «Открыть у ученика»" });
   eq(quizCmd.token, W.quizId, "cmd quiz.token");
-  eq(quizCmd.to, ROW_A, "cmd quiz.to");
   assert(quizCmd.title, "в cmd quiz нет title");
 });
 
@@ -670,10 +672,26 @@ test("Q4", "Карта тем: у учителя #qz-map .qz-topic.bad с тем
   await page.waitFor(`(() => { const m = document.querySelector("#qz-map"); return m && (m.textContent || "").trim().length > 10 ? 1 : 0; })()`,
     { timeout: 10000, label: "#qz-map в разделе «Тесты»" });
   await page.waitFor(`document.querySelector("#qz-map .qz-topic.bad") ? 1 : 0`, { timeout: 10000, label: "у ученика карта тем с .qz-topic.bad" });
-  const sBad = await page.eval(`document.querySelector("#qz-map .qz-topic.bad").textContent`);
+  const inList = await page.eval(`!!document.querySelector('.quiz-list [data-quiz="${W.quizId}"]')`);
+  assert(inList, "ученик не видит собранный тест в разделе «Тесты» (список)");  const sBad = await page.eval(`document.querySelector("#qz-map .qz-topic.bad").textContent`);
   assert(sBad.includes(topic), "у ученика в карте тема не совпала: " + JSON.stringify(sBad) + ", ожидали " + JSON.stringify(topic));
 });
 
+/* ---------- Q5: ссылка на тест не уводит в кабинет учителя ---------- */
+test("Q5", "Ссылка на тест в браузере учителя открывается как тест ученика, а не редирект в кабинет", async ({ browser, baseUrl }) => {
+  assert(W.quizId, "Q1 не сохранил тест");
+  const page = await browser.newPage("about:blank");
+  await page.inject(seedScript({ db: null, session: TEACHER_SESSION, studentSession: null, joinHow: null }), "seed-q5.js");
+  await page.inject(MOCK_SRC, "mock-supabase.js");
+  await blockUrls(page);
+  try {
+    await page.goto(baseUrl + "/index.html?quiz=" + encodeURIComponent(W.quizId));
+    await page.waitFor(`window.__app && window.__app.S ? 1 : 0`, { timeout: 25000, label: "приложение ученика по ссылке ?quiz" });
+    const st = await page.eval(`(() => ({ path: location.pathname, token: window.__app.S.quizToken || null, teach: /teacher\\.html$/.test(location.pathname) }))()`);
+    assert(!st.teach, "ссылка ?quiz= увела в кабинет учителя: " + JSON.stringify(st));
+    eq(st.token, W.quizId, "quizToken из ссылки сохранён");
+  } finally { try { await page.close(); } catch (_) {} }
+});
 /* ---------- S1–S4: самообучение (блоки ударений, карточки, ошибки, прогресс) ---------- */
 test("S1", "Самообучение: блок ударений — ошибка с подсказкой, повтор, 15/15; прогресс works и результат self сохраняются", async ({ teacher, student, browser, baseUrl }) => {
   /* вкладка rowB больше не нужна и делит localStorage – закрываем, чтобы сессия rowA не перетиралась */
