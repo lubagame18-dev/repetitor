@@ -87,7 +87,7 @@ window.Quiz = (() => {
       const row = log[i] || {};
       const key = q.topicId || q.topic || ("q" + i);
       const o = map.get(key) || {id: q.topicId || "", title: q.topic || "Без темы", total: 0, ok: 0, first: 0, needsWork: false};
-      o.total += 1; if (row.ok) o.ok += 1; if (row.first) o.first += 1;
+      o.total += 1; if (row.first) o.ok += 1; if (row.first) o.first += 1;   /* процент – только верные с первой попытки: ошибка снижает результат, даже если исправился */
       if (!row.ok) o.needsWork = true;
       map.set(key, o);
     });

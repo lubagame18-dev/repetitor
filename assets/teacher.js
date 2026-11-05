@@ -609,14 +609,24 @@ function quizCardHTML(s, c){
         <select id="qz-count" style="width:auto">${QZ_COUNTS.map(n => `<option ${n === st.qzCount ? "selected" : ""}>${n}</option>`).join("")}</select>
         <button class="btn sm" data-act="qz-build" ${st.qzBusy ? "disabled" : ""}>${st.qzBusy ? "Собираю…" : "Собрать тест"}</button>
         <span class="small muted">выбрано тем: ${st.qzSel.size}</span></div>
+      <p class="small muted" style="margin:0">Если темы не выбраны, тест соберётся по темам, отмеченным «Пройдено».</p>
       ${draft}${linkSaved}${list}
       <div style="border-top:1px solid var(--line);padding-top:12px"><div class="kicker">Карта тем</div><div id="qz-map">${window.Quiz ? Quiz.graphHTML(stats) : `<p class="small muted">Модуль тестов не загрузился – обновите страницу.</p>`}</div></div>
       ${resTable}</div>`;
 }
 async function qzBuild(s){
   const c = U.courseFor(s, T.mats); if (!c) return;
-  const sel = [...qzState(s).qzSel].map(id => U.findLesson(c, id)).filter(Boolean);
-  if (!sel.length){ toast("Отметьте хотя бы одну тему"); return; }
+  const st = qzState(s);
+  let picked = [...st.qzSel], auto = false;
+  if (!picked.length){
+    /* автоматически берём темы, отмеченные «Пройдено» (сначала с готовыми вопросами, иначе – любые пройденные: ИИ добавит вопросы) */
+    const covered = c.lessons.filter(l => s.covered?.[l.id] || s.covered_manual?.[l.id]);
+    let learned = covered.filter(l => qzQuestions(l).length).slice(0, 8);
+    if (!learned.length) learned = covered.slice(0, 8);
+    if (learned.length){ picked = learned.map(l => l.id); st.qzSel = new Set(picked); auto = true; }
+  }
+  const sel = picked.map(id => U.findLesson(c, id)).filter(Boolean);
+  if (!sel.length){ toast("Отметьте темы или сначала отметьте пройденные темы в таблице уроков"); return; }
   if (sel.length > 20){ toast("Выберите не больше 20 тем"); return; }
   if (!window.Quiz){ toast("Модуль тестов не загрузился – обновите страницу"); return; }
   const count = Math.max(1, Math.min(10, +T.qzCount || 3));
@@ -639,7 +649,8 @@ async function qzBuild(s){
   const names = topics.map(t => t.title).slice(0, 3).map(x => String(x).slice(0, 40));
   T.qzDraft = {title: `Тест по темам: ${names.join("; ")}${topics.length > 3 ? " и др." : ""}`.slice(0, 120), topics, questions};
   render();
-  if (aiErr) toast("Часть вопросов нейросеть не добавила: " + aiErr);
+  if (auto) toast(`Автоматически выбраны пройденные темы: ${sel.length}`);
+  else if (aiErr) toast("Часть вопросов нейросеть не добавила: " + aiErr);
   else toast(`Собрано вопросов: ${questions.length}. Проверьте и сохраните.`);
 }
 async function qzSave(s){
@@ -669,6 +680,34 @@ function qzOpen(s, id, title){
   cmd(s.id, "quiz", {token: id, title: title || "Тест по темам"});
   if (s.pair_id) cmd(s.pair_id, "quiz", {token: id, title: title || "Тест по темам"});
   toast(T.online[s.id] ? "Тест отправлен ученику" : "Ученик сейчас не в сети – тест ждёт его в разделе «Тесты»");
+}
+
+/* ---------- динамика успеваемости: волнистая линия по занятиям и тестам по темам ---------- */
+function trendTitleOf(c){
+  return r => {
+    const lid = String(r.lesson_id || "");
+    if (r.kind === "quiz") return qzQuizById(lid)?.title || "тест по темам";
+    const l = c ? U.findLesson(c, lid) : null;
+    if (l?.title) return l.title;
+    if (lid.startsWith("self:")) return SELF_NAMES[lid.split(":")[1]] || "самообучение";
+    if (lid.startsWith("oge:")) return "ОГЭ: задание " + (lid.split(":")[1] || "");
+    return "";
+  };
+}
+function trendPoints(s){
+  if (!window.Trend || !Trend.pointsFromRows) return [];
+  const c = U.courseFor(s, T.mats);
+  const rows = (T.rows || []).filter(r => r.student_id === s.id);
+  const quizzes = (T.qzResults || []).filter(r => r.student_id === s.id)
+    .map(r => ({created_at: r.created_at, kind: "quiz", score: r.score, total: r.total, lesson_id: r.quiz_id}));
+  return Trend.pointsFromRows([...rows, ...quizzes], {titleOf: trendTitleOf(c), limit: 30});
+}
+function trendSectionHTML(s){
+  if (!window.Trend || !Trend.chart) return "";
+  const points = trendPoints(s);
+  const last = points.length ? points[points.length - 1].p : 0, first = points.length ? points[0].p : 0;
+  return `<div class="section-title"><h2>Динамика успеваемости</h2><span class="small muted">результаты занятий и тестов по темам – от начала до текущего</span></div>
+    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", empty: "График появится после первого занятия или теста по темам."})}</div>`;
 }
 
 function viewStudent(){
@@ -719,6 +758,7 @@ function viewStudent(){
       <div><button class="btn sm" data-act="save-pair">Сохранить</button></div></div>
   </div>
   ${!pending(s) ? `<div class="section-title"><h2>Анализ и план</h2></div>${aiReportHTML(s, x)}` : ""}
+  ${!pending(s) ? trendSectionHTML(s) : ""}
   ${c ? quizCardHTML(s, c) : ""}
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
@@ -2178,6 +2218,6 @@ document.addEventListener("click", async e => {
   T.routeReady = true;
 })();
 /* аддитивный хук для e2e: состояние кабинета и хелперы прогресса/доски */
-window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards,
+window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards, trendPoints,
   ssSets: () => { const s = T.students.find(x => x.id === T.sel); try { return (s && window.SELF_DATA?.customSets) ? SELF_DATA.customSets(T.mats, s.course, s.id) : {blocks: [], decks: []}; } catch(_){ return {blocks: [], decks: []}; } }};
 })();

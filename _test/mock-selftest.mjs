@@ -278,5 +278,20 @@ const setDel = await teacher.client.from("materials").delete().eq("id", setIns.d
 const leftSets = await teacher.client.from("materials").select("id").eq("kind", "tasks").eq("lesson_id", "self");
 ok(!setDel.error && (leftSets.data || []).length === 0, "materials delete: свой набор удалён", leftSets.data);
 
+// 14. формы для графика динамики (Trend.pointsFromRows/pointsFromQuizzes): results и topic_quiz_results
+//     должны отдавать created_at/kind/score/total (и сортироваться по created_at)
+await teacher.client.from("results").insert([
+  { id: 9501, student_id: ROW_B, lesson_id: "math-5-1", kind: "lesson", score: 5, total: 10, wrong: [], created_at: "2026-10-01T10:00:00.000Z" },
+  { id: 9502, student_id: ROW_B, lesson_id: "math-5-1", kind: "self", score: 9, total: 10, wrong: [], created_at: "2026-10-02T10:00:00.000Z" },
+]).select("id");
+const trendR = await teacher.client.from("results").select("created_at,kind,score,total").eq("student_id", ROW_B).order("created_at");
+ok(Array.isArray(trendR.data) && trendR.data.length >= 2 && trendR.data[0].created_at < trendR.data[trendR.data.length - 1].created_at
+  && trendR.data.every(r => r.created_at && typeof r.kind === "string" && +r.total > 0 && +r.score >= 0),
+  "results: поля и порядок created_at для графика динамики", trendR.data && trendR.data.slice(-3));
+const trendQ = await teacher.client.from("topic_quiz_results").select("created_at,score,total,quiz_id").eq("student_id", ROW_B).order("created_at");
+ok(Array.isArray(trendQ.data) && trendQ.data.length >= 1
+  && trendQ.data.every(r => r.created_at && +r.total > 0 && r.quiz_id),
+  "topic_quiz_results: created_at/score/total/quiz_id для графика", trendQ.data);
+
 console.log(`\nИтог self-test мока: ${passed}/${passed + failed} PASS, ${Date.now() - t0} мс`);
 process.exit(failed ? 1 : 0);

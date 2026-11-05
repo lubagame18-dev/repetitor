@@ -479,7 +479,18 @@
     upload_work: () => null,
   };
   async function rpc(name, params) {
-    log("rpcs", { name, keys: params ? Object.keys(params) : [] });
+    /* keys — как раньше; args — компактные значения (числа/строки), чтобы тесты могли проверить
+       например p_score/p_total в quiz_submit (объекты сводим к типу/длине) */
+    const keys = params ? Object.keys(params) : [];
+    let args = null;
+    if (params) {
+      args = {};
+      for (const k of keys) {
+        const v = params[k];
+        args[k] = v === null || v === undefined ? v : typeof v === "object" ? (Array.isArray(v) ? "arr:" + v.length : "obj") : v;
+      }
+    }
+    log("rpcs", { name, keys, args });
     const fn = RPC[name];
     if (!fn) { say("rpc unknown:", name); return { data: null, error: null }; }
     try { return { data: await fn(params || {}), error: null }; }

@@ -692,6 +692,70 @@ test("Q5", "Ссылка на тест в браузере учителя отк
     eq(st.token, W.quizId, "quizToken из ссылки сохранён");
   } finally { try { await page.close(); } catch (_) {} }
 });
+/* ---------- Q6: результат теста — по верным с ПЕРВОЙ попытки ---------- */
+test("Q6", "Тест: ошибка→повтор→верно снижает score (с первой попытки): details.first=false/attempts=2, у учителя % темы <100", async ({ teacher, baseUrl }) => {
+  assert(W.quizId && W.quizQuestions && W.quizQuestions.length >= 2, "Q1 не подготовил тест для Q6");
+  const qs = W.quizQuestions, n = qs.length, topic0 = qs[0].topic || "";
+  const page = W.quizTab;
+  assert(page, "нет вкладки ученика из Q3");
+  await page.goto(baseUrl + "/index.html?quiz=" + encodeURIComponent(W.quizId));
+  await page.waitFor(`window.__app && window.__app.S && document.querySelector(".quiz-wrap .quiz-opt") ? 1 : 0`,
+    { timeout: 25000, label: "Q6: тест открылся по ссылке" });
+  /* 1-й вопрос: неверно → [data-qretry] → верно (в зачёт пойдёт только первая попытка) */
+  /* индексы берём из реально открытого теста: в W.quizQuestions порядок мог отличаться */
+  const pageQs = await page.eval(`window.__app.S.quiz.questions.map(q => ({a: q.a, n: q.o.length}))`);
+  const n2 = pageQs.length;
+  const wrong = (+pageQs[0].a + 1) % pageQs[0].n;
+  await page.eval(`document.querySelector('[data-qopt="${wrong}"]').click(); true`);
+  await page.waitFor(`!!document.querySelector('.quiz-fb.no')`, { timeout: 6000, label: "Q6: неверный ответ (.quiz-fb.no)" });
+  assert(await page.eval(`!!document.querySelector("[data-qretry]")`), "Q6: нет кнопки повтора [data-qretry]");
+  await page.eval(`document.querySelector("[data-qretry]").click(); true`);
+  await page.waitFor(`(() => { const o = document.querySelector("[data-qopt]"); return !document.querySelector(".quiz-fb") && o && !o.disabled ? 1 : 0; })()`,
+    { timeout: 5000, label: "Q6: повтор варианты снова доступны" });
+  await page.eval(`document.querySelector('[data-qopt="${+pageQs[0].a}"]').click(); true`);
+  await page.waitFor(`!!document.querySelector('.quiz-fb.ok')`, { timeout: 6000, label: "Q6: верно со второй попытки (.quiz-fb.ok)" });
+  await page.eval(`document.querySelector("[data-qnext]").click(); true`);
+  for (let i = 1; i < n2; i++) {
+    await page.waitFor(`(() => { const A = window.__app.S.qz; return A && A.i === ${i} ? 1 : 0; })()`, { timeout: 6000, label: "Q6: вопрос " + (i + 1) });
+    await page.eval(`document.querySelector('[data-qopt="${+pageQs[i].a}"]').click(); true`);
+    await page.waitFor(`!!document.querySelector('.quiz-fb.ok')`, { timeout: 6000, label: "Q6: верный ответ на вопрос " + (i + 1) });
+    await page.eval(`document.querySelector("[data-qnext]").click(); true`);
+    await sleep(120);
+  }
+  await page.waitFor(`document.querySelector(".quiz-result[data-qresult]") ? 1 : 0`, { timeout: 10000, label: "Q6: экран итогов .quiz-result" });
+  const sc = await page.eval(`(() => { const el = document.querySelector(".quiz-score"); return el ? {score: +el.dataset.score, total: +el.dataset.total, pct: +el.dataset.pct} : null; })()`);
+  assert(sc, "Q6: нет .quiz-score[data-score]/[data-total]/[data-pct]");
+  eq(sc.score, n2 - 1, "Q6: score с первой попытки");
+  eq(sc.total, n2, "Q6: total");
+  eq(sc.pct, Math.round((n2 - 1) / n2 * 100), "Q6: pct");
+  const firstNote = await page.eval(`(() => { const el = document.querySelector(".quiz-result [data-q-first]") || document.querySelector(".quiz-result"); return el ? el.textContent : ""; })()`);
+  if (!/с первой попытки/i.test(firstNote)) throw new Error("Q6: в итогах нет «с первой попытки X из N»: " + JSON.stringify(String(firstNote).slice(0, 300)));
+  if (!String(firstNote).includes(String(n2 - 1))) throw new Error("Q6: в «с первой попытки» не score n-1: " + JSON.stringify(String(firstNote).slice(0, 300)));
+  /* mock-БД: последняя попытка quiz_results и детали по первому вопросу */
+  const rows = await teacherDB(teacher, "topic_quiz_results");
+  const res = rows.filter(r => r.quiz_id === W.quizId).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+  assert(res, "Q6: в mock-БД нет quiz_results по тесту");
+  eq(res.score, n2 - 1, "Q6: topic_quiz_results.score (first)");
+  eq(res.total, n2, "Q6: topic_quiz_results.total");
+  const q0 = (res.details && res.details.questions || [])[0];
+  assert(q0 && q0.first === false && q0.attempts === 2 && q0.ok === true,
+    "Q6: details.questions[0] ожидали {first:false, attempts:2, ok:true}: " + JSON.stringify(q0));
+  const rpc = await page.eval(`window.__MOCK.lastRpc("quiz_submit")`);
+  assert(rpc && rpc.args && +rpc.args.p_score === n2 - 1 && +rpc.args.p_total === n2,
+    "Q6: quiz_submit p_score/p_total (ожидали " + (n2 - 1) + "/" + n2 + "): " + JSON.stringify(rpc && rpc.args));
+  /* у учителя % по теме ниже 100 (считается по first) */
+  const pctOf = () => teacher.eval(`(() => { const els = [...document.querySelectorAll("#qz-map .qz-topic")]; const el = els.find(e => (e.textContent || "").includes(${JSON.stringify(topic0)})); if (!el) return null; const m = (el.textContent || "").match(/(\\d+)\\s*%/); return m ? +m[1] : null; })()`);
+  let pct = await pctOf();
+  let t0 = Date.now();
+  while ((pct == null || pct >= 100) && Date.now() - t0 < 12000) { await sleep(300); pct = await pctOf(); }
+  if (pct == null || pct >= 100) {
+    await reloadTeacherToRow(teacher, baseUrl);
+    t0 = Date.now();
+    while (pct == null && Date.now() - t0 < 10000) { await sleep(300); pct = await pctOf(); }
+  }
+  assert(pct != null && pct < 100, "Q6: у учителя % по теме «" + topic0 + "» не ниже 100 (pct=" + pct + ")");
+});
+
 /* ---------- S1–S4: самообучение (блоки ударений, карточки, ошибки, прогресс) ---------- */
 test("S1", "Самообучение: блок ударений — ошибка с подсказкой, повтор, 15/15; прогресс works и результат self сохраняются", async ({ teacher, student, browser, baseUrl }) => {
   /* вкладка rowB больше не нужна и делит localStorage – закрываем, чтобы сессия rowA не перетиралась */
@@ -772,13 +836,25 @@ test("S4", "Самообучение: прогресс подхватывает�
   await page.goto(baseUrl + "/index.html");
   await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="self"]') ? 1 : 0`,
     { timeout: 25000, label: "ученик после перезагрузки" });
+  /* дождаться, что прогресс self:stress пришёл из student_state.works (иначе «0/15» — гонка загрузки) */
+  await page.waitFor(`(() => { const S = window.__app.S; return S.works && Object.keys(S.works).some(k => k === "self:stress") ? 1 : 0; })()`,
+    { timeout: 12000, label: "S4: student_state.works self:stress загружен" }).catch(() => {});
   await selfOpen(page);
   const prep = await page.eval(`(() => { const p = document.querySelector('.self-prep'); return p ? p.textContent : null; })()`);
   assert(prep && /подтянуть/i.test(prep), "нет блока рекомендаций «Что подтянуть» (.self-prep): " + JSON.stringify(prep));
   assert(await page.eval(`!!document.querySelector('.self-prep [data-act="self-stress-block"]')`), "в рекомендациях нет кнопки «ударения»");
   assert(await page.eval(`!!document.querySelector('.self-prep [data-act="self-deck"]')`), "в рекомендациях нет кнопки «карточки»");
-  const label0 = await page.eval(`(() => { const b = document.querySelector('.self-blocks [data-act="self-stress-block"][data-b="0"]'); return b ? (b.getAttribute('data-self-progress') || b.textContent || "") : ""; })()`);
-  assert(/15\s*\/\s*15/.test(label0), "после перезагрузки карточка блока 0 не показывает 15/15 (прогресс не подхватился): " + JSON.stringify(label0));
+  let label0 = "";
+  const tL = Date.now();
+  while (Date.now() - tL < 12000) {
+    label0 = await page.eval(`(() => { const b = document.querySelector('.self-blocks [data-act="self-stress-block"][data-b="0"]'); return b ? (b.getAttribute('data-self-progress') || b.textContent || "") : ""; })()`);
+    if (/15\s*\/\s*15/.test(label0)) break;
+    await sleep(250);
+  }
+  if (!/15\s*\/\s*15/.test(label0)) {
+    const diag = await page.eval(`(() => { const S = window.__app.S; return { works: S.works ? Object.keys(S.works) : null, view: S.view, body: (document.body.innerText || "").slice(0, 250) }; })()`).catch(err => ({ evalError: String(err) }));
+    throw new Error("после перезагрузки карточка блока 0 не показывает 15/15 (прогресс не подхватился): " + JSON.stringify(label0) + " diag=" + JSON.stringify(diag).slice(0, 800));
+  }
   const left0 = +(await page.eval(`(() => { const b = document.querySelector('[data-act="self-errors"]'); if (!b) return 0; return b.getAttribute('data-self-errors-left') || 0; })()`)) || 0;
   assert(left0 >= 2, "в «Моих ошибках» меньше 2 элементов (ожидали ошибку блока и карточку): " + left0);
   // проходим «Мои ошибки» (cardDeck по items): все «Знаю»
@@ -908,6 +984,131 @@ test("T1", "Карточка ученика у учителя: прогресс 
   const boardInfo = await teacher.eval(`(() => { try { const T = window.__teacher.T; const b = T.board; const i = b.info(); return {items: i.items.length, page: i.page, lesson: T.boardLesson}; } catch(_) { return null; } })()`);
   if (!boardInfo || boardInfo.items < 1) throw new Error("T.board.info() не показывает пометки: " + JSON.stringify(boardInfo));
   if (String(boardInfo.lesson) !== lessonId) throw new Error("T.boardLesson не совпал с уроком: " + JSON.stringify(boardInfo) + ", ожидали " + lessonId);
+});
+
+/* ---------- T2–T4: динамика успеваемости (график), автоподбор тем ---------- */
+/** мир T2: результаты rowA с разными процентами и по датам (последний — 100%) + результат теста по темам */
+function t2Seed() {
+  const seed = JSON.parse(JSON.stringify(W.db));
+  const lid = W.lessons.rus[0].id, ltitle = W.lessons.rus[0].title;
+  const q = { q: "Тренд-вопрос 1", o: ["а", "б", "в", "г"], a: 0, e: "объяснение", topic: ltitle, topicId: lid };
+  seed.tables.results = [
+    { id: 9301, student_id: ROW_A, lesson_id: lid, kind: "lesson", score: 5, total: 10, wrong: [], created_at: "2026-10-01T10:00:00.000Z" },
+    { id: 9302, student_id: ROW_A, lesson_id: lid, kind: "lesson", score: 8, total: 10, wrong: [], created_at: "2026-10-05T10:00:00.000Z" },
+    { id: 9303, student_id: ROW_A, lesson_id: lid, kind: "lesson", score: 6, total: 10, wrong: [], created_at: "2026-10-10T10:00:00.000Z" },
+    { id: 9304, student_id: ROW_A, lesson_id: lid, kind: "lesson", score: 10, total: 10, wrong: [], created_at: "2026-10-20T10:00:00.000Z" },
+  ];
+  seed.tables.topic_quizzes = [{ id: "trendq01", teacher_id: TEACHER_ID, student_id: ROW_A, title: "Тест динамики", course: "rus-5",
+    data: { title: "Тест динамики", topics: [{ id: lid, title: ltitle }], questions: [q] }, created_at: "2026-10-02T10:00:00.000Z" }];
+  seed.tables.topic_quiz_results = [{ id: 9401, quiz_id: "trendq01", student_id: ROW_A, score: 3, total: 4,
+    details: { questions: [], topics: [] }, needs_work: [], created_at: "2026-10-12T10:00:00.000Z" }];
+  return seed;
+}
+/** лёгкая перезагрузка кабинета до карточки rowA (T2/T3): без сброса «идущего урока» и presence-ожиданий */
+async function reloadTeacherCard(teacher, baseUrl){
+  await teacher.eval(`try { sessionStorage.clear(); } catch (_) {}; true`);
+  await teacher.goto(baseUrl + "/teacher.html");
+  await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя (shell + __teacher)" });
+  await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
+  await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников (T2)" });
+  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "карточка rowA («Всё, что делает ученик»)" });
+}
+test("T2", "Динамика у учителя: [data-t-student-trend] с .trend-line и .trend-dot (data-points>=3), последняя точка 100%", async ({ teacher, baseUrl }) => {
+  await teacher.eval(`window.__MOCK.reset(${JSON.stringify(t2Seed())}); true`);
+  await reloadTeacherCard(teacher, baseUrl);
+  await teacher.waitFor(`document.querySelector('[data-t-student-trend]') ? 1 : 0`, { timeout: 15000, label: "T2: секция «Динамика успеваемости» [data-t-student-trend]" });
+  const st = await teacher.eval(`(() => {
+    const box = document.querySelector('[data-t-student-trend]');
+    const tr = box && box.querySelector('.trend');
+    return {
+      boxPoints: box ? box.dataset.points : null,
+      points: tr ? +tr.dataset.points : 0, first: tr ? +tr.dataset.first : null, last: tr ? +tr.dataset.last : null,
+      dots: box ? box.querySelectorAll('.trend-dot').length : 0,
+      line: !!(box && box.querySelector('.trend-line')),
+      text: box ? box.innerText : "",
+    };
+  })()`);
+  assert(st.line, "T2: в [data-t-student-trend] нет .trend-line (SVG-линия)");
+  assert(st.dots >= 2, "T2: .trend-dot меньше 2: " + st.dots);
+  assert(st.points >= 3, "T2: data-points < 3: " + st.points);
+  if (st.boxPoints != null) eq(+st.boxPoints, st.points, "T2: data-points на контейнере и на .trend");
+  eq(st.last, 100, "T2: data-last (последняя по дате точка — 10/10)");
+  assert(/сейчас\s*100\s*%/i.test(st.text), "T2: в тексте нет «сейчас 100%»: " + JSON.stringify(st.text.slice(0, 300)));
+  /* хук teacher.trendPoints: 4 results + 1 quiz = 5 точек, последняя 100% */
+  const pts = await teacher.eval(`(() => { try { const T = window.__teacher.T; const s = T.students.find(x => x.id === ${JSON.stringify(ROW_A)}); const p = window.__teacher.trendPoints ? window.__teacher.trendPoints(s) : null; return p ? p.map(x => ({p: x.p, kind: x.kind, at: x.at})) : null; } catch (_) { return null; } })()`);
+  if (Array.isArray(pts)) {
+    assert(pts.length >= 4, "T2: trendPoints меньше 4: " + pts.length);
+    eq(pts[pts.length - 1].p, 100, "T2: последняя точка trendPoints");
+  }
+});
+
+test("T3", "Автоподбор: пустой выбор тем → «Собрать тест» берёт тему, отмеченную «Пройдено», и сохраняет её в topic_quizzes", async ({ teacher }) => {
+  /* карточка rowA открыта после T2; берём урок, у которого есть готовые вопросы */
+  await teacher.waitFor(`document.getElementById("qz-card") ? 1 : 0`, { timeout: 12000, label: "T3: карточка «Тест по темам» (#qz-card)" });
+  const lid = await teacher.eval(`(() => {
+    const boxes = [...document.querySelectorAll('[data-qz-topic]')];
+    for (const cb of boxes) { const t = (cb.closest("label") || cb.parentElement || {}).textContent || ""; const m = t.match(/(\\d+)\\s*вопр/); if (m && +m[1] > 0) return cb.value; }
+    return null;
+  })()`);
+  assert(lid, "T3: в карточке нет урока с готовыми вопросами («N вопр.»)");
+  await teacher.eval(`(() => { const b = document.querySelector('[data-act="covered-toggle"][data-lid="${lid}"][data-on="1"]'); if (b) b.click(); return !!b; })()`);
+  await teacher.waitFor(`(() => { const row = window.__MOCK.dbTable("students").find(x => x.id === ${JSON.stringify(ROW_A)}); return row && row.covered && row.covered[${JSON.stringify(lid)}] ? 1 : 0; })()`,
+    { timeout: 8000, label: "T3: урок отмечен «Пройдено»" });
+  /* пустой выбор тем */
+  await teacher.eval(`(() => { [...document.querySelectorAll("[data-qz-topic]:checked")].forEach(cb => { cb.checked = false; cb.dispatchEvent(new Event("change", { bubbles: true })); }); return true; })()`);
+  await sleep(250);
+  await teacher.eval(`document.querySelector('[data-act="qz-build"]').click(); true`);
+  await teacher.waitFor(`(document.getElementById("qz-title") && document.querySelector('[data-act="qz-save"]')) ? 1 : 0`,
+    { timeout: 25000, label: "T3: предпросмотр автоподбора (#qz-title + [data-act=qz-save])" });
+  const draft = await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; return T && T.qzDraft ? { topics: (T.qzDraft.topics || []).map(t => t.id), questions: (T.qzDraft.questions || []).length } : null; })()`);
+  assert(draft, "T3: T.qzDraft пуст после автоподбора");
+  assert(draft.topics.includes(lid), "T3: автоподбор не взял пройденную тему " + lid + ": " + JSON.stringify(draft));
+  assert(draft.questions > 0, "T3: в предпросмотре нет вопросов");
+  const checked = await teacher.eval(`[...document.querySelectorAll("[data-qz-topic]:checked")].map(x => x.value)`);
+  assert(checked.includes(lid), "T3: чекбокс пройденной темы не отмечен: " + JSON.stringify(checked));
+  /* сохраняем и проверяем topic_quizzes.data.topics */
+  const title = "Автотест пройденных тем";
+  await teacher.eval(`(() => { const el = document.getElementById("qz-title"); if (el) { el.value = ${JSON.stringify(title)}; el.dispatchEvent(new Event("input", { bubbles: true })); } return true; })()`);
+  await teacher.eval(`document.querySelector('[data-act="qz-save"]').click(); true`);
+  const row = await waitMockRow(teacher, "topic_quizzes", q => q.title === title && q.student_id === ROW_A);
+  assert(row, "T3: тест не сохранён в topic_quizzes: " + JSON.stringify(await teacherDB(teacher, "topic_quizzes")).slice(0, 400));
+  const ids = ((row.data && row.data.topics) || []).map(t => t.id);
+  assert(ids.includes(lid), "T3: в сохранённом тесте нет пройденной темы: " + JSON.stringify(ids));
+});
+
+test("T4", "Статистика ученика: [data-t-trend] с .trend-line и точками (data-points>=1), последняя точка 100%", async ({ browser, baseUrl }) => {
+  const page = await ensureSelfStudent({ browser, baseUrl });
+  await page.goto(baseUrl + "/index.html");
+  await page.waitFor(`window.__app && window.__app.S && document.querySelector('[data-go="stats"]') ? 1 : 0`, { timeout: 25000, label: "T4: ученик после reload" });
+  await page.eval(`document.querySelector('[data-go="stats"]').click(); true`);
+  await page.waitFor(`(() => { const S = window.__app && window.__app.S; return S && S.view === "stats" ? 1 : 0; })()`, { timeout: 12000, label: "T4: раздел «Статистика»" });
+  await page.waitFor(`document.querySelector('[data-t-trend]') ? 1 : 0`, { timeout: 15000, label: "T4: контейнер [data-t-trend]" });
+  /* тесты подгружаются лениво: ждём student_quizzes, иначе последняя точка может быть не та */
+  await page.waitFor(`(() => { const S = window.__app.S; return S && S.quizzes !== null ? 1 : 0; })()`,
+    { timeout: 12000, label: "T4: student_quizzes загрузились" }).catch(() => {});
+  try {
+    await page.waitFor(`document.querySelector('[data-t-trend] .trend-line') ? 1 : 0`, { timeout: 15000, label: "T4: .trend-line у ученика" });
+  } catch (e) {
+    const diag = await page.eval(`(() => { const S = window.__app.S; const box = document.querySelector('[data-t-trend]'); let sess = null; try { sess = JSON.parse(localStorage.getItem("oge-session") || "null"); } catch (_) {} return {
+      view: S.view, rows: (S.results || S.rows || []).length, qz: (S.qzResults || []).length,
+      profile: S.profile ? {id: S.profile.id, course: S.profile.course, token: S.token} : null,
+      sess: sess && sess.profile ? {id: sess.profile.id, token: sess.token} : sess,
+      mockRows: (() => { try { return window.__MOCK.dbTable("results").filter(r => String(r.student_id) === String(S.profile && S.profile.id)).length; } catch (_) { return "ERR"; } })(),
+      quizzes: S.quizzes === null ? null : (S.quizzes || []).length,
+      box: box ? box.innerHTML.slice(0, 300) : null, body: (document.body.innerText || "").slice(0, 250) }; })()`).catch(err => ({ evalError: String(err) }));
+    console.log("       [T4 diag] " + JSON.stringify(diag).slice(0, 1200));
+    /* ленивая загрузка тестов могла дорисоваться уже после первого рендера — пробуем ещё раз */
+    await page.eval(`(() => { const b = document.querySelector('[data-go="stats"]'); if (b) b.click(); return true; })()`);
+    await page.waitFor(`document.querySelector('[data-t-trend] .trend-line') ? 1 : 0`, { timeout: 15000, label: "T4: .trend-line после повторного рендера" });
+  }
+  const st = await page.eval(`(() => { const box = document.querySelector('[data-t-trend]'); const tr = box.querySelector('.trend'); return {
+    points: tr ? +tr.dataset.points : 0, first: tr ? +tr.dataset.first : null, last: tr ? +tr.dataset.last : null,
+    dots: box.querySelectorAll('.trend-dot').length, text: box.innerText }; })()`);
+  assert(st.points >= 1, "T4: data-points < 1: " + st.points);
+  assert(st.dots >= 1, "T4: .trend-dot < 1: " + st.dots);
+  eq(st.last, 100, "T4: data-last (последняя по дате точка — 10/10)");
+  assert(/сейчас\s*100\s*%/i.test(st.text), "T4: в тексте нет «сейчас 100%»: " + JSON.stringify(st.text.slice(0, 300)));
 });
 
 /* ---------- U1: база самообучения + конструктор наборов учителя ---------- */

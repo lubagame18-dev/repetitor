@@ -227,10 +227,11 @@ function liveStart(){
     }
   });
   let presenceBusy = false;
+  /* «учебные» экраны: тест, статистика, самообучение и т.п. – не выдёргиваем ученика в комнату урока */
+  const quietView = () => ["quiz", "quizzes", "stats", "self", "plan", "look", "profile", "test", "entry"].includes(S.view);
   live.on("presence", {event:"sync"}, async () => {
     if (presenceBusy) return;
-    /* ученик проходит тест или смотрит раздел «Тесты» – не выдёргиваем его в комнату урока */
-    if (S.view === "quiz" || S.view === "quizzes") return;
+    if (quietView()) return;
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];
     const t = Object.values(live.presenceState()).flat().find(p => p.role === "teacher" && p.room && p.room.to?.some(id => mine.includes(id)));
     if (!(t && (t.room.at || 0) > (S.roomEnded || 0) && (!S.room || S.room.lesson !== t.room.lesson))) return;
@@ -240,7 +241,7 @@ function liveStart(){
       const ok = await ensureLesson({lesson: t.room.lesson, to: myRow?.id || S.profile.id});
       if (!ok) return;
       await load();   // свежие материалы к моменту приглашения/входа в комнату
-      if (S.view === "quiz" || S.view === "quizzes") return;   // тест могли открыть, пока грузили данные
+      if (quietView()) return;   // ученик уже ушёл на тест/статистику, пока грузили данные
       const title = S.course?.lessons.find(x => x.id === t.room.lesson)?.title || t.room.title || "";
       invite({...t.room, title});
     } finally { presenceBusy = false; }
@@ -831,10 +832,12 @@ function quizRestart(){
 async function finishQuiz(){
   const Q = S.quiz, A = S.qz; if (!Q || !A || A.done) return;
   const n = Q.questions.length, topics = Quiz.summarize(Q.questions, A.log);
-  const score = A.log.filter(x => x && x.ok).length;
+  /* в зачёт идёт только ответ с ПЕРВОЙ попытки: ошибка снижает результат, даже если исправился */
+  const score = A.log.filter(x => x && x.first).length;
+  const fixed = A.log.filter(x => x && x.ok && !x.first).length;
   const needsWork = topics.filter(t => t.needsWork).map(t => t.title);
   A.done = true;
-  A.result = {score, total:n, pct: n ? Math.round(score / n * 100) : 0, topics, needsWork};
+  A.result = {score, first: score, fixed, total:n, pct: n ? Math.round(score / n * 100) : 0, topics, needsWork};
   const at = new Date().toISOString();
   S.qzResults = [{quiz_id:Q.id, title:Q.title, score, total:n, details:{questions:A.log, topics}, needs_work:needsWork, created_at:at}, ...(S.qzResults || [])].slice(0, 100);
   if (S.quizzes) S.quizzes = S.quizzes.map(x => x.id === Q.id ? {...x, last:{score, total:n, at}} : x);
@@ -855,6 +858,8 @@ function viewQuizResult(){
     <div class="kicker">Тест по темам завершён</div>
     <h1 style="font-size:1.5rem;margin:6px 0 2px">${esc(Q.title)}</h1>
     <div class="quiz-score" data-score="${R.score}" data-total="${R.total}" data-pct="${R.pct}">${R.score} <small>из ${R.total} · ${R.pct}%</small></div>
+    <p class="small" style="margin:4px 0 0" data-q-first><b>Правильно с первой попытки: ${R.score} из ${R.total}</b>${R.fixed ? ` · исправлено со второй попытки: ${R.fixed}` : ""}</p>
+    <p class="small muted" style="margin:2px 0 0">В зачёт идёт только ответ с первой попытки: ошибка, даже исправленная на второй попытке, снижает результат.</p>
     <p style="margin:0">${R.pct === 100 ? "Котик ставит сто баллов!" : R.pct >= 80 ? "Отличный результат!" : R.pct >= 60 ? "Неплохо, есть что повторить." : "Есть темы, которые надо разобрать с учителем."}</p>
     <div><b>Надо доработать:</b> ${R.needsWork.length ? `<div class="quiz-topics">${R.needsWork.map(t => `<span class="chip bad">${esc(t)}</span>`).join("")}</div>` : `<div class="quiz-topics"><span class="chip good">все темы освоены</span></div>`}</div>
     <div class="section-title" style="margin:2px 0 0"><h2 style="font-size:1.1rem">Карта тем</h2></div>
@@ -1226,8 +1231,23 @@ function progressList(){
 }
 function viewStats(){
   const et = entryTest(), er = entryRes();
+  /* динамика: если тесты по темам ещё не загружены, подтягиваем результаты и перерисовываем график */
+  if (sb && !S.qzLoadTried && S.quizzes == null){
+    S.qzLoadTried = true;
+    loadQuizzes().then(ok => { if (!ok) S.qzLoadTried = false; else if (S.view === "stats") render(); });
+  }
+  let trend = "";
+  if (window.Trend){
+    const rows = [...(S.rows || []), ...(S.qzResults || []).map(r => ({created_at:r.created_at, kind:"quiz", score:r.score, total:r.total, lesson_id:r.quiz_id}))];
+    const titleOf = r => r.kind === "quiz"
+      ? ((S.quizzes || []).find(q => q.id === r.lesson_id)?.title || "тест по темам")
+      : (U.findLesson(S.course, r.lesson_id)?.title || "");
+    const points = window.Trend.pointsFromRows(rows, {titleOf, limit:30});
+    trend = `<div data-t-trend style="margin:12px 0">${window.Trend.chart(points, {title:"Динамика успеваемости", empty:"График появится после первого занятия."})}</div>`;
+  }
   return `<div class="section-title" style="margin-top:6px"><h2>Статистика</h2></div>
     ${U.progressHTML(progressList())}
+    ${trend}
     ${S.course ? window.mapHTML(S.course, S.results, S.hwres, S.writings, S.hw) : ""}
     ${et && er ? `<div class="section-title"><h2>Входной тест</h2></div>${window.entryHTML(et, er)}` : ""}
     ${!S.course && !er ? noCourse() : ""}`;
