@@ -748,4 +748,19 @@ body.play-open{overflow:hidden}
 /* форма «картинка по ссылке» (как .bd-embedform) */
 .bd-insertform{margin:8px 0;padding:12px 14px}
 @media (max-width:560px){.bd-stage{max-height:calc(100vh - 130px)}}
+/* ---------- доска v64: выделение объекта, удаление, изменение размера ---------- */
+.bd-selbox{position:absolute;z-index:5;box-sizing:border-box;border:1.6px dashed var(--violet);border-radius:6px;pointer-events:none;background:transparent}
+.bd-selbox[hidden]{display:none!important}
+.bd-sel-resize{position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;box-sizing:border-box;border-radius:4px;background:#fff;border:2px solid var(--violet);pointer-events:auto;cursor:nwse-resize;touch-action:none;box-shadow:0 2px 6px rgba(36,24,61,.25);z-index:1}
+.bd-sel-resize[hidden]{display:none!important}
+.bd-sel-resize:hover{background:var(--violet)}
+.bd-sel-bar{position:absolute;z-index:6;display:flex;gap:4px;align-items:center;padding:4px 5px;border-radius:10px;background:var(--glass-2);border:1px solid var(--line);box-shadow:0 8px 22px -10px rgba(36,24,61,.45);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);pointer-events:auto;white-space:nowrap}
+.bd-sel-bar[hidden]{display:none!important}
+.bd-sel-bar button{border:0;border-radius:7px;background:var(--chip);color:var(--ink);font:800 13px/1.2 Manrope,system-ui,sans-serif;padding:6px 8px;cursor:pointer;min-width:30px}
+.bd-sel-bar button:hover{background:var(--violet);color:#fff}
+.bd-sel-bar button[data-sel="del"]{color:var(--bad)}
+.bd-sel-bar button[data-sel="del"]:hover{background:var(--bad);color:#fff}
+.bd-sel-bar button[hidden]{display:none!important}
+@media (max-width:560px){.bd-sel-bar button{font-size:12px;padding:7px 8px}.bd-sel-resize{width:22px;height:22px;right:-11px;bottom:-11px}}
+
 

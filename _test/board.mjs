@@ -966,6 +966,171 @@ test("H4", "Вставка в точку: paste текста/картинки и
   if (!(tInfo.pages || []).some(p => p.key === key)) throw new Error("insertPage не добавил лист в info().pages");
 });
 
+/* ---------- task-27: I1–I3 (выделение, удаление, размер картинки/текста) ---------- */
+const selOf = (page, side) => page.eval(`${B}.selInfo(${JSON.stringify(side)})`);
+const selectItem = (page, side, id) => page.eval(`${B}.selectObj(${JSON.stringify(side)}, ${JSON.stringify(String(id))})`);
+const clickSel = (page, side, action) => page.eval(`${B}.clickSel(${JSON.stringify(side)}, ${JSON.stringify(action)})`);
+const menuClickRe = (page, re) => page.eval(`${B}.menuClick(new RegExp(${JSON.stringify(re)}))`);
+const ctxMenu = (page, side, lx, ly) => page.eval(`${B}.contextMenu(${JSON.stringify(side)}, ${JSON.stringify(lx)}, ${JSON.stringify(ly)})`);
+const itemById = (arr, id) => (arr || []).find(r => String(r.id) === String(id));
+/** id последнего элемента типа t (insertImage/insertText возвращают item без id — id присваивает api.add) */
+async function latestId(page, side, t, pred) {
+  const arr = await sideItems(page, side);
+  const rows = itemsOfType(arr, t).filter(r => !pred || pred(r.item));
+  if (!rows.length) throw new Error("не нашли на доске «" + side + "» элемент t:" + t + " после вставки");
+  return rows[rows.length - 1].id;
+}
+async function waitNoItem(page, side, id, label, timeout = 8000) {
+  const t0 = Date.now(); let arr = [];
+  while (Date.now() - t0 < timeout) {
+    try { arr = await sideItems(page, side); } catch (_) { arr = []; }
+    if (!itemById(arr, id)) return true;
+    await sleep(100);
+  }
+  throw new Error("элемент " + id + " не исчез у «" + side + "»: " + label + " :: " + JSON.stringify((arr || []).map(r => ({ id: r.id, t: r.item && r.item.t }))).slice(0, 400));
+}
+async function pressBoardKey(page, key) {
+  await page.eval(`(() => { try { document.body.focus(); } catch (_) {} const a = document.activeElement; if (a && a !== document.body && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return false; return true; })()`);
+  await page.key(key, key);
+}
+async function dragSelResize(page, side, dx, dy, steps = 12) {
+  const inf = await selOf(page, side);
+  if (!inf.resize) throw new Error("нет ручки .bd-sel-resize у выделенного объекта («" + side + "»)");
+  await page.drag(inf.resize.cx, inf.resize.cy, inf.resize.cx + dx, inf.resize.cy + dy, steps);
+  await page.eval(`${B}.whenIdle(${JSON.stringify(side)})`);
+  await sleep(150);
+  return await selOf(page, side);
+}
+test("I1", "Выделение+удаление: Delete/Backspace, кнопка [data-sel=del] и контекстное меню «Удалить» (картинка и надпись, обе стороны)", async ({ page, fixtures }) => {
+  await fresh(page);
+  const url = "data:image/png;base64," + fixtures.files.image1.b64;
+  /* 1) Delete по клавише */
+  const imgItem = await bcall(page, "teacher", "insertImage", url, 160, 160);
+  if (!imgItem) throw new Error("insertImage не вернул объект");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const img1 = await latestId(page, "teacher", "i");
+  await selectItem(page, "teacher", img1);
+  await sleep(150);
+  let s = await selOf(page, "teacher");
+  if (!s.exists) throw new Error("после select(id) нет рамки .bd-selbox");
+  if (!s.bar) throw new Error("после select(id) нет панели .bd-sel-bar");
+  if (!s.selected || String(s.selected.id) !== String(img1)) throw new Error("info().selected не совпал с select(id): " + JSON.stringify(s.selected));
+  await pressBoardKey(page, "Delete");
+  await waitNoItem(page, "teacher", img1, "Delete");
+  await waitNoItem(page, "student", img1, "Delete у второй стороны");
+  /* 2) кнопка 🗑 [data-sel=del] */
+  await bcall(page, "teacher", "insertImage", url, 260, 200);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const img2 = await latestId(page, "teacher", "i");
+  await selectItem(page, "teacher", img2); await sleep(150);
+  if (!(await clickSel(page, "teacher", "del"))) throw new Error("нет кнопки [data-sel=del] в .bd-sel-bar");
+  await waitNoItem(page, "teacher", img2, "кнопка 🗑");
+  await waitNoItem(page, "student", img2, "кнопка 🗑 у второй стороны");
+  /* 3) контекстное меню «Удалить» */
+  await bcall(page, "teacher", "insertImage", url, 360, 240);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const img3 = await latestId(page, "teacher", "i");
+  const one = itemById(await sideItems(page, "teacher"), img3);
+  if (!one) throw new Error("картинки нет в items после вставки");
+  await ctxMenu(page, "teacher", (+one.item.x || 0) + 40, (+one.item.y || 0) + 40);
+  await sleep(250);
+  const menu = await page.eval(`${B}.menuInfo()`);
+  if (!menu.items.length) throw new Error("после contextmenu не появилось меню (0 пунктов)");
+  const res = await menuClickRe(page, "удал");
+  if (!res.ok) throw new Error("в контекстном меню нет «Удалить»: " + JSON.stringify(res.items));
+  await waitNoItem(page, "teacher", img3, "контекстное меню «Удалить»");
+  /* 4) надпись по Backspace */
+  await bcall(page, "teacher", "insertText", "Удаляемая надпись", 180, 320);
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const tid = await latestId(page, "teacher", "t", it => String(it.s || "").includes("Удаляемая надпись"));
+  await selectItem(page, "teacher", tid); await sleep(150);
+  await page.eval(`(() => { try { document.body.focus(); } catch (_) {} return true; })()`);
+  await page.key("Backspace", "Backspace");
+  await waitNoItem(page, "teacher", tid, "Backspace (надпись)");
+  if ((await selOf(page, "teacher")).exists) throw new Error("после удаления .bd-selbox/панель не исчезли");
+});
+test("I2", "Ресайз картинки за .bd-sel-resize: w/h меняются с пропорциями, reset, remount и вторая сторона", async ({ page, fixtures }) => {
+  await fresh(page);
+  const url = "data:image/png;base64," + fixtures.files.image1.b64;
+  const img = await bcall(page, "teacher", "insertImage", url, 150, 180);
+  if (!img) throw new Error("insertImage не вернул объект");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const imgId = await latestId(page, "teacher", "i");
+  await selectItem(page, "teacher", imgId); await sleep(180);
+  const before = itemById(await sideItems(page, "teacher"), imgId);
+  const bw = +(before.item.w || 0), bh = +(before.item.h || 0);
+  if (!(bw > 0 && bh > 0)) throw new Error("у картинки нет w/h: " + JSON.stringify(before.item));
+  await dragSelResize(page, "teacher", 130, 70);
+  let cur = itemsOfType(await sideItems(page, "teacher"), "i")[0];
+  if (!cur) throw new Error("картинка исчезла после ресайза");
+  const nw = +cur.item.w, nh = +cur.item.h;
+  if (!(nw > bw + 20 && nh > bh + 10)) throw new Error("ресайз за угол не увеличил w/h: " + JSON.stringify({ bw, bh, nw, nh }));
+  const r0 = bw / bh, r1 = nw / nh;
+  if (Math.abs(r1 - r0) / r0 > 0.25) throw new Error("пропорции картинки сильно сломались: " + r0.toFixed(3) + " → " + r1.toFixed(3));
+  await waitSideItems(page, "student", a => { const x = itemsOfType(a, "i")[0]; return x && +x.item.w > bw + 20; }, "вторая сторона видит новый w");
+  /* reset возвращает исходный размер */
+  const sel1 = await selOf(page, "teacher");
+  if (sel1.selected && sel1.selected.id != null) await selectItem(page, "teacher", sel1.selected.id);
+  if (!(await clickSel(page, "teacher", "reset"))) throw new Error("нет кнопки [data-sel=reset] у картинки");
+  await page.eval(`${B}.whenIdle("teacher")`); await sleep(250);
+  const reset = itemsOfType(await sideItems(page, "teacher"), "i")[0];
+  if (!reset) throw new Error("картинка исчезла после reset");
+  if (Math.abs(+reset.item.w - bw) > 20) throw new Error("reset не вернул исходную ширину: было " + bw + ", стало " + reset.item.w);
+  /* увеличиваем и проверяем сохранение после remount + у второй стороны */
+  await selectItem(page, "teacher", reset.id); await sleep(150);
+  await dragSelResize(page, "teacher", 110, 55);
+  const big = itemsOfType(await sideItems(page, "teacher"), "i")[0];
+  const bigW = +big.item.w;
+  await page.eval(`${B}.remountReady("teacher")`);
+  const saved = itemsOfType(await waitSideItems(page, "teacher", a => itemsOfType(a, "i").length > 0, "картинка после remount"), "i")[0];
+  if (Math.abs(+saved.item.w - bigW) > 3) throw new Error("после remount w не сохранился: " + bigW + " → " + saved.item.w);
+  const onStudent = itemsOfType(await waitSideItems(page, "student", a => itemsOfType(a, "i").length > 0, "картинка у второй стороны"), "i")[0];
+  if (!onStudent || Math.abs(+onStudent.item.w - bigW) > 3) throw new Error("вторая сторона не видит сохранённый размер: " + JSON.stringify(onStudent && onStudent.item));
+});
+test("I3", "Текст: A+/A− меняют sz и высоту, resize за угол — w, reset = sz 22, sz сохраняется после remount", async ({ page }) => {
+  await fresh(page);
+  const t = await bcall(page, "teacher", "insertText", "Текст для проверки размера и шрифта", 180, 260);
+  if (!t) throw new Error("insertText не вернул объект");
+  await page.eval(`${B}.whenIdle("teacher")`); await sleep(150);
+  const tId = await latestId(page, "teacher", "t");
+  await selectItem(page, "teacher", tId); await sleep(180);
+  let s = await selOf(page, "teacher");
+  if (!s.selected) throw new Error("info().selected пуст после select текста");
+  const sz0 = +(s.selected.sz || 0) || 22;
+  if (!(await clickSel(page, "teacher", "plus"))) throw new Error("нет кнопки [data-sel=plus] для текста");
+  await page.eval(`${B}.whenIdle("teacher")`); await sleep(200);
+  let s1 = await selOf(page, "teacher");
+  let it1 = itemsOfType(await sideItems(page, "teacher"), "t")[0];
+  if (!(+((s1.selected || {}).sz || 0) > sz0)) throw new Error("A+ не увеличил sz: было " + sz0 + ", selected=" + JSON.stringify(s1.selected));
+  const h1 = +it1.item.h || 0;
+  await clickSel(page, "teacher", "plus"); await page.eval(`${B}.whenIdle("teacher")`); await sleep(200);
+  let s2 = await selOf(page, "teacher");
+  let it2 = itemsOfType(await sideItems(page, "teacher"), "t")[0];
+  if (!(+((s2.selected || {}).sz || 0) > +((s1.selected || {}).sz || 0))) throw new Error("второй A+ не увеличил sz");
+  if (!(+it2.item.h >= h1)) throw new Error("высота текста не выросла вместе с sz: " + h1 + " → " + it2.item.h);
+  await clickSel(page, "teacher", "minus"); await page.eval(`${B}.whenIdle("teacher")`); await sleep(200);
+  let s3 = await selOf(page, "teacher");
+  if (!(+((s3.selected || {}).sz || 0) < +((s2.selected || {}).sz || 0))) throw new Error("A− не уменьшил sz");
+  /* resize за угол меняет ширину */
+  const beforeW = +(itemsOfType(await sideItems(page, "teacher"), "t")[0].item.w || 0);
+  await dragSelResize(page, "teacher", 90, 45);
+  const widened = +(itemsOfType(await sideItems(page, "teacher"), "t")[0].item.w || 0);
+  if (!(widened > beforeW + 15)) throw new Error("resize за угол не изменил ширину текста: " + beforeW + " → " + widened);
+  /* reset: sz = 22 */
+  if (!(await clickSel(page, "teacher", "reset"))) throw new Error("нет кнопки [data-sel=reset] для текста");
+  await page.eval(`${B}.whenIdle("teacher")`); await sleep(250);
+  const s4 = await selOf(page, "teacher");
+  if (Math.abs(+((s4.selected || {}).sz || 0) - 22) > 1) throw new Error("reset не вернул sz=22: " + JSON.stringify(s4.selected));
+  /* sz сохраняется после remount */
+  const cur = itemsOfType(await sideItems(page, "teacher"), "t")[0];
+  await selectItem(page, "teacher", cur.id); await sleep(150);
+  await clickSel(page, "teacher", "plus"); await page.eval(`${B}.whenIdle("teacher")`); await sleep(200);
+  const wantSz = +((await selOf(page, "teacher")).selected.sz || 0);
+  await page.eval(`${B}.remountReady("teacher")`);
+  const after = itemsOfType(await waitSideItems(page, "teacher", a => itemsOfType(a, "t").length > 0, "текст после remount"), "t")[0];
+  if (Math.abs(+(after.item.sz || 22) - wantSz) > 1) throw new Error("sz не сохранился после remount: " + wantSz + " → " + (after.item.sz || 22));
+});
+
 /* ---------- раннер ---------- */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 

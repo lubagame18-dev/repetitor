@@ -1,4 +1,4 @@
-# Стенд проверок repetitor (v62) — `_test/`
+# Стенд проверок repetitor (v63) — `_test/`
 
 Офлайн-проверки актуальной версии сайта «репетитор» в реальном Chrome, без npm и без сети.
 Наборы идут последовательно (`run.mjs`), U1 — отдельным процессом:
@@ -6,7 +6,7 @@
 | набор | файл | что проверяет | браузер |
 |-------|------|---------------|---------|
 | Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai")` (`generate_tasks`, **`build_lesson`**, `edit_lesson`/`generate_theory`), формы `results`/`topic_quiz_results` для графика динамики — **67 проверок** | нет |
-| Доска | `board.mjs` + `board.html` | **19 сценариев**: 15 старых (якоря, вложения, текст, живой фон, пустота) + **H1–H4** (точечный ластик, инлайн-текст, зум/пан/расширение, вставка в точку) | да |
+| Доска | `board.mjs` + `board.html` | **22 сценария**: 15 старых (якоря, вложения, текст, живой фон, пустота) + **H1–H4** (точечный ластик, инлайн-текст, зум/пан/расширение, вставка в точку) + **I1–I3** (выделение/удаление, ресайз картинки и текста) | да |
 | E2E (основной) | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1–b3, **Q1–Q6**, **S1–S4**, **T1–T4**, **V1–V3**, U2 — **22 сценария** | да |
 | E2E (U1 отдельно) | `e2e.mjs` `E2E_ONLY=U1` | база самообучения и конструктор наборов учителя (U1) | да |
 
@@ -16,12 +16,13 @@
 cd repetitor-live
 node _test/run.mjs              # всё: mock-selftest + доска + e2e (22) + e2e U1
 node _test/mock-selftest.mjs    # только мок (быстро, Chrome не нужен): 67/67
-node _test/board.mjs            # только доска: 19/19
+node _test/board.mjs            # только доска: 22/22
 node _test/e2e.mjs              # только основной e2e: 22/22
 E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 E2E_ONLY=V node _test/e2e.mjs   # только панель «Инструменты»/генерация V1–V3
 E2E_ONLY=U1 node _test/e2e.mjs  # отдельно U1 (вкладки делят localStorage — нужен свой процесс)
-BOARD_ONLY=H node _test/board.mjs   # только новые H1–H4
+BOARD_ONLY=H node _test/board.mjs   # только H1–H4 (ластик/инлайн/зум/вставка)
+BOARD_ONLY=I node _test/board.mjs   # только I1–I3 (выделение/Delete/кнопка/меню, ресайз картинки и текста)
 ```
 
 Полезные переменные окружения:
@@ -164,6 +165,9 @@ fake-каналом; `window.__boards = {teacher, student}`, хелперы — 
 | **H1** | **точечный ластик**: две параллельные линии в 12 лог. px (радиус ER=7 + полутолщина — при 2–4 px соседняя линия неизбежно попадает в радиус; 12 px — «рядом, но вне радиуса») + надпись через `insertText`; ластик по середине первой линии → старый stroke-item удалён и заменён ≥2 новыми `t:"s"` кусками, второй штрих (id/p не изменились) и надпись целы; клик ластиком рядом с надписью её не удаляет, внутри реального текста — удаляет |
 | **H2** | **инлайн-текст**: тап T → `.bd-editor.bd-inline` (без старого большого окна), textarea `.bd-inline-ta`, длинная строка увеличивает ширину (авто-размер); при наведении видна ручка `.bd-inline-drag` (opacity), таскает окошко; `.bd-inline-resize`/`.bd-editor-handle` меняет w/h; Enter → объект `{t:"t", s, x,y,w,h}` в точке клика с авто w/h; remount — надпись жива |
 | **H3** | **зум/пан/расширение**: `[data-zoom=in/out/reset/fit]` и `[data-zoom-label]` меняют `info().zoom`; Ctrl+wheel зумит к курсору; `.bd-stage` scroll → `info().scrollX/Y`; hand-drag прокручивает; `[data-act=extend]` увеличивает `info().height`; после `setZoom(1.6)` `lastPoint()` и нарисованный штрих совпадают с логическими координатами клика (±8) |
+| **I1** | **выделение и удаление**: `board.select(id)`/✥-тап по объекту → `.bd-selbox` (`data-id`), `.bd-sel-bar`, `info().selected`; 🗑 `[data-sel=del]`, **Delete/Backspace** и контекстное меню (`contextmenu` → `.bd-menu [data-mact=del]` «🗑 Удалить») удаляют картинку и надпись у обеих сторон, после удаления рамка/панель скрыты |
+| **I2** | **ресайз картинки**: drag `.bd-sel-resize` увеличивает w/h с сохранением пропорций (id переезжает, selection не теряется), `[data-sel=reset]` возвращает базовый w, после remount размер сохранён и виден второй стороне |
+| **I3** | **ресайз/шрифт текста**: A+/A− меняют `sz` (22→26, шаг 2, высота растёт), drag угла меняет w/h, `[data-sel=reset]` → sz=22/авто-ширина, `sz` сохраняется после remount |
 | **H4** | **вставка в точку**: клик по холсту обновляет `lastPoint`; paste текста открывает `.bd-inline` в lastPoint (Enter → t-объект ±20); `insertText/insertImage` API ставят объекты в заданные (x,y); вставки видны второй стороне; paste картинки — `t:"i"` в lastPoint; `insertPage` добавляет и открывает лист (`info().page`, `info().pages`) |
 
 **Живой фон листа.** Ученик после отрисовки live-листа шлёт `send("bg",{page,html})`;
@@ -180,7 +184,7 @@ setZoom/zoomBy/fitWidth/extendHeight`; `info()` доп. `zoom, scrollX, scrollY,
 - `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz + ai);
 - `mock-selftest.mjs` — самопроверка мока без браузера (67 проверок);
 - `e2e.mjs` — мир учителя/ученика, сценарии a,b1–b3,Q1–Q6,S1–S4,T1–T4,V1–V3,U1,U2;
-- `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 19 сценариев (15 старых + H1–H4);
+- `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 22 сценария (15 старых + H1–H4 + I1–I3);
 - `cdp.mjs` — мини-драйвер CDP (Chrome, мышь/клавиатура, `Runtime.evaluate`, скриншоты);
 - `serve.mjs` — статический сервер корня worktree (без кэша, авто-порт);
 - `artifacts/` — скриншоты падений (создаётся при падении).

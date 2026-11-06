@@ -809,6 +809,76 @@
   function itemsJson(side) { try { return JSON.stringify(items(side)); } catch (_) { return "[]"; } }
   function countItems(side, t) { return items(side).filter(r => (t == null || (r.item && r.item.t === t))).length; }
 
+  /* ---------- task-27: выделение, удаление, размер картинки/текста ---------- */
+  function selectedOf(side) {
+    try { const i = info(side); if (i && i.selected) return i.selected; } catch (_) {}
+    try { const h = handles[side]; if (h && typeof h.selected === "function") return h.selected(); } catch (_) {}
+    return null;
+  }
+  function selectObj(side, id) {
+    const h = handles[side];
+    if (!h || typeof h.select !== "function") throw new Error("у доски «" + side + "» нет API select()");
+    h.select(String(id));
+    return true;
+  }
+  function deleteSelectedObj(side) {
+    const h = handles[side];
+    if (!h || typeof h.deleteSelected !== "function") throw new Error("у доски «" + side + "» нет API deleteSelected()");
+    return h.deleteSelected();
+  }
+  function rectOfEl(e) { if (!e) return null; const q = e.getBoundingClientRect(); return { x: q.left, y: q.top, w: q.width, h: q.height, cx: q.left + q.width / 2, cy: q.top + q.height / 2 }; }
+  function selInfo(side) {
+    const r = root(side); if (!r) return { exists: false };
+    const vis = sel => [...r.querySelectorAll(sel)].filter(isVisible);
+    const boxEl = vis(".bd-selbox, [data-bd-sel]")[0] || null;
+    const resizeEl = vis(".bd-sel-resize")[0] || null;
+    const barEl = vis(".bd-sel-bar, [data-bd-selbar]")[0] || null;
+    const c = cvRect(side), s = scaleOf(side);
+    const br = boxEl ? boxEl.getBoundingClientRect() : null;
+    const buttons = barEl ? [...barEl.querySelectorAll("[data-sel]")].map(b => ({ action: b.dataset.sel, text: (b.textContent || "").trim(), disabled: !!b.disabled, ...rectOfEl(b) })) : [];
+    return {
+      exists: !!boxEl, boxEl, resizeEl, barEl,
+      box: rectOfEl(boxEl),
+      logical: br && c && s ? { x: (br.left - c.left) / s, y: (br.top - c.top) / s, w: br.width / s, h: br.height / s } : null,
+      resize: rectOfEl(resizeEl), bar: rectOfEl(barEl), buttons, selected: selectedOf(side),
+    };
+  }
+  function clickSel(side, action) {
+    const r = root(side); if (!r) return false;
+    const b = [...r.querySelectorAll('[data-sel="' + action + '"]')].find(isVisible) || r.querySelector('[data-sel="' + action + '"]');
+    if (!b) return false; b.click(); return true;
+  }
+  /** контекстное меню по логической точке: dispatch contextmenu на элемент под точкой */
+  function contextMenu(side, lx, ly) {
+    const c = cv(side); if (!c) return false;
+    const p = point(side, lx, ly); if (!p) return false;
+    const el = document.elementFromPoint(p.x, p.y) || c;
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: p.x, clientY: p.y, button: 2, buttons: 2 }));
+    return true;
+  }
+  function menuInfo() {
+    const sel = ".bd-ctx, .bd-menu, [data-bd-menu], .bd-sel-ctx, [role=menu]";
+    const menus = [...document.querySelectorAll(sel)].filter(isVisible);
+    const items = [];
+    menus.forEach(m => [...m.querySelectorAll("button, [data-act], [role=menuitem], a")].filter(isVisible).forEach(el => {
+      const r = rectOfEl(el);
+      items.push({ text: (el.textContent || "").trim(), act: el.dataset.act || "", el, x: r.x, y: r.y, w: r.w, h: r.h, cx: r.cx, cy: r.cy });
+    }));
+    return { menus: menus.map(rectOfEl), items };
+  }
+  function menuClick(re) {
+    const rx = new RegExp(re.source, re.flags.includes("i") ? re.flags : re.flags + "i");
+    const { items } = menuInfo();
+    const it = items.find(x => rx.test(x.text) || rx.test(x.act));
+    if (!it) return { ok: false, items: items.map(x => x.text) };
+    it.el.click();
+    return { ok: true, text: it.text };
+  }
+  function closeMenus() {
+    [...document.querySelectorAll(".bd-ctx, .bd-menu, [data-bd-menu], .bd-sel-ctx, [role=menu]")].forEach(m => { try { m.remove(); } catch (_) {} });
+    return true;
+  }
+
   window.__board = {
     LESSON, CHANNEL, W, PAGE_HTML_MAX, PAGE_KEY, LIVE_PAGES, sleep, clone,
     HUB, api, store, dump, storeAll, seed, clearStore,
@@ -826,5 +896,6 @@
     apiNames, boardCall, lastPoint, boardView, zoomOf, scrollEl, scrollInfo, setScroll,
     zoomBtn, clickZoom, zoomLabel, extendBtn, extendBoard, setZoom, zoomBy, fitWidth, wheelBoard,
     inlineInfo, inlineType, hoverInline, pasteBoard, items, itemsJson, countItems,
+    selectedOf, selectObj, deleteSelectedObj, selInfo, clickSel, contextMenu, menuInfo, menuClick, closeMenus,
   };
 })();

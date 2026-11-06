@@ -37,7 +37,16 @@
    * вставка в точку: paste текста открывает .bd-inline в lastPoint, картинка из буфера и
      drag&drop файлов вставляются в точку; API для панели учителя: insertText/insertNote/
      insertImage/insertPage/pasteAtPoint/getView/setZoom/zoomBy/fitWidth/extendHeight/lastPoint;
-   * заполнение .blank на основном листе: тап T по пропуску открывает редактор над ним. */
+   * заполнение .blank на основном листе: тап T по пропуску открывает редактор над ним.
+
+   v64 «выделение и размеры»:
+   * выделение объекта (move-tap / API select): пунктирная рамка .bd-selbox[data-bd-sel] с data-id,
+     ручка .bd-sel-resize и панель .bd-sel-bar с [data-sel=del|minus|plus|reset];
+   * удаление: 🗑, Delete/Backspace (без фокуса в полях), пункт «Удалить» в контекстном меню;
+   * ресайз картинки за угол (пропорции; Shift – свободно, мин 40), «Сбросить» к базовому bw/bh;
+   * текст с полем sz (12..96, по умолчанию 22): drawText/wrapLines/textHeight/инлайн-редактор
+     учитывают sz, A−/A+ меняют sz (шаг 2), угол меняет w/h, «Сбросить» – sz=22 и авто-ширина;
+   * API select(id)/selected()/deleteSelected(); info().selected = {id,type,x,y,w,h,sz?} | null. */
 window.Board = (() => {
   const W = 800;                        // логическая ширина листа
   const COLORS = ["#24183d", "#7b4cf5", "#ee5fa8", "#1f9d55", "#d6334a"];
@@ -46,6 +55,8 @@ window.Board = (() => {
   const ITEM_MAX = 52000;               // с запасом для одной картинки-объекта
   const TEXT_FONT = "600 22px Manrope, system-ui, sans-serif";
   const TEXT_LINE = 28;
+  const TEXT_SZ_MIN = 12, TEXT_SZ_MAX = 96, TEXT_SZ_DEFAULT = 22;   // размер шрифта надписи (sz)
+  const SEL_MIN = 40;                                               // минимальный размер объекта при ресайзе (логические px)
   const TEXT_MAX = 4000;
   const DEFAULT_TEXT_W = 260;
   const TEXT_MIN_W = 120;               // авто-ширина инлайн-редактора
@@ -92,6 +103,11 @@ window.Board = (() => {
     let lastGrow = 0;                  // авто-расширение высоты при рисовании у нижнего края
     let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
     let lastWheelSig = "", lastWheelAt = 0;      // дедупликация повторно отправленного wheel-события
+    let selectedId = null;                       // выделенный объект (картинка/надпись)
+    let selResize = null;                        // текущий жест ресайза рамкой выделения
+    let selBusy = false;                         // идёт сохранение изменения выделенного (защита от двойных кликов)
+    let selQueue = Promise.resolve();            // очередь сохранений (A+/A−/reset) — без гонок replaceItem
+    let selPending = 0;                          // сколько изменений выделенного ещё не сохранено (для whenIdle)
 
     /* ---------- общий фон «живого» листа: ученик – источник правды ----------
        На уроке живой лист собирается по-разному: у учителя roomPane (ключи, ответы, подсказки,
@@ -140,11 +156,19 @@ window.Board = (() => {
         <canvas class="bd-cv"></canvas>
         <div class="bd-cursors"></div>
         <div class="bd-erasecur" hidden></div>
+        <div class="bd-selbox" data-bd-sel hidden><span class="bd-sel-resize" data-bd-selresize></span></div>
+        <div class="bd-sel-bar" data-bd-selbar hidden role="toolbar" aria-label="Действия с объектом">
+          <button type="button" data-sel="del" title="Удалить (Delete)">🗑</button>
+          <button type="button" data-sel="minus" title="Меньше шрифт (A−)">A−</button>
+          <button type="button" data-sel="plus" title="Больше шрифт (A+)">A+</button>
+          <button type="button" data-sel="reset" title="Сбросить размер">Сбросить</button>
+        </div>
       </div></div></div>
       <div class="bd-menu" hidden role="menu" aria-label="Быстрые действия"></div>`;
     const $ = s => root.querySelector(s);
     const stage = $(".bd-stage"), wrap = $(".bd-wrap"), bg = $(".bd-bg"), cv = $(".bd-cv"), ctx = cv.getContext("2d"), curLayer = $(".bd-cursors");
     const eraseCur = $(".bd-erasecur");
+    const selBox = $(".bd-selbox"), selResizeEl = $(".bd-sel-resize"), selBar = $(".bd-sel-bar");
 
     /* ---------- координаты и якоря к элементам листа ----------
        Ученик подчёркивает предложение, у учителя лист свёрстан иначе (другие поля/шрифт/масштаб) –
@@ -348,10 +372,15 @@ window.Board = (() => {
       }
       ctx.stroke(); ctx.restore();
     }
-    function wrapLines(text, maxW){
+    /* ---------- текст: размер шрифта sz у каждой надписи (12..96, по умолчанию 22) ---------- */
+    function textSz(t){ const z = +((t && t.sz) || TEXT_SZ_DEFAULT); return Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, Number.isFinite(z) ? z : TEXT_SZ_DEFAULT)); }
+    function textFont(sz){ return `600 ${sz}px Manrope, system-ui, sans-serif`; }
+    function textLineH(sz){ return Math.max(10, Math.round((+sz || TEXT_SZ_DEFAULT) * TEXT_LINE / TEXT_SZ_DEFAULT)); }
+    function wrapLines(text, maxW, sz){
+      const z = +sz || TEXT_SZ_DEFAULT;
       const out = [];
       ctx.save();
-      ctx.font = TEXT_FONT;
+      ctx.font = textFont(z);
       for (const raw of String(text == null ? "" : text).split("\n")){
         if (!raw){ out.push(""); continue; }
         let line = "";
@@ -365,21 +394,22 @@ window.Board = (() => {
       ctx.restore();
       return out;
     }
-    function textLines(t){ return wrapLines(t.s, t.w || DEFAULT_TEXT_W); }
-    function textHeight(t){ return Math.max(TEXT_LINE, textLines(t).length * TEXT_LINE); }
+    function textLines(t){ return wrapLines(t.s, t.w || DEFAULT_TEXT_W, textSz(t)); }
+    function textHeight(t){ const lh = textLineH(textSz(t)); return Math.max(lh, textLines(t).length * lh); }
     function drawText(t){
+      const z = textSz(t), lh = textLineH(z);
       const lines = textLines(t);
-      ctx.save(); ctx.font = TEXT_FONT;
+      ctx.save(); ctx.font = textFont(z);
       if (t.note){
         const widest = Math.max(TEXT_MIN_W, ...lines.map(l => ctx.measureText(l || " ").width)) + 16;
-        const hh = Math.max(TEXT_LINE, lines.length * TEXT_LINE) + 10;
+        const hh = Math.max(lh, lines.length * lh) + 10;
         ctx.fillStyle = "rgba(123,76,245,.12)";
         ctx.strokeStyle = "rgba(123,76,245,.35)"; ctx.lineWidth = 1;
         if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(t.x - 6, t.y - 5, widest, hh, 8); ctx.fill(); ctx.stroke(); }
         else ctx.fillRect(t.x - 6, t.y - 5, widest, hh);
       }
-      ctx.fillStyle = t.c || COLORS[0]; ctx.font = TEXT_FONT; ctx.textBaseline = "top";
-      lines.forEach((line, i) => { if (line) ctx.fillText(line, t.x, t.y + i * TEXT_LINE); });
+      ctx.fillStyle = t.c || COLORS[0]; ctx.font = textFont(z); ctx.textBaseline = "top";
+      lines.forEach((line, i) => { if (line) ctx.fillText(line, t.x, t.y + i * lh); });
       ctx.restore();
     }
     function imageSize(it){ const w = it.w || 480; return [w, it.h || w / (it.ratio || 1.5)]; }
@@ -396,6 +426,7 @@ window.Board = (() => {
       drafts.forEach(d => drawStroke(d));
       if (drawing && !drawing.erase) drawStroke(drawing);
       placeCursors();
+      placeSelection();
     }
     function pos(e){ const r = cv.getBoundingClientRect(); const s = scale || 1; return [Math.round((e.clientX - r.left) / s * 10) / 10, Math.round((e.clientY - r.top) / s * 10) / 10]; }
 
@@ -441,6 +472,181 @@ window.Board = (() => {
       return best;
     }
 
+    /* ---------- выделение объекта: рамка .bd-selbox, панель .bd-sel-bar, удаление, ресайз ---------- */
+    function selectedItem(){
+      if (selectedId == null) return null;
+      const it = items.get(String(selectedId));
+      return it && (it.t === "i" || it.t === "t") ? it : null;
+    }
+    function selectedInfo(){
+      const it = selectedItem();
+      if (!it) return null;
+      const b = itemBox(it);
+      const o = {id:String(selectedId), type:it.t, x:Math.round(b.x), y:Math.round(b.y), w:Math.round(b.w), h:Math.round(b.h)};
+      if (it.t === "t") o.sz = textSz(it);
+      return o;
+    }
+    function select(id){
+      if (id == null || id === ""){ selectedId = null; selResize = null; placeSelection(); return null; }
+      const it = items.get(String(id));
+      if (!it || (it.t !== "i" && it.t !== "t")){ selectedId = null; selResize = null; placeSelection(); return null; }
+      selectedId = String(id);
+      /* база для кнопки «Сбросить»: исходный размер картинки (у старых объектов – текущий) */
+      if (it.t === "i" && (it.bw == null || it.bh == null)){ it.bw = it.w; it.bh = it.h; }
+      placeSelection();
+      return selectedInfo();
+    }
+    function placeSelection(){
+      if (!selBox) return;
+      const it = selectedItem();
+      if (!it){ selBox.hidden = true; if (selBar) selBar.hidden = true; return; }
+      const b = itemBox(it);
+      const x = b.x * scale, y = b.y * scale, w2 = Math.max(2, b.w * scale), h2 = Math.max(2, b.h * scale);
+      selBox.hidden = false;
+      selBox.setAttribute("data-id", String(selectedId));
+      selBox.style.left = Math.round(x) + "px";
+      selBox.style.top = Math.round(y) + "px";
+      selBox.style.width = Math.round(w2) + "px";
+      selBox.style.height = Math.round(h2) + "px";
+      if (selResizeEl) selResizeEl.hidden = false;
+      if (selBar){
+        const isT = it.t === "t";
+        selBar.hidden = false;
+        selBar.querySelectorAll('[data-sel="minus"], [data-sel="plus"]').forEach(b2 => { b2.hidden = !isT; });
+        /* панель над рамкой, если не влезает – под ней; не вылезаем за пределы листа */
+        const bw = selBar.offsetWidth || 190, bh = selBar.offsetHeight || 32;
+        let bx = Math.round(x + w2 / 2 - bw / 2);
+        let by = Math.round(y - bh - 8);
+        if (by < 2) by = Math.round(y + h2 + 8);
+        const maxX = Math.max(2, Math.round(W * scale) - bw - 4);
+        const maxY = Math.max(2, Math.round(height * scale) - bh - 4);
+        selBar.style.left = Math.max(2, Math.min(bx, maxX)) + "px";
+        selBar.style.top = Math.max(2, Math.min(by, maxY)) + "px";
+      }
+    }
+    async function deleteSelected(){
+      const it = selectedItem();
+      if (!it) return false;
+      const id = String(selectedId);
+      select(null);
+      await removeIds([id]);
+      return true;
+    }
+    /* сохранить изменённый объект: replaceItem (add новых размеров + remove старого), выделение – на новый id */
+    async function persistSelected(newItem, fallback){
+      const id = selectedId != null ? String(selectedId) : null;
+      if (!id || selBusy) return null;
+      selBusy = true;
+      try {
+        const nid = await replaceItem(id, newItem, fallback);
+        if (nid != null){ selectedId = String(nid); placeSelection(); }
+        else redraw();
+        return nid;
+      } finally { selBusy = false; }
+    }
+    function enqueueSelPersist(snapshot, fallback){
+      if (selectedId == null) return;
+      selPending++;
+      selQueue = selQueue.then(() => persistSelected(snapshot, fallback)).catch(() => null).finally(() => { selPending--; });
+    }
+    async function changeTextSz(delta){
+      const it = selectedItem();
+      if (!it || it.t !== "t") return false;
+      const z = Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, textSz(it) + (+delta || 0)));
+      if (z === textSz(it)) return false;
+      const base = Object.assign({}, it);
+      const ni = Object.assign({}, it, {sz:z});
+      ni.h = textHeight(ni);
+      items.set(String(selectedId), ni);
+      redraw(); placeSelection();
+      enqueueSelPersist(Object.assign({}, ni), base);
+      return true;
+    }
+    async function resetSelected(){
+      const it = selectedItem();
+      if (!it) return false;
+      const base = Object.assign({}, it);
+      let ni;
+      if (it.t === "i"){
+        const r = +it.ratio || (it.w && it.h ? it.w / it.h : 1.5);
+        const bw = +it.bw || 480, bh = +it.bh || Math.round(bw / (r || 1.5));
+        ni = Object.assign({}, it, {w:bw, h:bh});
+      } else {
+        const sz = TEXT_SZ_DEFAULT;
+        const tb = autoTextBox(it.s, sz);
+        ni = Object.assign({}, it, {sz, w:tb.w, h:0});
+        ni.h = textHeight(ni);
+      }
+      items.set(String(selectedId), ni);
+      redraw(); placeSelection();
+      enqueueSelPersist(Object.assign({}, ni), base);
+      return true;
+    }
+    function selBarAction(kind){
+      if (kind === "del") return deleteSelected();
+      if (kind === "minus") return changeTextSz(-2);
+      if (kind === "plus") return changeTextSz(2);
+      if (kind === "reset") return resetSelected();
+      return false;
+    }
+    /* ресайз за угол .bd-sel-resize: картинка – с пропорциями (Shift – свободно), текст – ширина/высота */
+    function startSelResize(e){
+      const it = selectedItem();
+      if (!it) return;
+      e.preventDefault(); e.stopPropagation();
+      const b = itemBox(it);
+      selResize = {sx:e.clientX, sy:e.clientY, w:b.w, h:b.h, ratio:(b.w || 1) / (b.h || 1), base:Object.assign({}, it), changed:false};
+      try { selResizeEl.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    function onSelResizeMove(e){
+      if (!selResize) return;
+      const it = selectedItem();
+      if (!it){ endSelResize(e); return; }
+      e.preventDefault();
+      const dx = (e.clientX - selResize.sx) / scale, dy = (e.clientY - selResize.sy) / scale;
+      const sw = selResize.w, sh = selResize.h;
+      if (it.t === "i"){
+        if (e.shiftKey){
+          it.w = Math.max(SEL_MIN, Math.round(sw + dx));
+          it.h = Math.max(SEL_MIN, Math.round(sh + dy));
+        } else {
+          const k = Math.max(0.08, Math.max((sw + dx) / sw, (sh + dy) / sh));
+          const w = Math.max(SEL_MIN, Math.round(sw * k));
+          it.w = w;
+          it.h = Math.max(SEL_MIN, Math.round(w / (selResize.ratio || 1.5)));
+        }
+      } else {
+        it.w = Math.max(SEL_MIN, Math.round(sw + dx));
+        it.h = Math.max(20, Math.round(sh + dy));
+        if (it.sz == null) it.sz = TEXT_SZ_DEFAULT;
+      }
+      selResize.changed = true;
+      redraw(); placeSelection();
+    }
+    function endSelResize(e){
+      const sr = selResize;
+      if (!sr) return;
+      selResize = null;
+      try { selResizeEl.releasePointerCapture(e.pointerId); } catch (_) {}
+      const it = selectedItem();
+      if (!it || !sr.changed) return;
+      enqueueSelPersist(Object.assign({}, it), sr.base);
+    }
+    if (selResizeEl){
+      selResizeEl.addEventListener("pointerdown", startSelResize);
+      selResizeEl.addEventListener("pointermove", onSelResizeMove);
+      selResizeEl.addEventListener("pointerup", endSelResize);
+      selResizeEl.addEventListener("pointercancel", endSelResize);
+    }
+    if (selBar){
+      selBar.addEventListener("pointerdown", e => e.stopPropagation());
+      selBar.addEventListener("click", e => {
+        const b = e.target.closest("[data-sel]"); if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        selBarAction(b.dataset.sel);
+      });
+    }
+
     /* ---------- лист ---------- */
     function stepPage(dir){
       const i = pagesArr.findIndex(x => x.key === page);
@@ -451,7 +657,12 @@ window.Board = (() => {
     }
     const onKey = e => {
       if (!root.isConnected) return;
-      if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || document.activeElement?.isContentEditable) return;
+      const ae = document.activeElement;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(ae?.tagName || "") || ae?.isContentEditable) return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedItem()){
+        e.preventDefault(); deleteSelected(); return;
+      }
+      if (e.key === "Escape" && selectedItem()){ e.preventDefault(); select(null); return; }
       if (e.key === "ArrowRight" || e.key === "PageDown") { stepPage(1); }
       if (e.key === "ArrowLeft" || e.key === "PageUp") { stepPage(-1); }
     };
@@ -596,7 +807,7 @@ window.Board = (() => {
       key = String(key);
       if (!pagesArr.some(p => p.key === key)) key = pagesArr[0].key;
       if (editor) closeEditor(true);
-      moving = null; textTap = null;
+      moving = null; textTap = null; selectedId = null; selResize = null;
       if (page && page !== key) pageCache.set(page, [...items.entries()].filter(([id]) => !id.startsWith("tmp") && !id.startsWith("er")).map(([id, item]) => ({id, item})));
       const tok = ++openTok;
       page = key;
@@ -761,9 +972,11 @@ window.Board = (() => {
         if (page === pg){ items.set(id, item); mine.push(id); layout(); }
         else redraw();
         send("add", {id, item, page:pg});
+        return id;
       } catch(_) {
         items.delete(tmp); redraw();
         toast("Не сохранилось на доске. Проверьте интернет.");
+        return null;
       } finally { saving--; }
     }
     async function removeRow(pg, id){
@@ -777,19 +990,20 @@ window.Board = (() => {
       if (!ids || !ids.length) return;
       const pg = page;
       ids.forEach(id => items.delete(String(id)));
+      if (selectedId != null && ids.some(id => String(id) === String(selectedId))) selectedId = null;
       redraw(); layout();
       saving++;
       try { await o.api.remove(pg, ids.filter(id => !String(id).startsWith("tmp"))); } catch(_) {}
       finally { saving--; }
       send("remove", {ids, page:pg});
     }
-    /* заменить объект: сначала сохраняем новую позицию, потом убираем старую (ретрай) */
+    /* заменить объект: сначала сохраняем новую позицию, потом убираем старую (ретрай). Возвращает новый id. */
     async function replaceItem(oldId, newItem, fallback){
       const pg = page;
       oldId = String(oldId);
       const old = items.get(oldId);
-      if (!old){ await addItem(newItem); return; }
-      if (oldId.startsWith("tmp")){ items.set(oldId, newItem); redraw(); layout(); return; }
+      if (!old){ await addItem(newItem); return null; }
+      if (oldId.startsWith("tmp")){ items.set(oldId, newItem); redraw(); layout(); return oldId; }
       let newId;
       saving++;
       try {
@@ -797,24 +1011,27 @@ window.Board = (() => {
         catch (_) {
           if (items.has(oldId)){ items.set(oldId, fallback || old); redraw(); }
           toast("Не удалось сохранить. Объект остался на прежнем месте.");
-          return;
+          return null;
         }
         if (page === pg){
           items.delete(oldId); items.set(newId, newItem); mine.push(newId);
+          if (selectedId != null && String(selectedId) === oldId) selectedId = String(newId);
           redraw(); layout();
         }
         const ok = await removeRow(pg, oldId);
         send("move", {id:oldId, newId, item:newItem, page:pg});
         if (!ok) toast("Старая копия могла остаться на доске.");
       } finally { saving--; }
+      return newId;
     }
 
     /* ---------- инлайн-редактор текста: маленькое окошко в точке, без «окна» и «Готово» ---------- */
     function autoSizeInline(ed){
       const el = ed.el, ta = ed.ta;
       let cs = null; try { cs = getComputedStyle(ta); } catch (_) {}
-      const fs = Math.max(16, Math.min(34, Math.round(22 * scale)));
-      const lh = Math.round(fs * TEXT_LINE / 22);
+      const szv = +((ed && ed.sz) || TEXT_SZ_DEFAULT);
+      const fs = Math.max(16, Math.min(120, Math.round(szv * scale)));
+      const lh = Math.max(10, Math.round(fs * TEXT_LINE / TEXT_SZ_DEFAULT));
       ta.style.fontSize = fs + "px";
       ta.style.lineHeight = lh + "px";
       const padX = 26, padY = 12;
@@ -850,8 +1067,10 @@ window.Board = (() => {
     function openEditor(opts){
       opts = opts || {};
       if (editor) closeEditor(true);
+      if (selectedId != null) select(null);
       const startX = opts.x != null ? +opts.x : 40;
       const startY = opts.y != null ? +opts.y : 40;
+      const startSz = Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, +opts.sz || TEXT_SZ_DEFAULT));
       const el = document.createElement("div");
       el.className = "bd-editor bd-inline";
       el.setAttribute("data-bd-inline", "");
@@ -864,8 +1083,9 @@ window.Board = (() => {
       const ed = {
         el, ta, id: opts.id || null, c: opts.c || color,
         x: Math.round(startX), y: Math.round(startY),
-        w: opts.w ? +opts.w : TEXT_MIN_W, h: opts.h ? +opts.h : TEXT_LINE,
+        w: opts.w ? +opts.w : TEXT_MIN_W, h: opts.h ? +opts.h : textLineH(startSz),
         manual: !!(opts.w || opts.h), note: !!opts.note, blank: opts.blank || null,
+        sz: startSz,
         closed: false, armed: false, innerDown: false
       };
       editor = ed;
@@ -971,12 +1191,12 @@ window.Board = (() => {
       editor = null; ed.closed = true;
       /* размеры берём из авто-размера (ed.w/ed.h), а не из offsetWidth: там ещё рамка 1px */
       const w2 = Math.max(TEXT_MIN_W, Math.round(ed.w || (ed.el.offsetWidth / scale)));
-      const h2 = Math.max(TEXT_LINE, Math.round(ed.h || (ed.el.offsetHeight / scale)));
+      const h2 = Math.max(textLineH(ed.sz), Math.round(ed.h || (ed.el.offsetHeight / scale)));
       const text = String(ed.ta.value || "").trim();
       try { ed.el.remove(); } catch (_) {}
       if (!save) return;
       if (text){
-        const item = {t:"t", x:Math.round(ed.x), y:Math.round(ed.y), w:w2, h:h2, s:text.slice(0, TEXT_MAX), c:ed.c};
+        const item = {t:"t", x:Math.round(ed.x), y:Math.round(ed.y), w:w2, h:h2, s:text.slice(0, TEXT_MAX), c:ed.c, sz:Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, +ed.sz || TEXT_SZ_DEFAULT))};
         if (ed.note) item.note = true;
         if (ed.blank) item.blank = true;
         if (ed.id && items.has(String(ed.id))) replaceItem(ed.id, item, items.get(String(ed.id)));
@@ -1004,14 +1224,16 @@ window.Board = (() => {
     }
 
     /* ---------- вставка в точку: текст/заметка/картинка, paste, API для панели учителя ---------- */
-    function autoTextBox(text){
-      const lines = wrapLines(text, TEXT_MAX_W);
-      ctx.save(); ctx.font = TEXT_FONT;
+    function autoTextBox(text, sz){
+      const z = Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, +sz || TEXT_SZ_DEFAULT));
+      const lines = wrapLines(text, TEXT_MAX_W, z);
+      const lh = textLineH(z);
+      ctx.save(); ctx.font = textFont(z);
       let widest = 0;
       for (const L of lines) widest = Math.max(widest, ctx.measureText(L || " ").width);
       ctx.restore();
       const w = Math.min(TEXT_MAX_W, Math.max(TEXT_MIN_W, Math.ceil(widest) + 16));
-      const h = Math.min(TEXT_MAX_H, Math.max(TEXT_LINE, lines.length * TEXT_LINE + 8));
+      const h = Math.min(TEXT_MAX_H, Math.max(lh, lines.length * lh + 8));
       return {w, h};
     }
     function insertPoint(x, y){
@@ -1020,14 +1242,15 @@ window.Board = (() => {
     }
     async function insertTextItem(text, x, y, note){
       text = String(text == null ? "" : text).trim();
-      if (x && typeof x === "object"){ const op = x; x = op.x; y = op.y; if (op.note != null) note = !!op.note; }
+      let szv = TEXT_SZ_DEFAULT;
+      if (x && typeof x === "object"){ const op = x; x = op.x; y = op.y; if (op.note != null) note = !!op.note; if (op.sz != null) szv = +op.sz; }
       if (!text) return null;
       const pt = insertPoint(x, y);
-      const {w, h} = autoTextBox(text);
-      const item = {t:"t", x:pt.x, y:pt.y, w, h, s:text.slice(0, TEXT_MAX), c: note ? COLORS[1] : color};
+      const {w, h} = autoTextBox(text, szv);
+      const item = {t:"t", x:pt.x, y:pt.y, w, h, s:text.slice(0, TEXT_MAX), c: note ? COLORS[1] : color, sz:Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, szv || TEXT_SZ_DEFAULT))};
       if (note) item.note = true;
-      await addItem(item);
-      return item;
+      const id = await addItem(item);
+      return id == null ? null : Object.assign({id}, item);
     }
     function imageRatio(url){
       return new Promise(res => {
@@ -1049,9 +1272,10 @@ window.Board = (() => {
       const pt = insertPoint(x, y);
       const ratio = await imageRatio(url);
       const width = Math.min(800, Math.max(60, +w || 420));
-      const item = {t:"i", x:pt.x, y:pt.y, w:width, h:Math.round(width / ratio), ratio, src:url};
-      await addItem(item);
-      return item;
+      const hh = Math.round(width / ratio);
+      const item = {t:"i", x:pt.x, y:pt.y, w:width, h:hh, ratio, src:url, bw:width, bh:hh};
+      const id = await addItem(item);
+      return id == null ? null : Object.assign({id}, item);
     }
     async function insertImagesAt(files, at){
       let px = Math.round((at && at.x != null) ? at.x : lastPoint.x);
@@ -1061,7 +1285,7 @@ window.Board = (() => {
         const list = await imageFileToItems(f);
         for (const it of list){
           const width = 420, hh = width / (it.ratio || 1.5);
-          addItem({t:"i", x:px, y:py, w:width, h:hh, ratio:it.ratio, src:it.src});
+          addItem({t:"i", x:px, y:py, w:width, h:hh, ratio:it.ratio, src:it.src, bw:width, bh:hh});
           py += hh + 20; made++;
         }
       }
@@ -1136,7 +1360,8 @@ window.Board = (() => {
       }
       if (tool === "move"){
         const id = hitOf(p, ["i", "t"]);
-        if (!id) return;
+        if (!id){ select(null); return; }        // тап по пустому месту снимает выделение
+        select(id);                              // тап по объекту выделяет (и дальше можно тащить)
         e.preventDefault(); lpClear();
         const it = items.get(id); if (!it) return;
         moving = {id, sx:p[0], sy:p[1], ox:it.x, oy:it.y, orig:{x:it.x, y:it.y}, moved:false};
@@ -1163,7 +1388,7 @@ window.Board = (() => {
         return;
       }
       if (!drawing || drawing.pid !== e.pointerId) return;
-      if (drawing.erase){ (e.getCoalescedEvents ? e.getCoalescedEvents() : [e]).forEach(ev => eraseAt(pos(ev))); return; }
+      if (drawing.erase){ let evs = []; try { evs = e.getCoalescedEvents ? e.getCoalescedEvents() : []; } catch (_) {} if (!evs || !evs.length) evs = [e]; evs.forEach(ev => eraseAt(pos(ev))); return; }
       let pts = (e.getCoalescedEvents ? e.getCoalescedEvents() : []).map(pos); if (!pts.length) pts.push(p);
       if (e.pointerType === "mouse"){   // мышь и тачпад: сглаживаем дрожание руки
         let prev = drawing.p[drawing.p.length - 1]; pts = pts.map(q => (prev = [Math.round((prev[0] + (q[0] - prev[0]) * 0.55) * 10) / 10, Math.round((prev[1] + (q[1] - prev[1]) * 0.55) * 10) / 10]));
@@ -1180,12 +1405,13 @@ window.Board = (() => {
     });
     /* ластик стирает ТОЛЬКО то, по чему провели: линия делится на куски, стёртое пропадает */
     function textInkHit(it, p){
-      const lines = wrapLines(it.s, it.w || DEFAULT_TEXT_W);
+      const z = textSz(it), lh = textLineH(z);
+      const lines = wrapLines(it.s, it.w || DEFAULT_TEXT_W, z);
       if (!lines.length) return false;
-      ctx.save(); ctx.font = TEXT_FONT;
+      ctx.save(); ctx.font = textFont(z);
       let hit = false;
       for (let i = 0; i < lines.length; i++){
-        const y0 = it.y + i * TEXT_LINE, y1 = y0 + TEXT_LINE;
+        const y0 = it.y + i * lh, y1 = y0 + lh;
         if (p[1] < y0 || p[1] > y1) continue;
         const wl = ctx.measureText(lines[i] || "").width;
         if (p[0] >= it.x && p[0] <= it.x + Math.max(8, wl) + 4){ hit = true; break; }
@@ -1248,7 +1474,7 @@ window.Board = (() => {
         const hitId = hitOf([t.x, t.y], ["t"]);
         if (hitId){
           const it = items.get(hitId);
-          if (it){ openEditor({x:it.x, y:it.y, w:it.w, h:it.h, s:it.s, c:it.c, note:it.note, id:hitId}); return; }
+          if (it){ openEditor({x:it.x, y:it.y, w:it.w, h:it.h, s:it.s, c:it.c, note:it.note, sz:it.sz, id:hitId}); return; }
         }
         openEditor({x:t.x, y:t.y});
         return;
@@ -1277,12 +1503,15 @@ window.Board = (() => {
     /* ---------- быстрая панель: правая кнопка мыши, кнопка стилуса или долгое нажатие ---------- */
     const menu = root.querySelector(".bd-menu");
     function openMenu(x, y){
+      /* правый клик/долгий тап по объекту – выделяем его и показываем «Удалить» */
+      try { const pt = toLogical(x, y); const sid = hitOf(pt, ["i", "t"]); if (sid) select(sid); } catch (_) {}
+      const sel = selectedInfo();
       const extra = typeof o.menu === "function" ? (o.menu() || []) : [];
       const titles = {pen:"Ручка", hl:"Маркер", text:"Текст", move:"Переместить", erase:"Ластик", hand:"Листать"};
       const icons = {pen:"✎", hl:"▮", text:"T", move:"✥", erase:'<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg>', hand:"✋"};
       menu.innerHTML = `<div class="bd-mrow">${["pen","hl","text","move","erase","hand"].map(t => `<button data-mtool="${t}" aria-pressed="${tool === t}" title="${titles[t]}">${icons[t]}</button>`).join("")}</div>
         <div class="bd-mrow">${COLORS.map(c => `<button class="bd-color" data-mcolor="${c}" style="--bc:${c}" aria-pressed="${color === c}" aria-label="Цвет"></button>`).join("")}</div>
-        <div class="bd-mlist"><button data-mact="undo">↶ Отменить</button><button data-mact="blank">📄 Чистый лист</button>${extra.map((m, i) => `<button data-mext="${i}">${esc(m.label)}</button>`).join("")}</div>`;
+        <div class="bd-mlist">${sel ? `<button data-mact="del">🗑 Удалить</button>` : ""}<button data-mact="undo">↶ Отменить</button><button data-mact="blank">📄 Чистый лист</button>${extra.map((m, i) => `<button data-mext="${i}">${esc(m.label)}</button>`).join("")}</div>`;
       if (menu.parentElement !== document.body) document.body.appendChild(menu);   // над всеми окнами (у «стеклянных» окон свой слой)
       menu.hidden = false;
       const mw = menu.offsetWidth, mh = menu.offsetHeight;
@@ -1292,6 +1521,7 @@ window.Board = (() => {
         const b = ev.target.closest("button"); if (!b) return;
         if (b.dataset.mtool) setTool(b.dataset.mtool);
         if (b.dataset.mcolor){ setColor(b.dataset.mcolor); if (tool !== "pen" && tool !== "text") setTool("pen"); }
+        if (b.dataset.mact === "del") deleteSelected();
         if (b.dataset.mact === "undo") root.querySelector('[data-act="undo"]')?.click();
         if (b.dataset.mact === "blank"){ const bl = pagesArr.find(p => p.key === "blank") || pagesArr.find(p => p.key === "p1"); if (bl){ openPage(bl.key); if (o.role === "teacher") send("page", {page: bl.key}); } }
         if (b.dataset.mext != null){ try { extra[+b.dataset.mext].run(); } catch(_) {} }
@@ -1311,7 +1541,7 @@ window.Board = (() => {
       if (b.dataset.act === "undo"){ const id = mine.pop(); if (id) removeIds([id]); }
       if (b.dataset.act === "snap") snapshot();
       if (b.dataset.act === "clear"){
-        if (b.dataset.sure){ await o.api.clear(page); items.clear(); mine = []; redraw(); layout(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
+        if (b.dataset.sure){ await o.api.clear(page); items.clear(); mine = []; selectedId = null; redraw(); layout(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
         else { b.dataset.sure = "1"; b.textContent = "✔?"; b.title = "Нажмите ещё раз, чтобы очистить лист"; setTimeout(() => { b.textContent = "🧹"; delete b.dataset.sure; }, 3000); }
       }
     });
@@ -1531,7 +1761,7 @@ window.Board = (() => {
     }
     function addImage(src, ratio, x, y, w){
       const width = w || 460, hh = width / (ratio || 1.5);
-      addItem({t:"i", x: x == null ? 40 : x, y: y == null ? nextFreeY() : y, w:width, h:hh, ratio:ratio || 1.5, src});
+      addItem({t:"i", x: x == null ? 40 : x, y: y == null ? nextFreeY() : y, w:width, h:hh, ratio:ratio || 1.5, src, bw:width, bh:hh});
       return hh;
     }
     async function attachInline(files, at){
@@ -1724,9 +1954,18 @@ window.Board = (() => {
           if (m.id != null) items.set(String(m.id), m.item);
           redraw(); layout();
         }
-        if (m.type === "remove"){ (m.ids || []).forEach(id => items.delete(String(id))); redraw(); layout(); }
-        if (m.type === "move"){ if (m.id != null) items.delete(String(m.id)); if (m.newId != null) items.set(String(m.newId), m.item); redraw(); layout(); }
-        if (m.type === "clear"){ items.clear(); mine = []; redraw(); layout(); }
+        if (m.type === "remove"){
+          (m.ids || []).forEach(id => items.delete(String(id)));
+          if (selectedId != null && (m.ids || []).some(id => String(id) === String(selectedId))) selectedId = null;
+          redraw(); layout();
+        }
+        if (m.type === "move"){
+          if (m.id != null) items.delete(String(m.id));
+          if (m.newId != null) items.set(String(m.newId), m.item);
+          if (selectedId != null && String(selectedId) === String(m.id)) selectedId = m.newId != null ? String(m.newId) : null;
+          redraw(); layout();
+        }
+        if (m.type === "clear"){ items.clear(); mine = []; selectedId = null; redraw(); layout(); }
       });
       channel.on("presence", {event:"sync"}, () => {
         const st = channel.presenceState();
@@ -1766,7 +2005,7 @@ window.Board = (() => {
           const [w2, h2] = imageSize(it);
           list.push({id, t:"i", x:it.x, y:it.y, w:w2, h:h2, ratio:it.ratio, src:it.src});
         } else if (it.t === "t"){
-          list.push({id, t:"t", x:it.x, y:it.y, w:it.w || DEFAULT_TEXT_W, h:it.h || textHeight(it), s:it.s, c:it.c});
+          list.push({id, t:"t", x:it.x, y:it.y, w:it.w || DEFAULT_TEXT_W, h:it.h || textHeight(it), s:it.s, c:it.c, sz:textSz(it)});
         }
       });
       const cur = pagesArr.find(p => p.key === page);
@@ -1779,6 +2018,7 @@ window.Board = (() => {
         saving,
         anchors: bdBoxes.length,
         items: list,
+        selected: selectedInfo(),
         pages: pagesArr.map(p => ({key:p.key, label:p.label, htmlLen:(p.html || "").length, saved:!!p.saved})),
         pageHtmlLen: cur ? (cur.html || "").length : 0,
         bgSource,
@@ -1787,7 +2027,7 @@ window.Board = (() => {
         scrollY: stage.scrollTop,
         lastPoint: {x:lastPoint.x, y:lastPoint.y},
         view: getView(),
-        editor: editor ? {open:true, id:editor.id || null, inline:true, text:editor.ta.value, note:!!editor.note} : null
+        editor: editor ? {open:true, id:editor.id || null, inline:true, text:editor.ta.value, note:!!editor.note, sz:editor.sz || TEXT_SZ_DEFAULT} : null
       };
     }
     function destroy(){
@@ -1800,6 +2040,7 @@ window.Board = (() => {
       document.removeEventListener("paste", onPaste);
       lpClear();
       pan = null;
+      selectedId = null; selResize = null;
       if (editor){ const ed = editor; editor = null; ed.closed = true; try { ed.el.remove(); } catch (_) {} }
       peers.forEach(p => { if (p.el){ try { p.el.remove(); } catch (_) {} } });
       drafts.clear();
@@ -1831,13 +2072,16 @@ window.Board = (() => {
       /* хуки для тестов (verifier): имена – часть контракта */
       info,
       ready: () => readyP,
-      whenIdle: async () => { await readyP; while (saving > 0) await delay(50); return info(); },
+      whenIdle: async () => { await readyP; while (saving > 0 || selPending > 0) await delay(50); return info(); },
       attach: files => handleFiles(files),
       addPage: (label, html, broadcast) => addPageP(label, html, broadcast),
       insertPage: (label, html, broadcast, opts) => insertPageAt(label, html, broadcast, opts),
       insertText: (text, x, y) => insertTextItem(text, x, y, false),
       insertNote: (text, x, y, opts) => insertTextItem(text, x, y, true),
       insertImage: (url, x, y, w) => insertImageItem(url, x, y, w),
+      select: id => select(id),
+      selected: () => selectedInfo(),
+      deleteSelected: () => deleteSelected(),
       pasteAtPoint: () => pasteAtPoint(),
       lastPoint: () => ({x:lastPoint.x, y:lastPoint.y}),
       getView: () => getView(),
@@ -1853,6 +2097,7 @@ window.Board = (() => {
         v.anchorBoxes = bdBoxes.map(b => ({i:+b.el.getAttribute("data-bd"), x:b.x, y:b.y, w:b.w, h:b.h}));
         v.remoteBgPages = [...remoteBg.keys()];
         v.bgSource = bgSource;
+        v.selected = selectedInfo();
         return v;
       }
     };
