@@ -322,7 +322,16 @@ async function waitBlockProgress(page, b, want = "15/15", timeout = 8000){
   throw new Error("карточка блока " + b + " не показывает «" + want + "» (сейчас: " + JSON.stringify(last) + ")");
 }
 
-let W = null; // world (db+lessons) — заполняется в runE2E
+/** клик по строке ученика с повтором: кабинет может перерисоваться между waitFor и click */
+async function clickStudentRow(teacher, id, label = "строка ученика") {
+  for (let i = 0; i < 40; i++) {
+    const ok = await teacher.eval(`(() => { const el = document.querySelector('[data-student="${id}"]'); if (!el) return false; el.click(); return true; })()`).catch(() => false);
+    if (ok) return true;
+    await teacher.waitFor(`document.querySelector('[data-student="${id}"]') ? 1 : 0`, { timeout: 3000, label }).catch(() => {});
+    await sleep(150);
+  }
+  throw new Error("не удалось кликнуть " + label + " (" + id + ")");
+}let W = null; // world (db+lessons) — заполняется в runE2E
 
 /* ---------- a: авто-переключение предмета + присутствие ---------- */
 test("a", "Ученик на предмете B: учитель начинает урок A → сам переключается, видит материал, у учителя «онлайн»", async ({ teacher, student }) => {
@@ -333,7 +342,7 @@ test("a", "Ученик на предмете B: учитель начинает
   const count0 = await teacher.eval(`(document.getElementById("online-count") || {}).textContent || ""`);
   assert(/онлайн/.test(count0), "в кабинете нет «сейчас онлайн»: " + JSON.stringify(count0));
 
-  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await clickStudentRow(teacher, ROW_A, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${L.id}"]') ? 1 : 0`, { timeout: 12000, label: "план урока A у учителя («▶ Урок»)" });
   const s0 = await studentSession(student);
   assert(s0 && s0.profile && s0.profile.subject === "math", "ученик должен начинать на предмете B (math), а он на " + (s0 && s0.profile && s0.profile.subject));
@@ -399,12 +408,64 @@ test("b1", "Смена урока в комнате → у ученика нов
   eq(cmd.lesson, L2.id, "lesson в команде смены урока");
 });
 
+/* ---------- R1: меню ученика во время урока и баннер «Вернуться к уроку» ---------- */
+test("R1", "Ученик: меню во время урока (data-go), баннер .lesson-backbar, presence не выдёргивает, завершение/повторный старт", async ({ teacher, student }) => {
+  /* 1) урок уже идёт (после a/b1), ученик в комнате */
+  await student.waitFor(`(() => { const S = window.__app.S; return S && S.view === "room" && S.room ? 1 : 0; })()`,
+    { timeout: 8000, label: "R1: ученик в комнате урока (S.view=room, S.room)" });
+  const lessonId = await student.eval(`String(window.__app.S.room.lesson)`);
+  /* 2) меню ученика работает во время урока: self */
+  await student.eval(`(() => { const b = document.querySelector('[data-act="open-drawer"]'); if (b) b.click(); return !!b; })()`);
+  await student.waitFor(`window.__app.S.drawer ? 1 : 0`, { timeout: 5000, label: "R1: меню ученика открыто" });
+  await student.eval(`(() => { const b = document.querySelector('[data-go="self"]'); if (!b) return false; b.click(); return true; })()`);
+  await student.waitFor(`(() => { const S = window.__app.S; return S.view === "self" ? 1 : 0; })()`,
+    { timeout: 8000, label: "R1: меню переключило на «Самообучение» во время урока" });
+  eq(await student.eval(`window.__app.S.away`), true, "R1: S.away=true после ухода из комнаты по меню");
+  eq(await student.eval(`!!window.__app.S.room`), true, "R1: S.room пропал после ухода (урок идёт)");
+  /* 3) постоянный баннер «Идёт урок» + кнопка «Вернуться к уроку» */
+  await student.waitFor(`document.querySelector('.lesson-backbar') ? 1 : 0`, { timeout: 6000, label: "R1: баннер .lesson-backbar на разделе" });
+  const bar = await student.eval(`(() => { const b = document.querySelector('.lesson-backbar'); const btn = b && b.querySelector('[data-act="back-to-room"]'); return { text: (b && b.textContent || "").trim(), btn: btn ? (btn.textContent || "").trim() : null }; })()`);
+  if (!bar.btn) throw new Error("R1: в .lesson-backbar нет [data-act=back-to-room]: " + JSON.stringify(bar));
+  if (!/урок/i.test(bar.text)) throw new Error("R1: в баннере нет текста про урок: " + JSON.stringify(bar));
+  /* 4) ждём 2–3 c (presence/учитель онлайн) — не должно выдёргивать в room */
+  await sleep(2800);
+  const st = await student.eval(`(() => { const S = window.__app.S; return { view: S.view, room: !!S.room, away: S.away, join: !!document.querySelector('.joinbox'), bar: !!document.querySelector('.lesson-backbar') }; })()`);
+  eq(st.view, "self", "R1: присутствие выдернуло ученика из «Самообучения» обратно в room");
+  eq(st.room, true, "R1: S.room должен оставаться, пока урок идёт");
+  if (st.join) throw new Error("R1: во время урока показан .joinbox (ученика зовут обратно): " + JSON.stringify(st));
+  if (!st.bar) throw new Error("R1: баннер .lesson-backbar пропал на разделе «Самообучение»");
+  /* 5) «Вернуться к уроку» → room, баннер исчез */
+  await student.eval(`document.querySelector('.lesson-backbar [data-act="back-to-room"]').click(); true`);
+  await student.waitFor(`(() => { const S = window.__app.S; return S.view === "room" ? 1 : 0; })()`, { timeout: 8000, label: "R1: «Вернуться к уроку» → room" });
+  if (await student.eval(`!!document.querySelector('.lesson-backbar')`)) throw new Error("R1: баннер остался в комнате урока");
+  eq(await student.eval(`window.__app.S.away`), false, "R1: S.away=false после возврата в комнату");
+  /* снова уходим, теперь на «Главную» — баннер снова есть */
+  await student.eval(`(() => { const b = document.querySelector('[data-act="open-drawer"]'); if (b) b.click(); return true; })()`);
+  await student.waitFor(`window.__app.S.drawer ? 1 : 0`, { timeout: 5000, label: "R1: меню открыто во второй раз" });
+  await student.eval(`document.querySelector('[data-go="home"]').click(); true`);
+  await student.waitFor(`(() => { const S = window.__app.S; return S.view === "home" ? 1 : 0; })()`, { timeout: 8000, label: "R1: меню → «Главная» во время урока" });
+  await student.waitFor(`document.querySelector('.lesson-backbar') ? 1 : 0`, { timeout: 6000, label: "R1: баннер на «Главной»" });
+  /* 6) учитель завершает урок → баннер исчез, ученик остался в своём разделе, S.room=null */
+  await teacher.eval(`(() => { const b = document.querySelector('[data-act="room-end"]'); if (!b) return false; b.click(); return true; })()`);
+  await student.waitFor(`(() => { const S = window.__app.S; return !S.room ? 1 : 0; })()`, { timeout: 15000, label: "R1: урок завершён → S.room=null" });
+  await student.waitFor(`(() => { const S = window.__app.S; return S.view === "home" ? 1 : 0; })()`, { timeout: 8000, label: "R1: после завершения урока ученик остался в «Главной»" });
+  if (await student.eval(`!!document.querySelector('.lesson-backbar')`)) throw new Error("R1: баннер остался после завершения урока");
+  /* 7) учитель снова начинает урок → явная команда снова открывает комнату, away=false */
+  await teacher.eval(`document.querySelector('.navitem[data-view="students"]').click(); true`);
+  await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 8000, label: "R1: список учеников после завершения урока" });
+  await clickStudentRow(teacher, ROW_A, "список учеников");
+  await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]') ? 1 : 0`, { timeout: 10000, label: "R1: кнопка «▶ Урок» для повторного старта" });
+  await teacher.eval(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]').click(); true`);
+  await student.waitFor(`(() => { const S = window.__app.S; return S.view === "room" ? 1 : 0; })()`, { timeout: 12000, label: "R1: явная команда учителя снова открыла комнату" });
+  eq(await student.eval(`window.__app.S.away`), false, "R1: S.away=false после явной команды учителя");
+});
+
 /* ---------- b2: урок из другого предмета ---------- */
 test("b2", "Урок из другого предмета: ученик в комнате на A, учитель открывает урок B → переключение и материал < 4 c", async ({ teacher, student }) => {
   const M = W.lessons.math[0];
   await teacher.eval(`document.querySelector('.navitem[data-view="students"]').click(); true`);
   await teacher.waitFor(`document.querySelector('[data-student="${ROW_B}"]') ? 1 : 0`, { timeout: 8000, label: "список учеников у учителя" });
-  await teacher.eval(`document.querySelector('[data-student="${ROW_B}"]').click(); true`);
+  await clickStudentRow(teacher, ROW_B, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${M.id}"]') ? 1 : 0`, { timeout: 10000, label: "план урока B у учителя" });
   await student.eval(`window.__e2eMarker = "b2"; true`);
   await teacher.eval(`window.Call = null; window.__MOCK.LOG.broadcasts.length = 0; true`);
@@ -457,7 +518,7 @@ test("b3", "refresh в комнате: тост «Материалы обнов�
 test("Q1", "Учитель собрал тест по 2 темам → строка в topic_quizzes, ссылка ?quiz=, «Открыть у ученика» шлёт cmd quiz", async ({ teacher }) => {
   await teacher.eval(`document.querySelector('.navitem[data-view="students"]').click(); true`);
   await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 8000, label: "список учеников у учителя" });
-  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await clickStudentRow(teacher, ROW_A, "список учеников");
   await teacher.waitFor(`document.getElementById("qz-card") ? 1 : 0`, { timeout: 10000, label: "карточка «Тест по темам» у учителя" });
 
   const topics = await teacher.eval(`[...document.querySelectorAll("[data-qz-topic]")].map(x => x.value)`);
@@ -650,7 +711,7 @@ test("Q4", "Карта тем: у учителя #qz-map .qz-topic.bad с тем
   const openTeacherMap = async () => {
     await teacher.eval(`document.querySelector('.navitem[data-view="students"]') && document.querySelector('.navitem[data-view="students"]').click(); true`);
     await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 8000, label: "список учеников" });
-    await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+    await clickStudentRow(teacher, ROW_A, "список учеников");
     await teacher.waitFor(`document.querySelector("#qz-map") ? 1 : 0`, { timeout: 10000, label: "#qz-map в карточке ученика" });
   };
   await openTeacherMap();
@@ -927,7 +988,7 @@ test("T1", "Карточка ученика у учителя: прогресс 
   await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; if (!T) return false; T.room = null; if (T.me) T.me.room = null; return true; })()`);
   await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
   await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников у учителя (T1)" });
-  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await clickStudentRow(teacher, ROW_A, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-t-student-all]') && document.querySelector('[data-t-board-row]') ? 1 : 0`,
     { timeout: 15000, label: "секция «Всё, что делает ученик» с доской (данные доски загрузились)" });
   const st = await teacher.eval(`(() => {
@@ -1025,7 +1086,7 @@ async function reloadTeacherCard(teacher, baseUrl, rowId = ROW_A){
   await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label: "кабинет учителя (shell + __teacher)" });
   await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
   await teacher.waitFor(`document.querySelector('[data-student="${rowId}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников (T2)" });
-  await teacher.eval(`document.querySelector('[data-student="${rowId}"]').click(); true`);
+  await clickStudentRow(teacher, rowId, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "карточка ученика («Всё, что делает ученик»)" });
 }
 test("T2", "Динамика у учителя: [data-t-student-trend] с .trend-line и .trend-dot (data-points>=3), последняя точка 100%", async ({ teacher, baseUrl }) => {
@@ -1132,7 +1193,7 @@ async function openTeacherCard(teacher, rowId) {
   await sleep(250);
   await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return true; })()`);
   await teacher.waitFor(`document.querySelector('[data-student="${rowId}"]') ? 1 : 0`, { timeout: 15000, label: "V: список учеников" });
-  await teacher.eval(`document.querySelector('[data-student="${rowId}"]').click(); true`);
+  await clickStudentRow(teacher, rowId, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "V: карточка ученика" });
 }
 /** начать занятие по уроку из плана и дождаться комнаты с доской */
@@ -1262,7 +1323,7 @@ async function reloadTeacherToRow(teacher, baseUrl){
   await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; if (!T) return false; T.room = null; if (T.me) T.me.room = null; try { T.live && T.live.track({role: "teacher", room: null}); } catch (_) {} return true; })()`);
   await teacher.waitFor(`(() => { const st = window.__MOCK.presenceOf("live-${TEACHER_ID}") || {}; return Object.values(st).flat().every(p => !p.room) ? 1 : 0; })()`, { timeout: 10000, label: "presence учителя без комнаты" });  await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return !!b; })()`);
   await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 15000, label: "список учеников (U1)" });
-  await teacher.eval(`document.querySelector('[data-student="${ROW_A}"]').click(); true`);
+  await clickStudentRow(teacher, ROW_A, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 15000, label: "карточка rowA («Всё, что делает ученик»)" });
 }
 /** заполнить и сохранить форму набора ss-* (тип stress|deck) */

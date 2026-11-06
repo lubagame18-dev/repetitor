@@ -763,4 +763,16 @@ body.play-open{overflow:hidden}
 .bd-sel-bar button[hidden]{display:none!important}
 @media (max-width:560px){.bd-sel-bar button{font-size:12px;padding:7px 8px}.bd-sel-resize{width:22px;height:22px;right:-11px;bottom:-11px}}
 
+/* ---------- постоянный баннер «Идёт урок · Вернуться к уроку» (ученик) ---------- */
+.lesson-backbar{position:sticky;top:calc(58px + env(safe-area-inset-top,0px));z-index:29;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:9px 12px;border-radius:16px;
+  background:linear-gradient(100deg,color-mix(in srgb,var(--violet) 18%,var(--glass-2)),color-mix(in srgb,var(--pink) 14%,var(--glass-2)));
+  border:1px solid color-mix(in srgb,var(--violet) 38%,var(--line));box-shadow:var(--shadow);
+  -webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);font-weight:800}
+.lesson-backbar .live-dot{flex:none;margin:0}
+.lesson-backbar .lb-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lesson-backbar .btn{margin-left:auto;flex:none}
+@media (max-width:560px){.lesson-backbar{top:calc(54px + env(safe-area-inset-top,0px));gap:8px;padding:8px 10px;font-size:.9rem}
+  .lesson-backbar .lb-title{white-space:normal;line-height:1.25}
+  .lesson-backbar .btn{padding:7px 10px;font-size:.85rem}}
+
 

@@ -36,13 +36,13 @@ class CDP {
     ws.onclose = () => { c.closed = true; c.pending.forEach(({rej}) => rej(new Error("CDP closed"))); c.pending.clear(); };
     return c;
   }
-  send(method, params = {}, sessionId){
+  send(method, params = {}, { timeout = 30000 } = {}){
     if (this.closed) return Promise.reject(new Error("CDP closed"));
     const id = ++this.id;
     return new Promise((res, rej) => {
-      const timer = setTimeout(() => { this.pending.delete(id); rej(new Error("CDP timeout: " + method)); }, 30000);
+      const timer = setTimeout(() => { this.pending.delete(id); rej(new Error("CDP timeout: " + method)); }, Math.max(1000, +timeout || 30000));
       this.pending.set(id, { res, rej, timer });
-      this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+      this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
   on(fn){ this.handlers.add(fn); return () => this.handlers.delete(fn); }
@@ -137,10 +137,24 @@ class Page {
       throw new Error("Не дождались load: " + url);
     }
   }
+  /* Runtime.evaluate с коротким таймаутом и повтором: рендерер Chrome на занятой машине иногда
+     залипает >30 c (env-флейк «CDP timeout: Runtime.evaluate»), повтор через паузу обычно проходит.
+     Один зависший eval не должен валить весь сценарий. */
   async eval(expression, { awaitPromise = true, byValue = true } = {}){
-    const r = await this.cdp.send("Runtime.evaluate", { expression, awaitPromise, returnByValue: byValue, userGesture: true });
-    if (r.exceptionDetails) throw new Error("eval: " + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + "\n" + expression.slice(0, 300));
-    return r.result?.value;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++){
+      try {
+        const r = await this.cdp.send("Runtime.evaluate", { expression, awaitPromise, returnByValue: byValue, userGesture: true },
+          { timeout: attempt === 0 ? 12000 : 10000 });
+        if (r.exceptionDetails) throw new Error("eval: " + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + "\n" + expression.slice(0, 300));
+        return r.result?.value;
+      } catch (e) {
+        lastErr = e;
+        if (!/CDP timeout/.test(String((e && e.message) || e))) throw e;
+        await sleep(400);
+      }
+    }
+    throw lastErr;
   }
   async waitFor(expr, { timeout = 8000, interval = 100, label = expr } = {}){
     const t0 = Date.now();

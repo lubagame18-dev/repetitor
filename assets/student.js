@@ -8,7 +8,7 @@ const sb = U.supa();/* встроенные готовые материалы п
 try { const k0 = (LS.get("session")?.profile?.course) || CFG.DEFAULT_COURSE; if (window.BuiltinLoader && k0) BuiltinLoader.ensure(k0); } catch (e) { }
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
            rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set(), syncPending:false,
-           quizToken:null, quiz:null, qz:null, quizzes:null, qzResults:[], qzBusy:false};
+           quizToken:null, quiz:null, qz:null, quizzes:null, qzResults:[], qzBusy:false, away:false};
 const $ = s => document.querySelector(s);
 const LS = {get(k, def){ try{ return JSON.parse(localStorage.getItem("oge-" + k)) ?? def; }catch(e){ return def; } },
             set(k, v){ try{ localStorage.setItem("oge-" + k, JSON.stringify(v)); }catch(e){} }};
@@ -64,7 +64,7 @@ async function load(){
   }
   recompute();
 }
-function logout(msg){ LS.set("session", null); S.token = null; S.profile = null; S.view = "home"; render(); if (msg) toast(msg); }
+function logout(msg){ LS.set("session", null); S.token = null; S.profile = null; S.view = "home"; S.room = null; S.away = false; render(); if (msg) toast(msg); }
 async function sendResult(lesson_id, kind, score, total, wrong, dur, answers){
   S.rows.push({lesson_id, kind, score, total, wrong, duration_sec:dur, created_at: new Date().toISOString()}); recompute();
   if (sb){
@@ -134,7 +134,7 @@ async function ensureLesson(m){
 }
 /* общий показ урока по команде учителя: и в комнате (слева доска), и в папке (вне комнаты) */
 function showLessonView(l, m){
-  S.forced.add(l.id); S.open = l.id;
+  S.away = false; S.forced.add(l.id); S.open = l.id;
   if (m && m.sub) S.sub = m.sub;
   if (m && m.tab) S.sub = m.tab;
   if (m && m.page) S.boardPage = m.page;
@@ -198,11 +198,19 @@ function liveStart(){
       if (S.joinHow === "call") return;
       if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
       S.room.lesson = m.lesson; S.open = m.lesson; S.test = null; S.testInRoom = false; if (m.tab){ S.sub = m.tab; S.boardPage = m.tab; } if (m.page) S.boardPage = m.page;
-      closeJoin(); S.view = "room"; S.drawer = false; render(); scrollTo(0, 0);
+      closeJoin(); S.view = "room"; S.drawer = false; S.away = false; render(); scrollTo(0, 0);
       const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
       toast(`Учитель перенёс тебя: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`); liveTrack(); return;
     }
-    if (m.type === "endlesson"){ try { sessionStorage.removeItem(JK); } catch(_) {} if (window.Call) Call.leave(true); S.joinHow = null; S.room = null; S.roomEnded = Date.now(); document.getElementById("callbar").hidden = true; closeJoin(); if (S.view === "room"){ const pr = S.preRoom; S.preRoom = null; if (pr && pr.view !== "room" && pr.view !== "test"){ S.view = pr.view; S.open = pr.open; S.sub = pr.sub; } else S.view = "home"; render(); } toast("Учитель завершил урок. Молодец!"); return; }
+    if (m.type === "endlesson"){
+      try { sessionStorage.removeItem(JK); } catch(_) {}
+      if (window.Call) Call.leave(true);
+      S.joinHow = null; S.room = null; S.roomEnded = Date.now(); S.away = false;
+      document.getElementById("callbar").hidden = true; closeJoin();
+      if (S.view === "room"){ const pr = S.preRoom; S.preRoom = null; if (pr && pr.view !== "room" && pr.view !== "test"){ S.view = pr.view; S.open = pr.open; S.sub = pr.sub; } else S.view = "home"; }
+      render();   // баннер «Вернуться к уроку» исчезает; вне комнаты остаёмся в своём разделе
+      toast("Учитель завершил урок. Молодец!"); return;
+    }
     if (m.type === "call"){
       if (m.url) S.profile.call_url = m.url;
       const bar = document.getElementById("callbar");
@@ -231,6 +239,7 @@ function liveStart(){
   const quietView = () => ["quiz", "quizzes", "stats", "self", "plan", "look", "profile", "test", "entry"].includes(S.view);
   live.on("presence", {event:"sync"}, async () => {
     if (presenceBusy) return;
+    if (S.away && S.room) return;   // ученик сам ушёл в раздел – не выдёргиваем в комнату
     if (quietView()) return;
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];
     const t = Object.values(live.presenceState()).flat().find(p => p.role === "teacher" && p.room && p.room.to?.some(id => mine.includes(id)));
@@ -241,6 +250,7 @@ function liveStart(){
       const ok = await ensureLesson({lesson: t.room.lesson, to: myRow?.id || S.profile.id});
       if (!ok) return;
       await load();   // свежие материалы к моменту приглашения/входа в комнату
+      if (S.away && S.room) return;   // ученик ушёл в раздел, пока грузили данные
       if (quietView()) return;   // ученик уже ушёл на тест/статистику, пока грузили данные
       const title = S.course?.lessons.find(x => x.id === t.room.lesson)?.title || t.room.title || "";
       invite({...t.room, title});
@@ -1295,7 +1305,7 @@ function startCall(){
   Call.join({sb, room: `${S.profile.teacher}-${S.profile.board_owner || S.profile.id}`, me: "s-" + S.profile.id, name: S.profile.name.split(" ")[0],
     onConnected: (id, name) => {
       toast(`${name || "Учитель"} на связи`);
-      if (S.room && S.joinHow !== "call" && S.view !== "room"){ S.open = roomLesson().id; S.view = "room"; S.drawer = false; render(); scrollTo(0, 0); }
+      if (S.room && S.joinHow !== "call" && S.view !== "room" && !S.away){ S.away = false; S.open = roomLesson().id; S.view = "room"; S.drawer = false; render(); scrollTo(0, 0); }
     }});
   if (S.joinHow === "call") Call.setSize("large");
 }
@@ -1304,6 +1314,7 @@ function startCall(){
 const JK = "joined-room";
 const joinedNow = () => { try { const j = JSON.parse(sessionStorage.getItem(JK) || "null"); return j && j.teacher === S.profile?.teacher && Date.now() - j.t < 4 * 3600e3 && (!S.roomEnded || S.roomEnded < j.t) ? j : null; } catch(_) { return null; } };
 function invite(r, self){
+  S.away = false;   // явное приглашение/команда учителя возвращает на урок
   const same = S.room && S.room.lesson === r.lesson;
   S.room = {...(S.room || {}), ...r, url: r.url || S.room?.url || S.profile.call_url || "", self};
   if (r.lesson && r.lesson !== "free") S.forced.add(r.lesson);
@@ -1331,7 +1342,7 @@ function joinBox(self){
   document.body.appendChild(box); box.querySelector("[data-how]")?.focus();
 }
 function applyJoin(how, auto){
-  closeJoin(); const l = roomLesson(); S.joinHow = how;
+  closeJoin(); const l = roomLesson(); S.joinHow = how; S.away = false;
   try { sessionStorage.setItem(JK, JSON.stringify({teacher: S.profile.teacher, how, t: Date.now()})); } catch(_) {}
   if (S.room?.self) liveAct2({room: true, lesson: S.room.lesson, title: l.title}, `начинает урок «${l.title}» (${JOIN[how].toLowerCase()})`);
   if (how !== "board") startCall();
@@ -1389,6 +1400,10 @@ function render(){
   if (!wait) try { sessionStorage.setItem("s-route", JSON.stringify({view: v, open: S.open, sub: S.sub, y: v === S.routeV ? scrollY : 0})); S.routeV = v; } catch(_) {}
   if (S.routeY){ const y = S.routeY; S.routeY = 0; requestAnimationFrame(() => scrollTo(0, y)); }
   const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():v==="oge"?viewOge():v==="profile"?viewProfile():v==="quiz"?viewQuiz():v==="quizzes"?viewQuizzes():viewInstall();
+  /* постоянный баннер «Вернуться к уроку» на всех разделах, кроме самой комнаты */
+  const backbar = (S.room && v !== "room")
+    ? `<div class="lesson-backbar" role="region" aria-label="Идёт урок"><span class="live-dot" aria-hidden="true"></span><span class="lb-title">Идёт урок · ${esc(roomLesson().title)}</span><button class="btn sm" data-act="back-to-room">Вернуться к уроку</button></div>`
+    : "";
   app.innerHTML = `<div class="shell">
     <div class="drawer-back" ${S.drawer ? "" : "hidden"} data-act="close-drawer"></div>
     <nav class="drawer glass ${S.drawer ? "open" : ""}" aria-label="Меню">${drawerHTML()}</nav>
@@ -1398,7 +1413,7 @@ function render(){
         <span class="ttl">${esc(TITLES[v] || "")}</span>
         <span class="row" style="gap:6px;align-items:center"><img data-m src="${U.mascot()}" alt="" style="width:38px;height:38px;object-fit:contain"><button class="iconbtn" data-go="profile" aria-label="Мой профиль" style="padding:0">${avatarHTML(S.profile, "avatar sm")}</button></span>
       </div></header>
-      <main class="main">${body}</main>
+      <main class="main">${backbar}${body}</main>
     </div></div>`;
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
@@ -1562,7 +1577,7 @@ document.addEventListener("click", async e => {
     const {data} = await sb.rpc("student_switch", {p_code:S.token, p_target:t.dataset.switch});
     if (!data){ toast("Не получилось переключиться. Проверь интернет."); return; }
     if (live){ sb.removeChannel(live); live = null; }
-    S.token = data.token; S.profile = data.profile; S.view = "home"; S.drawer = false; S.forced = new Set(); saveSession(); await load(); render(); scrollTo(0, 0);
+    S.token = data.token; S.profile = data.profile; S.view = "home"; S.drawer = false; S.forced = new Set(); S.room = null; S.away = false; saveSession(); await load(); render(); scrollTo(0, 0);
     toast(`Предмет: ${subjName()}`); return;
   }
   if (t.dataset.mascotPick){
@@ -1595,13 +1610,15 @@ document.addEventListener("click", async e => {
   if (t.dataset.qagain !== undefined){ quizRestart(); return; }
   if (t.dataset.go){
     if (S.regDone){ S.invite = null; S.regDone = null; }
-    if (t.dataset.go === "quizzes"){ openQuizzes(); return; }
+    if (t.dataset.go === "quizzes"){ if (S.room){ S.away = true; closeJoin(); } openQuizzes(); return; }
     if (S.quizToken){ openDeepQuiz(); return; }   // токен из ссылки ждал окончания регистрации
+    if (S.room){ S.away = t.dataset.go !== "room"; closeJoin(); }   // урок идёт – можно уйти в любой раздел, вернёмся по баннеру
     S.view = t.dataset.go; S.drawer = false; render(); scrollTo(0,0); return;
   }
   if (t.dataset.open){
     const l = S.course.lessons.find(x => x.id === t.dataset.open);
     if (!isOpen(l)){ toast(`Папка откроется в день урока – ${fmt(l.date,{day:"numeric",month:"long"})}.`); return; }
+    if (S.room){ S.away = true; closeJoin(); }
     S.open = l.id; S.sub = t.dataset.sub || "theory"; S.view = "folder"; S.drawer = false; render(); scrollTo(0,0); return;
   }
   if (t.dataset.sub){ if (S.view === "room" && S.test && S.testInRoom){ if (S.test.i < S.test.qs.length) testLive({quit: true}); S.test = null; S.testInRoom = false; }
@@ -1623,7 +1640,8 @@ document.addEventListener("click", async e => {
   if (a === "join-reset"){ LS.set("join-how", null); joinBox(S.room?.self); return; }
   if (a === "call-start"){ S.joinHow = S.joinHow === "board" ? "both" : (S.joinHow || "both"); startCall(); render(); return; }
   if (a === "test-close"){ if (S.test && S.test.i < S.test.qs.length) testLive({quit: true}); S.test = null; S.testInRoom = false; render(); liveTrack(); return; }
-  if (a === "room-leave"){ S.test = null; S.testInRoom = false; S.view = S.room?.lesson && S.room.lesson !== "free" ? "folder" : "home"; if (S.view === "folder") S.open = S.room.lesson; render(); return; }
+  if (a === "back-to-room"){ S.away = false; S.view = "room"; S.drawer = false; closeJoin(); render(); scrollTo(0, 0); liveTrack(); toast("Ты вернулся на урок"); return; }
+  if (a === "room-leave"){ S.test = null; S.testInRoom = false; S.view = S.room?.lesson && S.room.lesson !== "free" ? "folder" : "home"; if (S.view === "folder") S.open = S.room.lesson; if (S.room) S.away = true; render(); return; }
   if (a === "start-today"){
     const id = t.dataset.l, how = LS.get("join-how", null); S.forced.add(id);
     invite({lesson: id, url: S.profile.call_url || "", at: Date.now()}, true);

@@ -30,7 +30,7 @@ async function main() {
   const suites = [
     ["Мок Supabase (без браузера)", path.join(__dirname, "mock-selftest.mjs")],
     ["Доска (стенд board.html)", path.join(__dirname, "board.mjs")],
-    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "a,b1,b2,b3,Q1,Q2,Q3,Q4,Q5,Q6,S1,S2,S3,S4,T1,T2,T3,T4,V1,V2,V3,U2" }],
+    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "a,b1,R1,b2,b3,Q1,Q2,Q3,Q4,Q5,Q6,S1,S2,S3,S4,T1,T2,T3,T4,V1,V2,V3,U2" }],
     /* U1 отдельно: вкладки делят localStorage, и в одном процессе сессия rowB может перетереть rowA */
     ["E2E (U1: база самообучения и конструктор)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "U1" }],
   ];
