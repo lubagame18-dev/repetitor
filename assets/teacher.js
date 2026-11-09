@@ -294,7 +294,7 @@ async function labAct(a, t){
       const up = await sb.storage.from("materials").upload(path, f, {contentType: f.type || "audio/mpeg"});
       if (up.error){ T.busy = false; render(); toast("Файл не загрузился: " + up.error.message); return; }
       audio = sb.storage.from("materials").getPublicUrl(path).data.publicUrl; }
-    const {data, error} = await sb.from("materials").insert({course: t.dataset.course, lesson_id: t.dataset.lid, kind: "tasks", title, shared: false, data: {kind: "izl-text", title, author, audio, paras, micro}}).select().single();
+    const {data, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: t.dataset.course, lesson_id: t.dataset.lid, kind: "tasks", title, shared: false, data: {kind: "izl-text", title, author, audio, paras, micro}}).select().single();
     T.busy = false;
     if (error){ render(); toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); T.labAddOpen = false; render(); cmd("all", "refresh", {msg: "Учитель добавил текст для изложения"}); toast("Текст добавлен в тренажёр"); return;
@@ -583,7 +583,7 @@ async function ssSave(s, btn){
     Object.assign(m, {title, student_id: scopeId, data});
     toast("Набор изменён – ученик увидит обновление");
   } else {
-    const {data: row, error} = await sb.from("materials").insert({course: s.course, lesson_id: "self", kind: "tasks", student_id: scopeId, title, data}).select().single();
+    const {data: row, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: s.course, lesson_id: "self", kind: "tasks", student_id: scopeId, title, data}).select().single();
     if (error){ if (btn) btn.disabled = false; toast("Не сохранилось: " + error.message); return; }
     if (row) T.mats.push(row);
     toast("Набор сохранён – ученик увидит его в самообучении");
@@ -972,7 +972,7 @@ async function gameAct(a, t){
   if (th.error){ const el = $("#gm-err"); if (el) el.textContent = th.error; return; }
   if (a === "game-try"){ Play.onDone = null; Play.chooseGame(th); return; }
   if (a === "game-save"){
-    const {data, error} = await sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "tasks", title: th.title, shared: !!$("#gm-shared")?.checked, data: {kind: "game", theme: th, game: Play.gamesFor(th)[0]}}).select().single();
+    const {data, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: cid, lesson_id: l.id, kind: "tasks", title: th.title, shared: !!$("#gm-shared")?.checked, data: {kind: "game", theme: th, game: Play.gamesFor(th)[0]}}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); T.gform = null; render(); cmd("all", "refresh", {msg: "Учитель добавил игру"}); toast("Игра сохранена в урок");
   }
@@ -1139,13 +1139,13 @@ async function insertLesson(s, srcCid, srcLid, date, shift){
     const o = T.students.find(x => x.id === id), dates = {...(o.dates || {})};
     if (shift){ const L = U.courseFor(o, T.mats)?.lessons || [], k = L.findIndex(x => x.date >= date);
       if (k >= 0){ const slots = [...L.slice(k).map(x => x.date), nextWeek(L[L.length - 1].date)]; L.slice(k).forEach((x, j) => dates[x.id] = slots[j + 1]); } }
-    const {data: m, error} = await sb.from("materials").insert({course: s.course, lesson_id: lid, kind: "lesson", student_id: id, title: l.title, data}).select().single();
+    const {data: m, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: s.course, lesson_id: lid, kind: "lesson", student_id: id, title: l.title, data}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return null; }
     T.mats.push(m);
     if (shift) await upd(id, {dates});
     cmd(id, "refresh", {msg: `В план добавлен урок «${l.title}»`});
   }
-  if (keys.some(k => k)){ const {data: km} = await sb.from("materials").insert({course: s.course, lesson_id: lid, kind: "keys", title: "Ключи", data: Object.fromEntries(keys.map((k, i) => [i, k]).filter(x => x[1]))}).select().single(); if (km) T.mats.push(km); }
+  if (keys.some(k => k)){ const {data: km} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: s.course, lesson_id: lid, kind: "keys", title: "Ключи", data: Object.fromEntries(keys.map((k, i) => [i, k]).filter(x => x[1]))}).select().single(); if (km) T.mats.push(km); }
   return lid;
 }
 function takePick(s, mode){
@@ -1606,7 +1606,7 @@ async function saveGeneratedLesson(s, lesson){
   for (const id of ids){
     const data = {title: lesson.title, date, learn: lesson.learn.length ? lesson.learn : [lesson.title], oge: lesson.oge,
       theory: lesson.theory, practice: lesson.practice, test: lesson.test, hwtest: [], hw: lesson.hw, writing: null, method: lesson.method, custom: true, from: "ai-build"};
-    const {data: row, error} = await sb.from("materials").insert({course: s.course, lesson_id: lid, kind: "lesson", student_id: id, title: lesson.title, data}).select().single();
+    const {data: row, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: s.course, lesson_id: lid, kind: "lesson", student_id: id, title: lesson.title, data}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); break; }
     T.mats.push(row); saved++;
     const o = T.students.find(x => x.id === id) || s;
@@ -1752,7 +1752,7 @@ async function teAct(a, t){
     const qs = d.qs.map(q => q.pn ? {q: q.q, pn: q.pn, a: q.pn.a.join(","), e: q.e || "", tag: q.tag || l.title} : Array.isArray(q.o) ? {q: q.q, o: q.o, a: q.a, e: q.e || "", ...(q.tf ? {tf: true} : {}), tag: q.tag || l.title} : {q: q.q, a: q.a, e: q.e || "", tag: q.tag || l.title});
     const own = teOwnRow(cid, l.id), data = {...(own?.data || {kind: "test-edit"}), kind: "test-edit", [kind]: qs};
     const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
-      : await sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "tasks", title: "Правка теста", shared: T.me?.role === "developer", data}).select().single();
+      : await sb.from("materials").insert({teacher_id: T.session.user.id, course: cid, lesson_id: l.id, kind: "tasks", title: "Правка теста", shared: T.me?.role === "developer", data}).select().single();
     if (res.error){ toast("Не сохранилось: " + res.error.message); return; }
     if (own) Object.assign(own, res.data); else T.mats.push(res.data);
     T.td = null; render(); cmd("all", "refresh", {msg: "Учитель обновил тест"}); toast("Тест сохранён – ученики увидят новую версию"); return;
@@ -1879,7 +1879,7 @@ async function ceAct(a, t){
     const own = ceRow(ctx, d.kind) || T.mats.find(m => m.kind === "tasks" && m.data?.kind === "content-edit" && m.course === ctx.cid && m.lesson_id === ctx.lid && m.teacher_id === T.session?.user.id && (m.student_id || null) === (sid || null));
     const data = {...(own?.data || {}), kind: "content-edit", [d.kind]: items};
     const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
-      : await sb.from("materials").insert({course: ctx.cid, lesson_id: ctx.lid, kind: "tasks", title: d.kind === "theory" ? "Правка теории" : "Правка практики", student_id: sid, shared: !sid && T.me?.role === "developer", data}).select().single();
+      : await sb.from("materials").insert({teacher_id: T.session.user.id, course: ctx.cid, lesson_id: ctx.lid, kind: "tasks", title: d.kind === "theory" ? "Правка теории" : "Правка практики", student_id: sid, shared: !sid && T.me?.role === "developer", data}).select().single();
     if (res.error){ toast("Не сохранилось: " + res.error.message); return; }
     if (own) Object.assign(own, res.data); else T.mats.push(res.data);
     /* сгенерированное сразу кладём на лист доски, чтобы учитель видел и показывал ученику */
@@ -2070,7 +2070,7 @@ document.addEventListener("submit", async e => {
     const cid = curCourse(), lid = "c" + U.randHex(4);
     const row = {course: cid, lesson_id: lid, kind: "lesson", shared: !!$("#ol-shared")?.checked, title: $("#ol-title").value.trim(),
                  data: {title: $("#ol-title").value.trim(), date: $("#ol-date").value, learn: [$("#ol-title").value.trim()], oge: "Свой урок", theory: [], hw: ""}};
-    const {data, error} = await sb.from("materials").insert(row).select().single();
+    const {data, error} = await sb.from("materials").insert({...row, teacher_id: T.session.user.id}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); T.open = lid; T.view = "lesson"; T.sub = "edit"; render(); scrollTo(0,0); toast("Папка создана – заполните урок");
   }
@@ -2095,7 +2095,7 @@ document.addEventListener("submit", async e => {
     }
     if (kind === "link" && !url){ toast("Вставьте ссылку."); return; }
     if (kind === "text" && !body){ toast("Напишите текст."); return; }
-    const {data, error} = await sb.from("materials").insert({course: cid, lesson_id: T.open, kind, title: title || null, url: url || null, body: body || null, shared: !!$("#am-shared")?.checked}).select().single();
+    const {data, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: cid, lesson_id: T.open, kind, title: title || null, url: url || null, body: body || null, shared: !!$("#am-shared")?.checked}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); render(); cmd("all", "refresh", {msg:"Учитель добавил материал"}); toast("Материал добавлен в папку");
   }
@@ -2307,7 +2307,7 @@ document.addEventListener("click", async e => {
     } else {
       const own = T.mats.find(m => m.kind === "keys" && m.course === cid && m.lesson_id === l.id && m.teacher_id === T.session.user.id);
       const data = {...(own?.data || {}), [k]: v};
-      const q = own ? sb.from("materials").update({data}).eq("id", own.id).select().single() : sb.from("materials").insert({course: cid, lesson_id: l.id, kind: "keys", title: "Ключи", data}).select().single();
+      const q = own ? sb.from("materials").update({data}).eq("id", own.id).select().single() : sb.from("materials").insert({teacher_id: T.session.user.id, course: cid, lesson_id: l.id, kind: "keys", title: "Ключи", data}).select().single();
       const {data: row, error} = await q;
       if (error){ toast("Не сохранилось: " + error.message); return; }
       if (own) own.data = data; else T.mats.push(row);
@@ -2485,7 +2485,7 @@ document.addEventListener("click", async e => {
     const lid = "c" + U.randHex(4);
     const row = {course: s.course, lesson_id: lid, student_id: s.id, kind: "lesson", title: p.title,
       data: {title: p.title, date, oge: "Повторение", learn: [p.title], theory: [{h: "Зачем этот урок", t: p.why}, ...(p.tasks?.length ? [{h: "План урока", list: p.tasks}] : [])], hw: ""}};
-    const {data, error} = await sb.from("materials").insert(row).select().single();
+    const {data, error} = await sb.from("materials").insert({...row, teacher_id: T.session.user.id}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); t.disabled = true; render(); cmd(s.id, "refresh", {msg:"В план добавлен новый урок"}); toast(`Урок «${p.title}» добавлен на ${fmt(date)} – дату можно поменять в таблице`);
   }
@@ -2499,7 +2499,7 @@ document.addEventListener("click", async e => {
   }
   if (a === "ai-save"){
     const g = T.gen, mini = (g.res.mini || []).filter(m => m.q && m.a), test = (g.res.test || []).filter(q => q.q && q.o?.length >= 2 && q.o[q.a] != null);
-    const {data, error} = await sb.from("materials").insert({course: curCourse(), lesson_id: g.lesson, kind: "tasks", shared: !!$("#ag-shared")?.checked, title: g.res.title || g.topic, data: {mini, test}}).select().single();
+    const {data, error} = await sb.from("materials").insert({teacher_id: T.session.user.id, course: curCourse(), lesson_id: g.lesson, kind: "tasks", shared: !!$("#ag-shared")?.checked, title: g.res.title || g.topic, data: {mini, test}}).select().single();
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); T.gen = null; render(); cmd("all", "refresh", {msg:"Учитель добавил задания"}); toast("Задания сохранены: мини-практика – в «Материалах», вопросы – в тесте урока");
   }
