@@ -357,7 +357,7 @@ function viewLogin(){
   const role = S.role || "student", msg = `<p class="formmsg ${S.authMsg?.ok ? "good" : "bad"}" id="authmsg" role="status">${S.authMsg ? esc(S.authMsg.t) : ""}</p>`;
   let body = "";
   if (role === "student") body = `<form class="stack" id="login-form" style="gap:10px">
-    ${sb ? `<label for="l-login">Логин (его выдали при регистрации)</label><input type="text" id="l-login" autocapitalize="characters" autocomplete="username" placeholder="Например, K7M3QPA" required>
+    ${sb ? `<label for="l-login">Логин (его выдали при регистрации)</label><input type="text" id="l-login" autocapitalize="characters" autocomplete="username" placeholder="Например, K7M3QPA" required><p class="small muted" style="margin:-4px 0 2px">Это код латинскими буквами и цифрами — почта для входа не нужна.</p>
     <label for="l-pass">Пароль</label>${U.pass("l-pass", 'autocomplete="current-password" required')}`
     : `<p class="small muted">Демо-режим: сервер ещё не подключён, всё сохраняется только на этом устройстве.</p>
        <label for="l-login">Имя</label><input type="text" id="l-login" required>
@@ -420,7 +420,7 @@ function viewProfile(){
   const p = S.profile;
   return `<div class="section-title" style="margin-top:6px"><h2>Мой профиль</h2></div>
     <div class="card stack" style="gap:12px;max-width:560px">
-      <div class="row" style="gap:14px;align-items:center">${avatarHTML(p, "avatar big")}<div><b style="font-size:1.2rem">${esc(p.name)}</b><div class="small muted">${p.grade ? p.grade + " класс" : ""}</div></div></div>
+      <div class="row" style="gap:14px;align-items:center">${avatarHTML(p, "avatar big")}<div><b style="font-size:1.2rem">${esc(p.name)}</b><div class="small muted">${p.grade ? p.grade + " класс" : ""}</div>${p.login ? `<div class="small muted" style="margin-top:2px">Логин для входа: <b class="tnum">${esc(p.login)}</b> <span class="muted">(почта не нужна)</span></div>` : ""}</div></div>
       <div class="row" style="gap:8px"><button class="btn ghost sm" data-act="avatar-pick">📷 ${p.avatar ? "Сменить фото" : "Выбрать фото"}</button>${p.avatar ? `<button class="btn ghost sm" data-act="avatar-del">Убрать фото</button>` : ""}</div>
       <label for="pf-school">Школа</label><input id="pf-school" maxlength="160" value="${esc(p.school || "")}" placeholder="Например: школа № 12, г. Челябинск">
       <div><button class="btn" data-act="profile-save">Сохранить</button></div>
