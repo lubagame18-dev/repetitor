@@ -177,6 +177,7 @@ create table if not exists public.works (
   primary key (student_id, lesson_id, task)
 );
 alter table public.materials add column if not exists shared boolean not null default false;  -- общая база разработчика: видна всем учителям и их ученикам курса
+alter table public.materials alter column teacher_id set default auth.uid();  -- старые базы: гарантируем владельца при вставке
 
 -- Общая доска: штрихи и надписи. lesson_id = 'l01:practice' и т. п. У пары – общая доска (student_id младшего по id).
 create table if not exists public.board_items (
