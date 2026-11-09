@@ -8,7 +8,7 @@ const sb = U.supa();/* встроенные готовые материалы п
 try { const k0 = (LS.get("session")?.profile?.course) || CFG.DEFAULT_COURSE; if (window.BuiltinLoader && k0) BuiltinLoader.ensure(k0); } catch (e) { }
 const S = {view:"home", open:null, sub:"theory", boardPage:"practice", test:null, token:null, profile:null, course:null,
            rows:[], results:{}, hwres:{}, hw:{}, sheets:{}, writings:{}, mats:[], photos:{}, board:null, drawer:false, invite:null, inviteInfo:null, regDone:null, regTheme:null, regMascot:null, forced:new Set(), syncPending:false,
-           quizToken:null, quiz:null, qz:null, quizzes:null, qzResults:[], qzBusy:false, away:false};
+           quizToken:null, quiz:null, qz:null, quizzes:null, qzResults:[], qzBusy:false, away:false, loadError:null, retryT:null};
 const $ = s => document.querySelector(s);
 const LS = {get(k, def){ try{ return JSON.parse(localStorage.getItem("oge-" + k)) ?? def; }catch(e){ return def; } },
             set(k, v){ try{ localStorage.setItem("oge-" + k, JSON.stringify(v)); }catch(e){} }};
@@ -45,9 +45,26 @@ function recompute(){ if (S.labPick == null) S.labPick = LS.get("labPick", null)
 function saveSession(){ LS.set("session", {token:S.token, profile:S.profile}); }
 async function load(){
   if (sb){
-    const {data, error} = await sb.rpc("student_state", {p_code: S.token});
-    if (error){ toast("Нет связи с сервером. Показываю сохранённое."); return; }
+    /* мобильная сеть: до 3 попыток; при сбое показываем сохранённое и кнопку «Повторить» */
+    let data = null, error = null;
+    for (let k = 0; k < 3 && !data; k++){
+      try { const r = await sb.rpc("student_state", {p_code: S.token}); data = r.data; error = r.error; } catch (e) { error = e; }
+      if (!data && error && k < 2) await new Promise(r => setTimeout(r, 1200));
+    }
+    if (!data && error){
+      S.loadError = error.message || "нет связи";
+      const cache = LS.get("cache", null);
+      if (cache){ S.rows = cache.rows || []; S.hw = cache.hw || {}; S.sheets = cache.sheets || {}; S.writings = cache.writings || {}; S.mats = cache.mats || []; S.base = cache.base || []; U.loadBase(S.base); }
+      if (S.profile?.course && window.BuiltinLoader){
+        try { await BuiltinLoader.ensure(S.profile.course); if (window.BUILTIN_COURSES?.[S.profile.course] && !(S.base || []).length){ S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); } } catch (_) {}
+      }
+      toast("Нет связи с сервером. Показываю сохранённые уроки.");
+      recompute();
+      if (!S.retryT) S.retryT = setTimeout(async () => { S.retryT = null; try { await load(); render(); } catch (_) {} }, 7000);
+      return;
+    }
     if (!data){ logout("Вход устарел: учитель выдал новую ссылку. Войди заново."); return; }
+    S.loadError = null; S.retryT && clearTimeout(S.retryT); S.retryT = null;
     S.profile = data.profile; saveSession();
     S.rows = data.results || [];
     S.hw = Object.fromEntries((data.homework || []).map(h => [h.lesson_id, h]));
@@ -1413,7 +1430,7 @@ function render(){
         <span class="ttl">${esc(TITLES[v] || "")}</span>
         <span class="row" style="gap:6px;align-items:center"><img data-m src="${U.mascot()}" alt="" style="width:38px;height:38px;object-fit:contain"><button class="iconbtn" data-go="profile" aria-label="Мой профиль" style="padding:0">${avatarHTML(S.profile, "avatar sm")}</button></span>
       </div></header>
-      <main class="main">${backbar}${body}</main>
+      <main class="main">${S.loadError ? `<div class="card" data-t-student-load-error role="status" style="margin:10px 0;gap:8px"><b>Не удалось обновить уроки</b><p class="small muted">${esc(S.loadError)}. Показываю сохранённые материалы.</p><div class="row" style="gap:8px"><button class="btn sm" data-act="reload-data">Повторить</button></div></div>` : ""}${backbar}${body}</main>
     </div></div>`;
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
@@ -1636,6 +1653,7 @@ document.addEventListener("click", async e => {
   if (a === "profile-save"){ if (await saveProfile($("#pf-school").value.trim())){ toast("Профиль сохранён"); render(); } return; }
   if (a === "join"){ if (t.tagName !== "A") e.preventDefault(); const how = t.dataset.how; if ($("#jb-remember")?.checked) LS.set("join-how", how); else LS.set("join-how", null); applyJoin(how, false); return; }
   if (a === "join-close"){ closeJoin(); render(); return; }
+  if (a === "reload-data"){ S.loadError = null; S.retryT && clearTimeout(S.retryT); S.retryT = null; toast("Обновляю…"); await load(); render(); liveTrack(); return; }
   if (a === "join-open"){ joinBox(S.room?.self); return; }
   if (a === "join-reset"){ LS.set("join-how", null); joinBox(S.room?.self); return; }
   if (a === "call-start"){ S.joinHow = S.joinHow === "board" ? "both" : (S.joinHow || "both"); startCall(); render(); return; }
