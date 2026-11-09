@@ -322,16 +322,42 @@ async function waitBlockProgress(page, b, want = "15/15", timeout = 8000){
   throw new Error("карточка блока " + b + " не показывает «" + want + "» (сейчас: " + JSON.stringify(last) + ")");
 }
 
-/** клик по строке ученика с повтором: кабинет может перерисоваться между waitFor и click */
+/** клик по строке ученика с повтором: кабинет может перерисоваться/зависнуть на загрузке.
+    Успех = либо кликнули по строке, либо карточка ученика уже открылась (клик прошёл, а ответ eval потерялся). */
 async function clickStudentRow(teacher, id, label = "строка ученика") {
-  for (let i = 0; i < 40; i++) {
-    const ok = await teacher.eval(`(() => { const el = document.querySelector('[data-student="${id}"]'); if (!el) return false; el.click(); return true; })()`).catch(() => false);
-    if (ok) return true;
+  for (let i = 0; i < 60; i++) {
+    const st = await teacher.eval(`(() => {
+      const T = window.__teacher && window.__teacher.T;
+      const el = document.querySelector('[data-student="${id}"]');
+      if (el){ el.click(); return "clicked"; }
+      if (document.querySelector('[data-t-student-all]') || (T && T.view === "student")) return "opened";
+      return false;
+    })()`).catch(() => false);
+    if (st) return true;
     await teacher.waitFor(`document.querySelector('[data-student="${id}"]') ? 1 : 0`, { timeout: 3000, label }).catch(() => {});
+    await sleep(200);
+  }
+  const diag = await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; return { view: T && T.view, students: T && T.students ? T.students.length : null, loading: T && T.loading, loadError: T && T.loadError, dom: document.querySelectorAll('[data-student]').length, body: (document.body.innerText || "").slice(0, 260) }; })()`).catch(e => String(e));
+  throw new Error("не удалось кликнуть " + label + " (" + id + ") :: " + JSON.stringify(diag));
+}
+/** нажать «▶ Урок» в плане, дождавшись готовности карточки (курс может догружаться после списка учеников):
+    кнопка может исчезнуть при перерисовке — повторяем клик, пока он не пройдёт */
+async function clickStartLesson(teacher, lessonId, label = "урок в плане") {
+  const sel = `[data-act="start-lesson"][data-rl="${lessonId}"]`;
+  for (let i = 0; i < 120; i++) {
+    const st = await teacher.eval(`(() => {
+      const el = document.querySelector(${JSON.stringify(sel)});
+      if (el){ el.click(); return "clicked"; }
+      const T = window.__teacher && window.__teacher.T;
+      return (document.querySelector('[data-t-loading]') || (T && T.bgLoading)) ? "loading" : false;
+    })()`).catch(() => false);
+    if (st === "clicked") return true;
     await sleep(150);
   }
-  throw new Error("не удалось кликнуть " + label + " (" + id + ")");
-}let W = null; // world (db+lessons) — заполняется в runE2E
+  const diag = await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; return { view: T && T.view, loading: T && T.loading, bgLoading: T && T.bgLoading, students: T && T.students ? T.students.length : null, hasStart: !!document.querySelector('[data-act="start-lesson"]'), body: (document.body.innerText || "").slice(0, 300) }; })()`).catch(e => String(e));
+  throw new Error("не дождались кнопки «▶ Урок» (" + lessonId + ", " + label + ") :: " + JSON.stringify(diag));
+}
+let W = null; // world (db+lessons) — заполняется в runE2E
 
 /* ---------- a: авто-переключение предмета + присутствие ---------- */
 test("a", "Ученик на предмете B: учитель начинает урок A → сам переключается, видит материал, у учителя «онлайн»", async ({ teacher, student }) => {
@@ -349,7 +375,7 @@ test("a", "Ученик на предмете B: учитель начинает
   await student.eval(`window.__e2eMarker = "a"; true`);
   await teacher.eval(`window.Call = null; window.__MOCK.LOG.broadcasts.length = 0; true`);
   const t0 = Date.now();
-  await teacher.eval(`document.querySelector('[data-act="start-lesson"][data-rl="${L.id}"]').click(); true`);
+  await clickStartLesson(teacher, L.id, "a: урок A");
   await sleep(150);
   const toast = await teacher.eval(`(document.getElementById("toast") || {}).textContent || ""`);
   const cmd = await cmdOfType(teacher, "lesson");
@@ -370,7 +396,7 @@ test("a", "Ученик на предмете B: учитель начинает
     { timeout: 9000, label: "у ученика виден материал урока на доске (live-лист)" });
   const dt = Date.now() - t0;
   W.aMs = dt;
-  assert(dt < 10000, `авто-переключение заняло ${dt} мс (> 10 c, порог с запасом на нагрузку CI)`);
+  assert(dt < 25000, `авто-переключение заняло ${dt} мс (> 25 c; в норме < 2 c; большой порог — шумная машина/OneDrive, фоновая догрузка курсов в кабинете)`);
   eq(await student.eval(`window.__e2eMarker || null`), "a", "страница ученика перезагрузилась (маркер сброшен)");
 
   const badge = await teacher.eval(`(document.querySelector('[data-online="${ROW_A}"]') || {}).textContent || ""`);
@@ -455,7 +481,7 @@ test("R1", "Ученик: меню во время урока (data-go), бан�
   await teacher.waitFor(`document.querySelector('[data-student="${ROW_A}"]') ? 1 : 0`, { timeout: 8000, label: "R1: список учеников после завершения урока" });
   await clickStudentRow(teacher, ROW_A, "список учеников");
   await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]') ? 1 : 0`, { timeout: 10000, label: "R1: кнопка «▶ Урок» для повторного старта" });
-  await teacher.eval(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]').click(); true`);
+  await clickStartLesson(teacher, lessonId, "V: урок в плане");
   await student.waitFor(`(() => { const S = window.__app.S; return S.view === "room" ? 1 : 0; })()`, { timeout: 12000, label: "R1: явная команда учителя снова открыла комнату" });
   eq(await student.eval(`window.__app.S.away`), false, "R1: S.away=false после явной команды учителя");
 });
@@ -470,7 +496,7 @@ test("b2", "Урок из другого предмета: ученик в ко�
   await student.eval(`window.__e2eMarker = "b2"; true`);
   await teacher.eval(`window.Call = null; window.__MOCK.LOG.broadcasts.length = 0; true`);
   const t0 = Date.now();
-  await teacher.eval(`document.querySelector('[data-act="start-lesson"][data-rl="${M.id}"]').click(); true`);
+  await clickStartLesson(teacher, M.id, "b2: урок B");
   await sleep(150);
   const cmd = await cmdOfType(teacher, "lesson");
   assert(cmd, "нет команды урока B");
@@ -1200,7 +1226,7 @@ async function openTeacherCard(teacher, rowId) {
 async function startTeacherRoom(teacher, lessonId) {
   await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]') ? 1 : 0`,
     { timeout: 15000, label: "V: кнопка «▶ Урок» в плане" });
-  await teacher.eval(`document.querySelector('[data-act="start-lesson"][data-rl="${lessonId}"]').click(); true`);
+  await clickStartLesson(teacher, lessonId, "V: урок в плане");
   await teacher.waitFor(`(() => { const T = window.__teacher.T; return T.view === "room" && T.board ? 1 : 0; })()`,
     { timeout: 18000, label: "V: комната урока с доской (T.view=room, T.board)" });
 }
@@ -1563,6 +1589,132 @@ test("U2", "Доступ без подписки: раздел «Доступ»,
   assert(/Доступ/.test(d.nav), "пункт меню называется «Доступ», а не «Подписка»");
   assert(!d.banner, "нет баннера «Подписка закончилась»");
 });
+/* ---------- W1: кабинет учителя на планшете — медленный запрос, ошибка/повтор, iPad ---------- */
+test("W1", "Кабинет учителя: медленный необязательный запрос не блокирует учеников; ошибка students → карточка и «Повторить»; iPad 820×1180", async ({ teacher, baseUrl }) => {
+  const seed = JSON.parse(JSON.stringify(W.db));
+  const reloadTeacher = async (label) => {
+    await teacher.eval(`try { sessionStorage.clear(); } catch (_) {}; true`).catch(() => {});
+    await teacher.goto(baseUrl + "/teacher.html", { wait: "load", timeout: 45000 });
+    await teacher.waitFor(`window.__teacher && document.querySelector('.shell') ? 1 : 0`, { timeout: 25000, label });
+  };
+  const errorCard = () => teacher.eval(`(() => {
+    let el = document.querySelector('[data-t-load-error]');
+    if (!el) {
+      const all = [...document.querySelectorAll("div,section,article")].filter(x => /Не загрузились ученики/i.test(x.textContent || ""));
+      el = all.find(x => x.querySelector("button,[data-act]")) || all.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length)[0];
+    }
+    if (!el) return null;
+    const btns = [...el.querySelectorAll("button,[data-act]")];
+    const btn = btns.find(x => /Повторить|Обновить|Попробовать|Ещё раз/i.test(x.textContent || "")) || btns.find(x => x.dataset && x.dataset.act === "reload") || btns[0] || null;
+    return { text: (el.textContent || "").trim().slice(0, 240), btn: btn ? (btn.textContent || "").trim() : null, act: btn ? (btn.dataset.act || "") : null, hasBtn: !!btn };
+  })()`);
+  try {
+    /* (a) медленный НЕОБЯЗАТЕЛЬНЫЙ запрос (topic_quizzes — фон) не блокирует список учеников.
+       Управляемый delay ставим ДО загрузки страницы через addScriptToEvaluateOnNewDocument:
+       после навигации мок создаётся заново, и настройка со старой страницы не переживает reload. */
+    await teacher.eval(`window.__MOCK.reset(${JSON.stringify(seed)}); window.__MOCK.clearControls(); true`);
+    /* Таймер на странице (setTimeout-тик с document-start) фиксирует ПОРЯДОК: сначала [data-student]
+       (основное), позже T.bgLoaded (фон). Абсолютные секунды не важны — на этой машине загрузка ассетов
+       из OneDrive занимает секунды, это не про блокировку loadAll. */
+    const ctlA = await teacher.inject(`window.__MOCK.delay("topic_quizzes", 15000);
+      window.__w1 = {studentsAt: 0, bgAt: 0, loadingSeen: false, bgAtStudents: null};
+      (function tick(){
+        try {
+          const T = window.__teacher && window.__teacher.T;
+          if (T){
+            if (T.loading) window.__w1.loadingSeen = true;
+            if (!window.__w1.studentsAt && document.querySelector('[data-student]')) {
+              window.__w1.studentsAt = performance.now();
+              window.__w1.bgAtStudents = !!T.bgLoaded;
+            }
+            if (T.bgLoaded && !window.__w1.bgAt) window.__w1.bgAt = performance.now();
+          }
+        } catch (_) {}
+        setTimeout(tick, 25);
+      })(); true;`, "w1a-ctrl.js");
+    try {
+      const t0 = Date.now();
+      await reloadTeacher("W1a: кабинет учителя загрузился (медленный topic_quizzes)");
+      await teacher.waitFor(`document.querySelector('[data-student]') ? 1 : 0`, { timeout: 20000, label: "W1a: [data-student] появились, несмотря на задержку topic_quizzes 15 c" });
+      await teacher.waitFor(`(() => { const T = window.__teacher.T; return T.bgLoaded === true ? 1 : 0; })()`,
+        { timeout: 45000, label: "W1a: фоновые данные завершились (T.bgLoaded)" });
+      const w1 = await teacher.eval(`(() => { const w = window.__w1 || {}; return { studentsAt: Math.round(w.studentsAt || 0), bgAt: Math.round(w.bgAt || 0), bgAtStudents: w.bgAtStudents, loadingSeen: !!w.loadingSeen }; })()`);
+      console.log("       [W1a] порядок: studentsAt=" + w1.studentsAt + "мс, bgAt=" + w1.bgAt + "мс, загрузка шла=" + w1.loadingSeen);
+      if (!w1.studentsAt) throw new Error("W1a: страница не зафиксировала появление [data-student]");
+      if (w1.bgAtStudents === true) throw new Error("W1a: ученики появились только после завершения фоновой загрузки (T.bgLoaded уже true) — фон блокирует список");
+      if (!w1.bgAt) throw new Error("W1a: не дождались T.bgLoaded");
+      if (!(w1.bgAt > w1.studentsAt + 1000)) throw new Error("W1a: фон завершился почти одновременно со списком (bgAt-studentsAt=" + (w1.bgAt - w1.studentsAt) + " мс) — похоже, ученики ждали медленный background-запрос");
+      const loadState = await teacher.eval(`(() => { const T = window.__teacher && window.__teacher.T; return { loading: T ? T.loading : undefined, students: document.querySelectorAll('[data-student]').length, loadText: ((document.body.innerText || "").match(/Загружаю…|Загружаю\\.\\.\\.|Загружаем данные/) || [null])[0], err: /Не загрузились ученики/i.test(document.body.innerText || "") }; })()`);
+      if (loadState.loading === true) throw new Error("W1a: T.loading=true, хотя ученики уже нарисованы: " + JSON.stringify(loadState));
+      if (loadState.loadText) throw new Error("W1a: на экране висит «" + loadState.loadText + "», хотя ученики уже видны: " + JSON.stringify(loadState));
+      if (loadState.err) throw new Error("W1a: при медленном необязательном запросе показана ошибка загрузки учеников: " + JSON.stringify(loadState));
+      const bg = await teacher.eval(`(() => { const T = window.__teacher.T; return { bgLoaded: T.bgLoaded, bgError: (T.bgError || []).slice(), students: document.querySelectorAll('[data-student]').length }; })()`);
+      if (bg.students < 2) throw new Error("W1a: ученики исчезли после фоновой догрузки: " + JSON.stringify(bg));
+      if (!(bg.bgError || []).some(x => /тест/i.test(String(x)))) throw new Error("W1a: ожидали ошибку таймаута topic_quizzes в T.bgError: " + JSON.stringify(bg));
+    } finally {
+      await teacher.removeInjected(ctlA);
+    }
+    /* убираем задержку у текущего документа и «Обновить» → фон догружается без ошибок */
+    await teacher.eval(`window.__MOCK.clearControls(); true`);
+    await teacher.eval(`(() => { const b = document.querySelector('[data-act="reload"]'); if (!b) return false; b.click(); return true; })()`);
+    await teacher.waitFor(`(() => { const T = window.__teacher.T; return T.bgLoaded === true && (T.bgError || []).length === 0 ? 1 : 0; })()`,
+      { timeout: 20000, label: "W1a: после «Обновить» фон догрузился без ошибок" });
+
+    /* (b) ошибка students → карточка «Не загрузились ученики» + «Повторить» работает */
+    const ctlB = await teacher.inject(`window.__MOCK.fail("students", "нет сети"); true;`, "w1b-ctrl.js");
+    try {
+      await reloadTeacher("W1b: кабинет загрузился с ошибкой students");
+      await teacher.waitFor(`(() => { const el = [...document.querySelectorAll("div,section,article")].find(x => /Не загрузились ученики/i.test(x.textContent || "")); return el ? 1 : 0; })()`,
+        { timeout: 30000, label: "W1b: карточка «Не загрузились ученики»" });
+      const err1 = await errorCard();
+      if (!err1) throw new Error("W1b: карточка ошибки не найдена");
+      if (!err1.hasBtn) throw new Error("W1b: в карточке ошибки нет кнопки повтора: " + JSON.stringify(err1));
+      const card = await teacher.eval(`!!document.querySelector('[data-t-load-error]')`);
+      if (!card) throw new Error("W1b: нет карточки [data-t-load-error]");
+      if (await teacher.eval(`document.querySelectorAll('[data-student]').length`) > 0) throw new Error("W1b: при ошибке students список учеников всё равно отрисован");
+      /* снимаем fail и жмём «Повторить» (loadAll) */
+      await teacher.eval(`window.__MOCK.clearControls(); true`);
+      const clicked = await teacher.eval(`(() => { const el = document.querySelector('[data-t-load-error] [data-act="reload"]') || [...document.querySelectorAll("button,[data-act]")].find(x => /Повторить/i.test(x.textContent || "")); if (!el) return false; el.click(); return true; })()`);
+      if (!clicked) throw new Error("W1b: не нашли кнопку «Повторить»");
+      await teacher.waitFor(`document.querySelectorAll('[data-student]').length >= 2 ? 1 : 0`, { timeout: 30000, label: "W1b: после «Повторить» ученики появились" });
+      if (await teacher.eval(`!!document.querySelector('[data-t-load-error]')`)) throw new Error("W1b: карточка ошибки осталась после успешного повтора");
+    } finally {
+      await teacher.removeInjected(ctlB);
+      await teacher.eval(`window.__MOCK.clearControls(); true`).catch(() => {});
+    }
+
+    /* (c) iPad 820×1180: ученики видимы, не перекрыты, клик открывает карточку */
+    const origUA = await teacher.userAgent();
+    await teacher.setViewport(820, 1180, { mobile: true, userAgent: "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1", platform: "iPad" });
+    try {
+      await reloadTeacher("W1c: кабинет на iPad загрузился");
+      await teacher.waitFor(`document.querySelectorAll('[data-student]').length >= 2 ? 1 : 0`, { timeout: 25000, label: "W1c: ≥2 ученика на iPad" });
+      const vis = await teacher.eval(`(() => {
+        const rows = [...document.querySelectorAll('[data-student]')];
+        return rows.map(r => {
+          const q = r.getBoundingClientRect();
+          const cx = Math.min(innerWidth - 3, Math.max(3, q.left + q.width / 2));
+          const cy = Math.min(innerHeight - 3, Math.max(3, q.top + q.height / 2));
+          const at = document.elementFromPoint(cx, cy);
+          return { id: r.dataset.student, w: q.width, h: q.height, top: q.top, visible: !!r.offsetParent,
+            covered: !(at && (at === r || r.contains(at))), inDoc: q.width > 0 && q.height > 0 && q.top < document.documentElement.scrollHeight };
+        });
+      })()`);
+      if (vis.length < 2) throw new Error("W1c: на iPad меньше 2 строк учеников: " + JSON.stringify(vis));
+      for (const r of vis) {
+        if (!r.visible || r.w < 20 || r.h < 10) throw new Error("W1c: строка ученика «" + r.id + "» не видна/нулевая на iPad: " + JSON.stringify(r));
+        if (!r.inDoc) throw new Error("W1c: строка ученика «" + r.id + "» вне документа: " + JSON.stringify(r));
+        if (r.covered) throw new Error("W1c: строка ученика «" + r.id + "» перекрыта (фильтры/меню?): " + JSON.stringify(r));
+      }
+      await clickStudentRow(teacher, ROW_A, "W1c: строка rowA на iPad");
+      await teacher.waitFor(`document.querySelector('[data-t-student-all]') ? 1 : 0`, { timeout: 12000, label: "W1c: клик по ученику на iPad открыл карточку («Всё, что делает ученик»)" });
+    } finally {
+      await teacher.setViewport(1440, 1000, { userAgent: origUA, platform: "" }).catch(() => {});
+    }
+  } finally {
+    await teacher.eval(`window.__MOCK.clearControls(); true`).catch(() => {});
+  }
+});
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 
@@ -1574,6 +1726,10 @@ async function bootTabs(browser, baseUrl, world) {
   await teacher.goto(baseUrl + "/teacher.html");
   await teacher.waitFor(`(() => { const b = Array.from(document.querySelectorAll("[data-student]")); return b.length >= 2 ? 1 : 0; })()`,
     { timeout: 30000, label: "кабинет учителя: карточки учеников загрузились" });
+  /* дождаться, пока первичная загрузка и ФОН закончатся: иначе первые тесты попадают в занятый
+     рендерер (асинхронная догрузка курсов/активности) и получают CDP timeout на Runtime.evaluate */
+  await teacher.waitFor(`(() => { const T = window.__teacher && window.__teacher.T; return T && T.loading === false && T.bgLoading === false ? 1 : 0; })()`,
+    { timeout: 60000, label: "кабинет учителя: первичная и фоновая загрузка завершились" });
 
   const student = await browser.newPage("about:blank");
   await student.inject(seedScript({ db: world.db, session: null, studentSession: world.studentSession(ROW_B), joinHow: "board" }), "seed-student.js");

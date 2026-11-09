@@ -118,12 +118,30 @@ class Page {
     await this.cdp.send("Page.enable");
     await this.cdp.send("Runtime.enable");
     await this.cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+    this._viewport = { width, height, mobile: false };
   }
+  /** viewport/UA для мобильных сценариев (W1c): 820×1180 + iPad UA; restore исходных значений */
+  async setViewport(width, height, { mobile = false, userAgent = null, platform = "" } = {}){
+    await this.cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: Math.round(+width || 1440), height: Math.round(+height || 1000), deviceScaleFactor: 1, mobile: !!mobile,
+    });
+    if (userAgent) await this.cdp.send("Emulation.setUserAgentOverride", { userAgent: String(userAgent), platform: String(platform || ""), acceptLanguage: "ru-RU" });
+    this._viewport = { width: Math.round(+width || 1440), height: Math.round(+height || 1000), mobile: !!mobile };
+    return this._viewport;
+  }
+  async userAgent(){ return await this.eval("navigator.userAgent"); }
   async inject(script, source = "inject.js"){
     const r = await this.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: script, runImmediately: true });
     this._injected = this._injected || [];
     this._injected.push(r.identifier);
     return r.identifier;
+  }
+  /** снять ранее добавленный addScriptToEvaluateOnNewDocument (например, управляемый fail/delay мока для W1) */
+  async removeInjected(identifier){
+    if (!identifier) return false;
+    try { await this.cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }); } catch (_) { return false; }
+    this._injected = (this._injected || []).filter(x => x !== identifier);
+    return true;
   }
   async goto(url, { wait = "load", timeout = 20000 } = {}){
     await this.cdp.send("Page.navigate", { url });

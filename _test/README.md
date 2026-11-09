@@ -1,11 +1,11 @@
-# Стенд проверок repetitor (v64) — `_test/`
+# Стенд проверок repetitor (v67) — `_test/`
 
 Офлайн-проверки актуальной версии сайта «репетитор» в реальном Chrome, без npm и без сети.
 Наборы идут последовательно (`run.mjs`), U1 — отдельным процессом:
 
 | набор | файл | что проверяет | браузер |
 |-------|------|---------------|---------|
-| Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai")` (`generate_tasks`, **`build_lesson`**, `edit_lesson`/`generate_theory`), формы `results`/`topic_quiz_results` для графика динамики — **67 проверок** | нет |
+| Мок Supabase | `mock-selftest.mjs` | auth/rpc/from/channel/presence, доска, **quiz_get / quiz_submit / student_quizzes**, `student_save_work`/`student_submit_result`, `functions.invoke("ai")` (`generate_tasks`, **`build_lesson`**, `edit_lesson`/`generate_theory`), формы `results`/`topic_quiz_results` для графика динамики — **71 проверка** | нет |
 | Доска | `board.mjs` + `board.html` | **22 сценария**: 15 старых (якоря, вложения, текст, живой фон, пустота) + **H1–H4** (точечный ластик, инлайн-текст, зум/пан/расширение, вставка в точку) + **I1–I3** (выделение/удаление, ресайз картинки и текста) | да |
 | E2E (основной) | `e2e.mjs` | учитель + ученик в двух вкладках на `teacher.html`/`index.html`: a, b1, **R1**, b2–b3, **Q1–Q6**, **S1–S4**, **T1–T4**, **V1–V3**, U2 — **23 сценария** | да |
 | E2E (U1 отдельно) | `e2e.mjs` `E2E_ONLY=U1` | база самообучения и конструктор наборов учителя (U1) | да |
@@ -14,10 +14,10 @@
 
 ```bash
 cd repetitor-live
-node _test/run.mjs              # всё: mock-selftest + доска + e2e (23) + e2e U1
+node _test/run.mjs              # всё: mock-selftest + доска + e2e (24) + e2e U1
 node _test/mock-selftest.mjs    # только мок (быстро, Chrome не нужен): 67/67
 node _test/board.mjs            # только доска: 22/22
-node _test/e2e.mjs              # только основной e2e: 23/23
+node _test/e2e.mjs              # только основной e2e: 24/24
 E2E_ONLY=S node _test/e2e.mjs   # только самообучение S1–S4
 E2E_ONLY=V node _test/e2e.mjs   # только панель «Инструменты»/генерация V1–V3
 E2E_ONLY=U1 node _test/e2e.mjs  # отдельно U1 (вкладки делят localStorage — нужен свой процесс)
@@ -46,8 +46,8 @@ BOARD_ONLY=I node _test/board.mjs   # только I1–I3 (выделение/D
 в один Chrome-профиль** — при перегрузке возможны единичные «CDP timeout» на первых шагах.
 
 **Ограничение:** в части сессий субагента Chrome не стартует (mojo/named pipes). В этом
-окружении прогоны из subagent-сессии проходят: **mock-selftest 67/67, доска 22/22, e2e 23/23,
-U1 1/1** — три подряд полных прогона `run.mjs` (2026-11-06, v64: динамика, тест по первой
+окружении прогоны из subagent-сессии проходят: **mock-selftest 71/71, доска 22/22, e2e 24/24,
+U1 1/1** — три подряд полных прогона `run.mjs` (2026-11-09, v67: кабинет на планшете, R1, динамика, тест по первой
 попытке, H1–H4, I1–I3, V1–V3). На занятой машине встречаются единичные env-флейки:
 `CDP timeout: Runtime.evaluate` — `cdp.mjs` делает `Runtime.evaluate` с коротким таймаутом и
 повторяет 3 раза (обычно проходит со второй попытки), но два одновременных прогона в один
@@ -88,6 +88,7 @@ CDN (supabase-js, шрифты) блокируется сетью.
 | **V3** | **урок для другого предмета/класса**: карточка rowB → `[data-build-lesson]`: `#bl-topic`/`#bl-notes` → `[data-act="build-lesson"]` → mock `materials` `kind="lesson"`, `course="math-5"`, `student_id=rowB`, `lesson_id=c…`, `data.custom=true`, `data.theory/practice/test`; учитель видит тему в карточке; ученик rowB после reload видит урок в «Моих уроках» и теорию в плане |
 | **U1** | отдельный процесс: база самообучения (12 блоков/180 слов, 5 колод) + конструктор наборов учителя (создание stress/deck `kind:"tasks"`, `lesson_id:"self"`), ученик видит/проходит свои наборы, прогресс `task=SELF_DATA.taskFor("m<id>")` у учителя, правка названия и удаление; см. секцию ниже |
 | **U2** | доступ без подписки: раздел «Доступ», всё открыто, оплата не предлагается |
+| **W1** | **кабинет на планшете**: (a) `__MOCK.delay("topic_quizzes", 15000)` (медленный фон) → `[data-student]` появляются задолго до конца фона (проба в странице: studentsAt < bgAt−1 c), `T.loading=false`, без висящего «Загружаю…» и без карточки ошибки, затем `T.bgLoaded=true` и `T.bgError` содержит «тесты по темам», после снятия задержки и «Обновить» фон догружается без ошибок; (b) `__MOCK.fail("students","нет сети")` → карточка `[data-t-load-error]` «Не загрузились ученики: нет сети» + `[data-act="reload"]` «Повторить», списка нет; после снятия fail и клика — `[data-student]` появились; (c) `Emulation.setDeviceMetricsOverride` 820×1180 + iPad UA: ≥2 строки `[data-student]` видимы/в документе/не перекрыты (elementFromPoint), клик открывает `[data-t-student-all]` |
 
 Важные детали e2e:
 - все вкладки одного origin делят `localStorage`, поэтому mock-БД пишется только в пустое
@@ -129,7 +130,7 @@ track/presenceState/subscribe/removeChannel`. Общее состояние вк
   и сортируются по `created_at` — как ждёт `Trend.pointsFromRows/pointsFromQuizzes`;
 - **карточка учителя**: `from("board_items")` с фильтрами по `student_id`/`lesson_id`, `.in`,
   `.order`, `.limit`; `works` читаются по `student_id`;
-- хелперы `window.__MOCK`: `dbTable(name)`, `tables()`, `tokens()`, `reset(seed)`,
+- **управляемые задержки/ошибки (W1)**: `__MOCK.delay(table, ms)` — `from(table).select` ждёт ms; `__MOCK.fail(table, msg)` — возвращает `{data:null,error:{message}}`; `__MOCK.failRpc(name, msg)`; `__MOCK.clearControls()`, `__MOCK.controlsDone()`. По умолчанию карты пусты — поведение мока не меняется; настройку для сценария ставят через `addScriptToEvaluateOnNewDocument` ДО загрузки страницы (новый документ создаёт новый мок), снимают `page.removeInjected(id)`;- хелперы `window.__MOCK`: `dbTable(name)`, `tables()`, `tokens()`, `reset(seed)`,
   `broadcastLog()`, `cmdList()`, `lastRpc(name)`, `rpcNames()`, `involveLog()`, `channels()`,
   `presenceOf(name)`.
 
@@ -184,8 +185,8 @@ setZoom/zoomBy/fitWidth/extendHeight`; `info()` доп. `zoom, scrollX, scrollY,
 
 - `run.mjs` — полный прогон наборов (mock + доска + e2e + e2e U1), итог PASS/FAIL, exit code;
 - `mock-supabase.js` — фейковый Supabase (auth/rpc/from/channel/storage/functions + quiz + ai);
-- `mock-selftest.mjs` — самопроверка мока без браузера (67 проверок);
-- `e2e.mjs` — мир учителя/ученика, сценарии a,b1,R1,b2–b3,Q1–Q6,S1–S4,T1–T4,V1–V3,U1,U2;
+- `mock-selftest.mjs` — самопроверка мока без браузера (71 проверка);
+- `e2e.mjs` — мир учителя/ученика, сценарии a,b1,R1,b2–b3,Q1–Q6,S1–S4,T1–T4,V1–V3,U2,W1,U1;
 - `board.html` + `board-harness.js` + `board.mjs` — стенд доски и 22 сценария (15 старых + H1–H4 + I1–I3);
 - `cdp.mjs` — мини-драйвер CDP (Chrome, мышь/клавиатура, `Runtime.evaluate`, скриншоты);
 - `serve.mjs` — статический сервер корня worktree (без кэша, авто-порт);

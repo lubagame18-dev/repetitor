@@ -304,5 +304,25 @@ ok(Array.isArray(trendQ.data) && trendQ.data.length >= 1
   && trendQ.data.every(r => r.created_at && +r.total > 0 && r.quiz_id),
   "topic_quiz_results: created_at/score/total/quiz_id для графика", trendQ.data);
 
+// 15. управляемые задержки/ошибки мока (W1: кабинет учителя на планшете): по умолчанию без эффекта
+const ctrlDefault = await teacher.client.from("students").select("id");
+ok(Array.isArray(ctrlDefault.data) && !ctrlDefault.error, "mock controls: по умолчанию from(students) без ошибок/задержек", ctrlDefault.error);
+teacher.win.__MOCK.fail("students", "нет сети");
+const ctrlFail = await teacher.client.from("students").select("id");
+ok(ctrlFail.data === null && ctrlFail.error && /нет сети/.test(ctrlFail.error.message),
+  "mock fail(table): from(students).select → {data:null,error:{message}}", ctrlFail.error);
+teacher.win.__MOCK.clearControls();
+teacher.win.__MOCK.delay("topic_quizzes", 80);
+const tDelay = Date.now();
+const ctrlDelayed = await teacher.client.from("topic_quizzes").select("id");
+const dDelay = Date.now() - tDelay;
+teacher.win.__MOCK.clearControls();
+ok(!ctrlDelayed.error && dDelay >= 60, "mock delay(table): select ждёт ≥60 мс и возвращает данные", { ms: dDelay, error: ctrlDelayed.error });
+teacher.win.__MOCK.failRpc("me", "rpc нет сети");
+const ctrlRpc = await teacher.client.rpc("me", {});
+teacher.win.__MOCK.clearControls();
+ok(ctrlRpc.data === null && ctrlRpc.error && /нет сети/.test(ctrlRpc.error.message),
+  "mock failRpc(me): rpc → {data:null,error}", ctrlRpc.error);
+
 console.log(`\nИтог self-test мока: ${passed}/${passed + failed} PASS, ${Date.now() - t0} мс`);
 process.exit(failed ? 1 : 0);

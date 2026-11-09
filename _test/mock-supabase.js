@@ -253,6 +253,15 @@
     },
   };
 
+  /* ---------- управляемые задержки/ошибки для тестов (W1: кабинет на планшете) ----------
+     По умолчанию карты пусты — поведение мока не меняется.
+     delay(table, ms)  — каждый from(table).select ждёт ms (имитация медленного необязательного запроса);
+     fail(table, msg)  — from(table).select возвращает {data:null,error:{message:msg}};
+     failRpc(name,msg) — rpc(name) возвращает {data:null,error:{message:msg}};
+     clearControls()   — снять всё (после теста обязательно). */
+  const CTRL = { delay: new Map(), fail: new Map(), failRpc: new Map() };
+  const ctrlWait = ms => new Promise(r => setTimeout(r, Math.max(0, +ms || 0)));
+
   /* ---------- from(): select/insert/update/delete/upsert + фильтры ---------- */
   const eq = (a, b) => String(a) === String(b);
   function applyFilters(rows, filters) {
@@ -342,9 +351,16 @@
       limit(n) { q.limitN = n; return api; },
       single() { q.singleMode = true; return api; },
       then(resolve, reject) {
-        let r;
-        try { r = runQuery(q); } catch (e) { r = { data: null, error: { message: String(e && e.message || e) } }; }
-        return Promise.resolve(r).then(resolve, reject);
+        const run = async () => {
+          try {
+            const fm = CTRL.fail.get(q.table);
+            if (fm != null) return { data: null, error: { message: String(fm), code: "MOCK_FAIL", table: q.table } };
+            const dm = CTRL.delay.get(q.table);
+            if (dm > 0) await ctrlWait(dm);
+            return runQuery(q);
+          } catch (e) { return { data: null, error: { message: String((e && e.message) || e) } }; }
+        };
+        return run().then(resolve, reject);
       },
       catch(fn) { return api.then(v => v, fn); },
     };
@@ -554,6 +570,8 @@
       }
     }
     log("rpcs", { name, keys, args });
+    const fr = CTRL.failRpc.get(name);
+    if (fr != null) return { data: null, error: { message: String(fr), code: "MOCK_FAIL_RPC", name } };
     const fn = RPC[name];
     if (!fn) { say("rpc unknown:", name); return { data: null, error: null }; }
     try { return { data: await fn(params || {}), error: null }; }
@@ -603,6 +621,14 @@
       return list.length ? JSON.parse(JSON.stringify(list[list.length - 1].payload)) : null;
     },
     cmdList: () => JSON.parse(JSON.stringify(LOG.broadcasts.filter(b => b.event === "cmd" && b.payload && b.payload.cmd).map(b => b.payload))),
+    /* управляемые задержки/ошибки (W1): по умолчанию без эффекта */
+    delay: (table, ms) => { CTRL.delay.set(String(table), +ms || 0); return true; },
+    fail: (table, msg) => { CTRL.fail.set(String(table), String(msg == null ? "нет сети" : msg)); return true; },
+    failRpc: (name, msg) => { CTRL.failRpc.set(String(name), String(msg == null ? "нет сети" : msg)); return true; },
+    controls: () => ({ delay: [...CTRL.delay], fail: [...CTRL.fail], failRpc: [...CTRL.failRpc] }),
+    clearControls: () => { CTRL.delay.clear(); CTRL.fail.clear(); CTRL.failRpc.clear(); return true; },
+    controlsDone: () => CTRL.done,
+    controlsLog: () => ({ done: CTRL.done, delay: [...CTRL.delay], fail: [...CTRL.fail], failRpc: [...CTRL.failRpc] }),
   };
   say("готов", TAB);
 })();

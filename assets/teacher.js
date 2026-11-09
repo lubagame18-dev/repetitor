@@ -9,7 +9,8 @@ const T = {subject:"all", matSubject:null, addSubj:"rus", session:null, me:null,
            students:[], rows:[], hw:[], writings:[], sheets:[], mats:[], act:[], reports:[], ai:{},
            online:{}, feed:[], live:null, loading:false, confirmDel:null, courseId:null, board:null, boardLesson:null, boardPage:null, bcache:{}, drawer:false, justInvited:null, gen:null, busy:false, lastShow:null,
            qzQuizzes:[], qzResults:[], qzSel:null, qzSelSid:null, qzCount:3, qzBusy:false, qzDraft:null, qzSaved:null,
-           sbase:false, snew:false, ssEdit:null, ssSid:null, ssKind:null};
+           sbase:false, snew:false, ssEdit:null, ssSid:null, ssKind:null,
+           loadError:null, loadedAt:0, bgLoaded:false, bgLoading:false, bgError:[], coursesReady:false, coursesP:null};
 const $ = s => document.querySelector(s);
 const GRADES = [0,1,2,3,4,5,6,7,8,9,10,11];
 const ST_COLS = "id,teacher_id,name,course,code,note,created_at,grade,goal,goals,contact,invite_token,registered_at,start_date,dates,unlocked,pair_id,theme,subject,person_id,call_url,covered,covered_manual,school,avatar";
@@ -33,29 +34,94 @@ const siblings = s => T.students.filter(o => (o.person_id || o.id) === (s.person
 /* курс в разделе «Материалы»: встроенный + свои уроки учителя (общие для всех учеников) */
 const teacherCourse = cid => U.courseFor({course: cid}, T.mats);
 
+/* таймаут для запроса: не даём одному медленному запросу повесить весь кабинет */
+function withTimeout(promise, ms, label){
+  return new Promise(resolve => {
+    let done = false;
+    const timer = setTimeout(() => finish({data:null, error:{message: `не дождались ответа: ${label || "запрос"} (${Math.round(ms / 1000)} c)`}}), ms);
+    function finish(r){
+      if (done) return; done = true; clearTimeout(timer);
+      resolve(r && typeof r === "object" ? r : {data:null, error:{message:"нет ответа: " + (label || "запрос")}});
+    }
+    try { Promise.resolve(promise).then(finish, e => finish({data:null, error:{message:(e && e.message) || ("ошибка сети: " + (label || "запрос"))}})); }
+    catch(e){ finish({data:null, error:{message:(e && e.message) || ("ошибка сети: " + (label || "запрос"))}}); }
+  });
+}
+const LOAD_MS = {me: 12000, students: 12000, main: 12000, bg: 8000};
+let loadSeq = 0;
+
 async function loadAll(){
   if (!sb || !T.session) return;
-  T.loading = true; render();
-  const me = await sb.rpc("me"); T.me = me.data || {base_access: []};
-  if (me.error) toast(/does not exist|function/i.test(me.error.message) ? "База ещё не настроена: выполните supabase/schema.sql в Supabase." : U.authErr(me.error));
+  const seq = ++loadSeq;
+  T.loading = true; T.loadError = null; T.bgLoaded = false; T.bgLoading = false; T.bgError = []; render();
+  /* 1. профиль учителя – с таймаутом, но не блокируем список навсегда */
+  const meR = await withTimeout(sb.rpc("me"), LOAD_MS.me, "профиль учителя");
+  if (seq !== loadSeq) return;
+  if (meR.data) T.me = meR.data;
+  else if (!T.me) T.me = {base_access: []};
+  const meErr = meR.error;
+  if (meErr) console.warn("me:", meErr.message);
   T.loaded = new Set();
-  if (T.me.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
-  const [st, rs, hw, wr, sh, mt, ac, ar, wk, qz, qr] = await Promise.all([
-    sb.from("students").select(ST_COLS).order("created_at"),
-    sb.from("results").select("*").order("created_at"),
-    sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("sheets").select("*"),
-    sb.from("materials").select("*").order("id"), sb.from("activity").select("*"),
-    sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200), sb.from("works").select("*"),
-    sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}),
-    sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false})
+  if (T.me?.theme && !localStorage.getItem("oge-theme-t")) U.applyTheme(T.me.theme);
+  /* 2. обязательное для списка: ученики + результаты/ДЗ/письма/материалы (параллельно, с таймаутами) */
+  const [st, rs, hw, wr, mt] = await Promise.all([
+    withTimeout(sb.from("students").select(ST_COLS).order("created_at"), LOAD_MS.students, "ученики"),
+    withTimeout(sb.from("results").select("*").order("created_at"), LOAD_MS.main, "результаты"),
+    withTimeout(sb.from("homework").select("*"), LOAD_MS.main, "домашние задания"),
+    withTimeout(sb.from("writings").select("*"), LOAD_MS.main, "письменные работы"),
+    withTimeout(sb.from("materials").select("*").order("id"), LOAD_MS.main, "материалы")
   ]);
-  const err = [st, rs, hw, wr, sh, mt, ac, ar].find(x => x.error)?.error;
-  if (err) toast("Ошибка загрузки: " + err.message + ". Выполните заново supabase/schema.sql.");
-  T.students = st.data || []; T.rows = rs.data || []; T.hw = hw.data || []; T.writings = wr.data || []; T.sheets = sh.data || [];
-  T.mats = mt.data || []; T.act = ac.data || []; T.reports = ar.data || []; T.works = wk.data || [];
-  T.qzQuizzes = qz.data || []; T.qzResults = qr.data || [];
-  await ensureCourses([...new Set([...T.students.map(x => x.course), curCourse()])]);
-  T.loading = false; render(); onlineNow(); paintOnline();
+  if (seq !== loadSeq) return;
+  const studentsErr = st.error ? String(st.error.message || "нет ответа") : null;
+  T.loadError = studentsErr || (meErr && !T.students.length ? String(meErr.message || "нет ответа") : null);
+  if (!studentsErr) T.students = st.data || [];
+  if (!rs.error) T.rows = rs.data || [];
+  if (!hw.error) T.hw = hw.data || [];
+  if (!wr.error) T.writings = wr.data || [];
+  if (!mt.error) T.mats = mt.data || [];
+  if (studentsErr) toast("Не загрузились ученики: " + studentsErr + ". Нажмите «Повторить».");
+  else {
+    const soft = [rs, hw, wr, mt].find(x => x.error)?.error;
+    if (soft) toast("Часть данных не загрузилась, список учеников уже доступен. " + String(soft.message || ""));
+    if (meErr) toast("Профиль учителя не загрузился: " + String(meErr.message || "нет ответа") + ". Попробуйте «Обновить».");
+  }
+  /* 3. рисуем список – остальное догрузим в фоне */
+  T.loading = false; T.loadedAt = Date.now(); render(); onlineNow(); paintOnline();
+  /* 4. встроенные курсы – отдельным промисом: список уже виден, карточка ученика покажет «Загружаю уроки…» */
+  T.coursesReady = false;
+  T.coursesP = ensureCourses([...new Set([...T.students.map(x => x.course), curCourse()])])
+    .then(ok => {
+      T.coursesReady = true;
+      if (seq === loadSeq){ if (!typing()) render(); else T.stale = true; }
+      return ok;
+    })
+    .catch(() => { T.coursesReady = true; if (seq === loadSeq && !typing()) render(); return false; });
+  loadBackground(seq);
+}
+
+async function loadBackground(seq){
+  T.bgLoading = true; T.bgError = [];
+  const calls = [
+    ["листы", sb.from("sheets").select("*")],
+    ["активность", sb.from("activity").select("*")],
+    ["разборы нейросети", sb.from("ai_reports").select("*").order("created_at", {ascending: false}).limit(200)],
+    ["тетради", sb.from("works").select("*")],
+    ["тесты по темам", sb.from("topic_quizzes").select("*").order("created_at", {ascending: false})],
+    ["результаты тестов по темам", sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false})]
+  ];
+  const res = await Promise.all(calls.map(([label, p]) => withTimeout(p, LOAD_MS.bg, label)));
+  if (seq !== loadSeq) return;
+  const errs = [];
+  const take = (r, label, set) => { if (!r || r.error) errs.push(label); else set(r.data || []); };
+  take(res[0], "листы", v => T.sheets = v);
+  take(res[1], "активность", v => T.act = v);
+  take(res[2], "разборы", v => T.reports = v);
+  take(res[3], "тетради", v => T.works = v);
+  take(res[4], "темы тестов", v => T.qzQuizzes = v);
+  take(res[5], "результаты тестов", v => T.qzResults = v);
+  T.bgLoading = false; T.bgLoaded = true; T.bgError = errs;
+  if (errs.length) console.warn("Фоновые данные не загрузились:", errs);
+  if (!typing()) render(); else T.stale = true;
 }
 function sData(s){
   const rows = T.rows.filter(r => r.student_id === s.id);
@@ -135,13 +201,17 @@ function viewStudents(){
   const usedSubj = U.SUBJECTS.filter(x => T.students.some(s => subjOfS(s) === x.k));
   const wait = T.writings.filter(w => w.status === "sent").length + T.hw.filter(h => h.status === "sent").length;
   const nameOf = id => T.students.find(x => x.id === id);
-  return `<section class="hero glass" style="min-height:150px"><span class="mono muted">Кабинет учителя</span>
-      <h1>Ученики</h1><p>${T.students.length} учеников · на проверку: ${wait}</p><div id="online-count" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
+  return `<section class="hero glass students-hero" style="min-height:150px"><span class="mono muted">Кабинет учителя</span>
+      <h1>Ученики</h1><p data-t-students-count><b>Ученики · ${T.students.length}</b> · на проверку: ${wait}</p><div id="online-count" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
     ${usedSubj.length > 1 ? `<div class="filters" role="group" aria-label="Предмет" style="margin-top:22px">${[["all","Все предметы",""], ...usedSubj.map(x => [x.k, x.n, x.e])].map(([k,n,e]) => `<button data-subjf="${k}" aria-pressed="${T.subject===k}">${e} ${esc(n)}</button>`).join("")}</div>` : ""}
     <div class="section-title"><div class="filters" role="group" aria-label="Класс">${[["all","Все классы"],...GRADES.map(g => [String(g), g === 0 ? "дошк." : g + " кл."]),["new","Ждут регистрации"]].map(([k,n]) => `<button data-grade="${k}" aria-pressed="${T.grade===k}">${n}</button>`).join("")}</div>
       <button class="btn ghost sm" data-act="reload">Обновить</button></div>
-    ${T.loading ? `<p class="muted">Загружаю…</p>` : ""}
-    <div class="grid2">${list.map(s => { const x = sData(s), avg = x.c ? U.avgAll(x.c, x.results) : null, p = s.pair_id && nameOf(s.pair_id);
+    ${T.loadError ? `<div class="card stack students-error" data-t-load-error style="gap:8px;border:2px solid var(--bad, #d6334a)">
+      <div><b>Не загрузились ученики: ${esc(T.loadError)}</b></div>
+      <p class="small muted">Проверьте интернет и нажмите «Повторить». Если не помогает – обновите страницу (кнопка в браузере).</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm" data-act="reload">Повторить</button><button class="btn ghost sm" data-act="reload">Обновить</button></div></div>` : ""}
+    ${T.loading && !T.students.length ? `<div class="card stack students-loading" data-t-loading style="gap:8px"><p class="muted">Загружаю учеников…</p><div class="students-skeleton"><i></i><i></i><i></i></div></div>` : ""}
+    <div class="grid2 students-grid" id="students-grid" data-t-students-grid>${list.map(s => { const x = sData(s), avg = x.c ? U.avgAll(x.c, x.results) : null, p = s.pair_id && nameOf(s.pair_id);
       return `<button class="card" data-student="${s.id}" style="text-align:left">
         <div class="row between"><h2>${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h2>${x.waiting ? `<span class="chip mid">проверить: ${x.waiting}</span>` : ""}</div>
         ${!pending(s) ? `<div class="row" style="gap:8px;margin:6px 0"><span class="btn sm" role="button" tabindex="0" data-act="start-lesson" data-id="${s.id}">▶ Начать занятие</span>${(() => { const nx = x.c?.lessons.find(l => l.date >= U.iso(new Date()) && !s.covered?.[l.id]); return nx ? `<span class="small muted">следующий: ${U.fmt(nx.date, {day: "numeric", month: "short"})}${U.lessonTime(s, nx) ? " в " + esc(U.lessonTime(s, nx)) : ""}</span>` : ""; })()}</div>` : ""}
@@ -154,9 +224,9 @@ function viewStudents(){
           <div><div class="big tnum" style="font-size:1.5rem;color:${avg!=null ? lvlColor(avg) : "inherit"}">${avg ?? "–"}${avg!=null?"%":""}</div><div class="small muted">тесты уроков</div></div>
         </div>
         <p class="small muted" style="margin-top:8px">${pending(s) ? "Ссылка отправлена, ученик ещё не зарегистрировался" : !x.c ? "План ещё не выбран" : x.last ? "Активность: " + new Date(x.last).toLocaleString("ru-RU",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "Активности пока нет"}</p>
-      </button>`; }).join("") || (T.loading ? "" : `<div class="card"><p class="muted">Здесь пока никого нет.</p></div>`)}</div>
+      </button>`; }).join("") || (T.loading || T.loadError ? "" : (T.students.length ? `<div class="card" data-t-students-filtered><p class="muted">Под выбранными фильтрами никого нет.</p><button class="btn ghost sm" data-act="students-reset">Сбросить фильтры</button></div>` : `<div class="card stack" data-t-students-empty style="gap:8px"><p><b>Пока нет учеников.</b> Добавьте ученика по ссылке ниже – он появится в этом списке.</p><button class="btn sm" data-act="students-add">Добавить ученика</button></div>`))}</div>
 
-    <div class="section-title"><h2>Добавить ученика</h2></div>
+    <div class="section-title" id="add-student-title"><h2>Добавить ученика</h2></div>
     <form class="card stack" id="add-student" style="gap:8px">
       <p class="small muted">Выберите предмет – создастся одноразовая ссылка. Ученик заполнит анкету, выберет цели – план по предмету выстроится автоматически, материалы предмета откроются сразу. Если ученик уже есть, второй предмет добавляется в его карточке – вход останется тем же.</p>
       <label for="ns-name">Как вы его называете (для себя, необязательно)</label><input type="text" id="ns-name" placeholder="Например, Артём, 9А">
@@ -713,6 +783,12 @@ function trendSectionHTML(s){
 function viewStudent(){
   const s = T.students.find(x => x.id === T.sel); if (!s) return viewStudents();
   const x = sData(s), c = x.c, et = window.ENTRY_TESTS?.[String(s.grade)];
+  /* встроенный курс ещё догружается? тогда карточка показывает «Загружаю материалы», а не пустые уроки */
+  const courseNeedsBase = !!(c && s.course && T.me?.base && window.CATALOG?.[s.course]);
+  const courseLoading = courseNeedsBase && !T.coursesReady && !((U.getCourse(s.course)?.lessons || []).length);
+  if (courseLoading && !T.coursesP){
+    T.coursesP = ensureCourses([s.course]).then(() => { T.coursesReady = true; render(); }).catch(() => { T.coursesReady = true; render(); });
+  }
   const unlocked = s.unlocked || [], others = T.students.filter(o => o.id !== s.id && !pending(o));
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="students">← Все ученики</button><button class="btn ghost sm" data-act="reload">Обновить</button></div>
   <section class="hero glass" style="min-height:150px"><span class="mono muted">${s.grade ? s.grade + " класс" : "класс не указан"} · ${esc(c ? c.course : "план не выбран")}</span>
@@ -760,7 +836,8 @@ function viewStudent(){
   ${!pending(s) ? `<div class="section-title"><h2>Анализ и план</h2></div>${aiReportHTML(s, x)}` : ""}
   ${!pending(s) ? trendSectionHTML(s) : ""}
   ${!pending(s) ? buildLessonFormHTML(s, false) : ""}
-  ${c ? quizCardHTML(s, c) : ""}
+  ${courseLoading ? `<div class="card stack" data-t-course-loading style="gap:8px"><p class="muted">Загружаю материалы урока…</p><div class="students-skeleton"><i></i><i></i></div><p class="small muted">Ученики уже загружены – уроки и задания курса подтягиваются в фоне. Если долго – нажмите «Обновить».</p></div>` : ""}
+  ${c && !courseLoading ? quizCardHTML(s, c) : ""}
   <div class="section-title"><h2>Входной тест</h2></div>
   ${et && x.entry ? window.entryHTML(et, x.entry) : `<div class="card"><p class="muted">${pending(s) ? "Тест будет доступен после регистрации." : "Ученик ещё не прошёл входной тест."}</p></div>`}
   ${T.liveTest?.[s.id] && !T.liveTest[s.id].done && !T.liveTest[s.id].quit ? `<div class="section-title"><h2>Сейчас проходит тест</h2></div><div class="card" data-livetest="${s.id}">${liveTestHTML(T.liveTest[s.id])}</div>` : ""}
@@ -768,10 +845,10 @@ function viewStudent(){
     return `<div class="section-title"><h2>Последние тесты – ответы</h2></div><div class="card">${L.map(r => { const l = U.findLesson(c, r.lesson_id); return `<div style="margin-bottom:10px"><b>${r.kind === "hw" ? "ДЗ-тест" : "Тест"}: ${esc(l?.title || r.lesson_id)}</b> <span class="chip ${U.lvl(Math.round(r.score / r.total * 100))}">${r.score}/${r.total}</span> <span class="small muted">${new Date(r.created_at).toLocaleString("ru-RU", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"})}</span>${answersHTML(r.answers, false)}</div>`; }).join("")}</div>`; })()}
   ${!pending(s) ? `<div class="section-title"><h2>Всё, что делает ученик</h2><span class="small muted">самообучение, база и доска – так же, как видит ученик</span></div>${studentAllHTML(s, c)}` : ""}
   ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
-  ${!pending(s) && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
-  ${!pending(s) && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
+  ${!pending(s) && !courseLoading && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
+  ${!pending(s) && !courseLoading && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
   <div style="margin-top:16px">${U.progressHTML(T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id) && !pending(o)).map(o => ({subject: o.subject || U.subjectOf(o.course), ...U.subjectNow(T.rows.filter(r => r.student_id === o.id), T.writings.filter(w => w.student_id === o.id))})))}</div>
-  ${c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings, x.hw)}
+  ${courseLoading ? `<div class="section-title"><h2>Уроки</h2></div><div class="card stack" data-t-course-loading-lessons style="gap:8px"><p class="muted">Загружаю уроки курса…</p><div class="students-skeleton"><i></i><i></i><i></i></div></div>` : c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings, x.hw)}
   <div class="section-title"><h2>Уроки</h2><div class="row"><button class="btn ghost sm" data-act="shift" title="Перенести все будущие уроки на неделю вперёд">Каникулы: сдвинуть будущие уроки на неделю</button></div></div>
   <div class="tablewrap glass"><table style="min-width:1140px"><thead><tr><th>№</th><th>Дата</th><th>Тема</th><th>Доступ</th><th>Пройдено</th><th>Время</th><th>Выполнено</th><th>Тест</th><th>ДЗ-тест</th><th>Письмо</th><th>ДЗ</th><th></th></tr></thead><tbody>
   ${c.lessons.map((l,i) => { const r = x.results[l.id], hr = x.hwres[l.id], h = x.hw[l.id], w = x.writings[l.id], hs = U.hwState(c, l.id, x.hw), dn = x.done(l);
@@ -1919,10 +1996,17 @@ let refT = 0;
 function refreshSoon(){
   clearTimeout(refT);
   refT = setTimeout(async () => {
-    const [rs, hw, wr, ac, st, qz, qr] = await Promise.all([sb.from("results").select("*").order("created_at"), sb.from("homework").select("*"), sb.from("writings").select("*"), sb.from("activity").select("*"), sb.from("students").select(ST_COLS).order("created_at"),
-      sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}), sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false})]);
-    if (!st.error) T.students = st.data;
-    if (!rs.error) T.rows = rs.data; if (!hw.error) T.hw = hw.data; if (!wr.error) T.writings = wr.data; if (!ac.error) T.act = ac.data;
+    const [rs, hw, wr, ac, st, qz, qr] = await Promise.all([
+      withTimeout(sb.from("results").select("*").order("created_at"), LOAD_MS.bg, "результаты"),
+      withTimeout(sb.from("homework").select("*"), LOAD_MS.bg, "домашние задания"),
+      withTimeout(sb.from("writings").select("*"), LOAD_MS.bg, "письменные работы"),
+      withTimeout(sb.from("activity").select("*"), LOAD_MS.bg, "активность"),
+      withTimeout(sb.from("students").select(ST_COLS).order("created_at"), LOAD_MS.bg, "ученики"),
+      withTimeout(sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}), LOAD_MS.bg, "тесты по темам"),
+      withTimeout(sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false}), LOAD_MS.bg, "результаты тестов")
+    ]);
+    if (!st.error) T.students = st.data || [];
+    if (!rs.error) T.rows = rs.data || []; if (!hw.error) T.hw = hw.data || []; if (!wr.error) T.writings = wr.data || []; if (!ac.error) T.act = ac.data || [];
     if (!qz.error) T.qzQuizzes = qz.data || []; if (!qr.error) T.qzResults = qr.data || [];
     if (!typing()) render(); else T.stale = true;
   }, 500);
@@ -2316,6 +2400,13 @@ document.addEventListener("click", async e => {
   if (a === "open-drawer"){ T.drawer = true; render(); }
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();
+  if (a === "students-add"){
+    const el = document.getElementById("add-student");
+    if (el){ el.scrollIntoView({behavior: "smooth", block: "start"}); setTimeout(() => document.getElementById("ns-name")?.focus(), 250); }
+    else { const t = document.getElementById("add-student-title"); t?.scrollIntoView({behavior: "smooth", block: "start"}); }
+    return;
+  }
+  if (a === "students-reset"){ T.subject = "all"; T.grade = "all"; render(); toast("Фильтры сброшены"); return; }
   if (a === "logout"){ await sb.auth.signOut(); location.href = "./"; }
   if (a === "copy-join"){ const inp = $("#jlink"); try{ await navigator.clipboard.writeText(inp.value); toast("Ссылка скопирована"); }catch(_){ inp.select(); toast("Выделено – скопируйте вручную"); } return; }
   if (a === "copy"){ const inp = $("#ilink"); try{ await navigator.clipboard.writeText(inp.value); toast("Ссылка скопирована"); }catch(_){ inp.select(); toast("Выделено – скопируйте вручную"); } }

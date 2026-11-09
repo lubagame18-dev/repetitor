@@ -775,4 +775,24 @@ body.play-open{overflow:hidden}
   .lesson-backbar .lb-title{white-space:normal;line-height:1.25}
   .lesson-backbar .btn{padding:7px 10px;font-size:.85rem}}
 
+/* ---------- кабинет учителя на планшете: список учеников виден сразу ---------- */
+.students-error{border-color:var(--bad)!important;background:color-mix(in srgb,var(--bad) 6%,var(--glass-2))}
+.students-skeleton{display:flex;flex-direction:column;gap:8px}
+.students-skeleton i{display:block;height:56px;border-radius:14px;background:linear-gradient(90deg,var(--glass-2) 0%,var(--hair) 50%,var(--glass-2) 100%);background-size:200% 100%;animation:studentsSk 1.2s ease-in-out infinite}
+@keyframes studentsSk{0%{background-position:0% 0}100%{background-position:-200% 0}}
+.students-grid>[data-student]{min-width:0}
+@media (max-width:900px){
+  .students-hero{min-height:112px!important;padding:14px 16px 16px}
+  .students-hero h1{font-size:clamp(1.45rem,4.4vw,2rem);max-width:70%;margin-top:6px}
+  .students-hero p{max-width:70%}
+  .students-hero .mono{top:12px}
+  .students-hero .cat{width:min(30%,138px);right:8px;bottom:-2px}
+  .students-grid{grid-template-columns:1fr!important;gap:12px}
+  .students-grid .card{padding:14px 16px}
+  .students-grid .card h2{font-size:1.2rem}
+  #add-student-title{margin-top:18px}
+  .filters{margin-top:10px!important}
+}
+@media (max-width:560px){.students-grid{gap:10px}.students-grid .card{padding:12px 14px}.students-grid .card h2{font-size:1.1rem}.students-hero{min-height:96px!important}}
+
 

@@ -27,10 +27,25 @@ function runFile(file, extraEnv) {
 async function main() {
   // старые скриншоты падений не должны путать: чистим только свою папку артефактов
   try { fs.rmSync(path.join(__dirname, "artifacts"), { recursive: true, force: true }); } catch (_) {}
+  /* подчищаем профили Chrome от прерванных прогонов (dsh-cdp-* в %TEMP%): каждый ~30 МБ,
+     на маленьком диске они быстро съедают место и роняют прогон с ENOSPC */
+  try {
+    const os = await import("node:os");
+    const tmp = os.tmpdir();
+    const now = Date.now();
+    for (const name of fs.readdirSync(tmp)) {
+      if (!/^dsh-cdp-/.test(name)) continue;
+      const p = path.join(tmp, name);
+      try {
+        const st = fs.statSync(p);
+        if (now - st.mtimeMs > 30 * 60 * 1000) fs.rmSync(p, { recursive: true, force: true });
+      } catch (_) {}
+    }
+  } catch (_) {}
   const suites = [
     ["Мок Supabase (без браузера)", path.join(__dirname, "mock-selftest.mjs")],
     ["Доска (стенд board.html)", path.join(__dirname, "board.mjs")],
-    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "a,b1,R1,b2,b3,Q1,Q2,Q3,Q4,Q5,Q6,S1,S2,S3,S4,T1,T2,T3,T4,V1,V2,V3,U2" }],
+    ["E2E (учитель + ученик, mock Supabase)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "a,b1,R1,b2,b3,Q1,Q2,Q3,Q4,Q5,Q6,S1,S2,S3,S4,T1,T2,T3,T4,V1,V2,V3,U2,W1" }],
     /* U1 отдельно: вкладки делят localStorage, и в одном процессе сессия rowB может перетереть rowA */
     ["E2E (U1: база самообучения и конструктор)", path.join(__dirname, "e2e.mjs"), { E2E_ONLY: "U1" }],
   ];
