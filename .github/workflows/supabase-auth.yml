@@ -43,6 +43,13 @@ jobs:
         run: |
           set -euo pipefail
           key=$(grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' config.js | head -1)
-          curl -sS "https://$PROJECT_REF.supabase.co/auth/v1/settings" -H "apikey: $key" -o pub.json
-          echo "anonymous_users=$(jq -r '.external.anonymous_users' pub.json)"
-          test "$(jq -r '.external.anonymous_users' pub.json)" = "true"
+          want=true; [ "${MODE:-on}" = "off" ] && want=false
+          for i in $(seq 1 20); do
+            curl -sS "https://$PROJECT_REF.supabase.co/auth/v1/settings" -H "apikey: $key" -o pub.json
+            got=$(jq -r '.external.anonymous_users' pub.json)
+            echo "attempt $i: anonymous_users=$got"
+            if [ "$got" = "$want" ]; then echo "ok"; exit 0; fi
+            sleep 2
+          done
+          echo "Настройка не применилась за 40 с"
+          exit 1
