@@ -7,15 +7,33 @@ const D = {bSubj:"rus", bCourse:null, bMats:null, bLessons:null, session:null, m
 const $ = s => document.querySelector(s);
 const PROV = [["deepseek","DeepSeek","platform.deepseek.com → API keys"],["aitunnel","AITUNNEL (оплата из России)","aitunnel.ru → ключ API"],["openrouter","OpenRouter","openrouter.ai → Keys"],["openai","OpenAI","platform.openai.com → API keys"]];
 
+/* сеть может «зависнуть» на мобильной сети: ограничиваем ожидание, чтобы кабинет не висел на «Загружаю…» */
+const withTimeout = (p, ms) => Promise.race([
+  Promise.resolve(p),
+  new Promise((_, rej) => setTimeout(() => rej(new Error("сервер не ответил за " + Math.round(ms / 1000) + " с")), ms)),
+]);
 async function load(){
-  const me = await sb.rpc("me");
-  if (me.error){ D.err = /function|does not exist|schema/i.test(me.error.message) ? "База ещё не настроена: в Supabase → SQL Editor выполните файл supabase/schema.sql." : U.authErr(me.error); D.me = null; return render(); }
-  D.me = me.data; D.err = null;
-  if (D.me?.role !== "developer") return render();
-  const bc = await sb.from("course_data").select("key", {count: "exact", head: true}); D.baseCount = bc.count || 0;
-  const [sec, st, te, stats] = await Promise.all([sb.rpc("dev_list_secrets"), sb.from("app_settings").select("key,value"), sb.from("teachers").select("*").order("created_at"), sb.rpc("dev_stats")]);
-  D.secrets = sec.data || []; D.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); D.teachers = te.data || []; D.stats = stats.data;
-  render();
+  try {
+    const me = await withTimeout(sb.rpc("me"), 15000);
+    if (me.error){ D.err = /function|does not exist|schema/i.test(me.error.message) ? "База ещё не настроена: в Supabase → SQL Editor выполните файл supabase/schema.sql." : U.authErr(me.error); D.me = null; return render(); }
+    D.me = me.data; D.err = null;
+    if (!D.me){
+      /* сессия есть, но профиля нет (устаревший/анонимный вход) – предлагаем войти заново, а не висим на «Загружаю…» */
+      try { await sb.auth.signOut(); } catch (_) {}
+      D.session = null;
+      D.msg = {t: "Сессия устарела — войдите заново."};
+      return render();
+    }
+    if (D.me.role !== "developer") return render();
+    const bc = await withTimeout(sb.from("course_data").select("key", {count: "exact", head: true}), 15000); D.baseCount = bc.count || 0;
+    const [sec, st, te, stats] = await withTimeout(Promise.all([sb.rpc("dev_list_secrets"), sb.from("app_settings").select("key,value"), sb.from("teachers").select("*").order("created_at"), sb.rpc("dev_stats")]), 20000);
+    D.secrets = sec.data || []; D.settings = Object.fromEntries((st.data || []).map(r => [r.key, r.value])); D.teachers = te.data || []; D.stats = stats.data;
+    render();
+  } catch (e) {
+    D.err = "Не удалось загрузить кабинет: " + ((e && e.message) || "нет связи") + ". Проверьте интернет и нажмите «Попробовать снова».";
+    D.me = null;
+    render();
+  }
 }
 const tail = k => D.secrets.find(s => s.key === k)?.tail;
 
@@ -68,7 +86,7 @@ function view(){
     <button class="btn" type="submit">Войти</button>${msg}
     <div class="row between"><a class="linkbtn" href="./?role=teacher">Забыли пароль?</a><a class="linkbtn" href="./?role=signup">Нет кабинета – зарегистрироваться</a></div></form>`;
   if (D.err) return `<div class="card login stack"><h2>Не получилось</h2><p class="formmsg bad">${esc(D.err)}</p><div class="row"><button class="btn" data-act="retry">Попробовать снова</button><button class="btn ghost" data-act="logout">Выйти</button></div></div>`;
-  if (!D.me) return `<p class="muted">Загружаю…</p>`;
+  if (!D.me) return `<div class="card stack" style="gap:10px"><p class="muted">Загружаю кабинет…</p><div class="row"><button class="btn ghost sm" data-act="retry">Повторить</button></div></div>`;
   // шаг 2: код разработчика (проверяет сервер, в коде сайта его нет)
   if (D.me.role !== "developer") return `<form class="card login stack" id="d-code" autocomplete="off"><h2>Режим разработчика</h2>
     <p class="small">Кабинет: <b>${esc(D.me.email || "")}</b></p>
@@ -300,7 +318,14 @@ document.addEventListener("click", async e => {
 (async () => {
   render();
   if (!sb) return;
-  const {data} = await sb.auth.getSession(); D.session = data.session;
-  if (D.session) load(); render();
+  try {
+    const {data} = await withTimeout(sb.auth.getSession(), 15000);
+    D.session = data?.session || null;
+    if (D.session) load();
+  } catch (e) {
+    D.session = null;
+    D.msg = {t: "Не удалось проверить вход: " + ((e && e.message) || "нет связи") + ". Проверьте интернет и попробуйте снова."};
+  }
+  render();
 })();
 })();
