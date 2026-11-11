@@ -1,4 +1,4 @@
-# Realtime · 2026-11-11 12:33 UTC
+# Realtime · 2026-11-11 12:37 UTC
 
 ## Состояние сервисов
 ```json
@@ -27,7 +27,7 @@
       "db_connected": true,
       "replication_connected": true,
       "connected_cluster": 2,
-      "node": "realtime@2600:1f18:67fc:ac07:858:e8aa:f1f:b428",
+      "node": "realtime@2600:1f18:67fc:ac08:95d:6461:e4c9:ea5f",
       "region": "us-east-1"
     }
   },
