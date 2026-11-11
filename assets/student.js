@@ -48,7 +48,13 @@ async function load(){
     /* мобильная сеть: до 3 попыток; при сбое показываем сохранённое и кнопку «Повторить» */
     let data = null, error = null;
     for (let k = 0; k < 3 && !data; k++){
-      try { const r = await sb.rpc("student_state", {p_code: S.token}); data = r.data; error = r.error; } catch (e) { error = e; }
+      try {
+        /* курс из встроенной базы грузится с сайта и кэшируется браузером – с сервера его не тянем (быстро на планшете) */
+        const bi = window.BUILTIN_INDEX || {}, pc = S.profile?.course, lite = !!(pc && (bi[pc] || window.BuiltinLoader?.has?.(pc)));
+        let r = await sb.rpc("student_state", lite ? {p_code: S.token, p_base: false} : {p_code: S.token});
+        if (r.error && lite && /p_base|PGRST202|schema cache|Could not find/i.test((r.error.message || "") + (r.error.code || ""))) r = await sb.rpc("student_state", {p_code: S.token});
+        data = r.data; error = r.error;
+      } catch (e) { error = e; }
       if (!data && error && k < 2) await new Promise(r => setTimeout(r, 1200));
     }
     if (!data && error){
@@ -75,7 +81,7 @@ async function load(){
     S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
     if ((!S.base.length || U.builtinNewer(S.profile?.course, data.course_data)) && window.BuiltinLoader && S.profile?.course) BuiltinLoader.ensure(S.profile.course).then(ok => { if (ok && window.BUILTIN_COURSES?.[S.profile.course]) { S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); recompute(); render(); } });
     U.loadBase(S.base);
-    LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
+    LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats});
   } else {
     S.rows = LS.get("rows", []); S.hw = LS.get("hw", {}); S.writings = LS.get("writings", {}); S.sheets = {}; S.works = LS.get("works", {});
   }

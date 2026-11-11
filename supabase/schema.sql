@@ -580,7 +580,9 @@ begin
   return json_build_object('token', tok, 'profile', student_profile_json(r.id));
 end $$;
 
-create or replace function public.student_state(p_code text)
+-- p_base=false: курс не отдаём (он грузится с сайта и кэшируется в браузере) – обновление ученика быстрое
+drop function if exists public.student_state(text);
+create or replace function public.student_state(p_code text, p_base boolean default true)
 returns json language sql security definer set search_path = public stable as $$
   with s as (select * from students where id = student_id_by_code(p_code))
   select json_build_object(
@@ -594,7 +596,7 @@ returns json language sql security definer set search_path = public stable as $$
     'sheets',   coalesce((select json_agg(json_build_object('lesson_id', x.lesson_id, 'name', x.name, 'url', x.url, 'note', x.note))
                           from sheets x where x.teacher_id = s.teacher_id and x.course = s.course), '[]'::json),
     'works',    coalesce((select json_agg(json_build_object('lesson_id', x.lesson_id, 'task', x.task, 'data', x.data)) from works x where x.student_id = s.id), '[]'::json),
-    'course_data', (select c.data from course_data c where c.key = s.course and can_read_base(s.teacher_id)),
+    'course_data', (select c.data from course_data c where p_base and c.key = s.course and can_read_base(s.teacher_id)),
     'materials', coalesce((select json_agg(json_build_object('id', m.id, 'course', m.course, 'lesson_id', m.lesson_id, 'student_id', m.student_id, 'shared', m.shared, 'kind', m.kind, 'title', m.title, 'body', m.body, 'url', m.url, 'data', m.data) order by m.id)
                           from materials m where m.kind <> 'keys' and m.course = s.course and ((m.teacher_id = s.teacher_id and (m.student_id is null or m.student_id = s.id)) or (m.shared and m.student_id is null and can_read_base(s.teacher_id)))), '[]'::json)
   ) from s;
@@ -814,7 +816,7 @@ drop function if exists public.student_login(text);
 do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
-    'public.student_state(text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int, jsonb)', 'public.student_ping(text, text, int)',
+    'public.student_state(text, boolean)', 'public.student_submit_result(text, text, int, int, jsonb, text, int, jsonb)', 'public.student_ping(text, text, int)',
     'public.student_set_theme(text, text)', 'public.student_set_profile(text, text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])',
@@ -831,6 +833,9 @@ do $$ declare f text; begin
   begin execute 'grant execute on function public.plan_active(uuid) to service_role'; exception when undefined_object then null; end;
   begin execute 'grant execute on function public.free_access() to service_role'; exception when undefined_object then null; end;
 end $$;
+
+-- всё открыто для всех: тарифы пока отключены (вернуть: update app_settings set value='0' where key='free_access')
+insert into public.app_settings(key, value) values ('free_access', to_jsonb(true)) on conflict (key) do update set value = excluded.value;
 
 -- обновить кэш схемы PostgREST, чтобы новые таблицы и функции стали видны сразу
 notify pgrst, 'reload schema';

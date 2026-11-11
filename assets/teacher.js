@@ -59,6 +59,8 @@ async function loadAll(){
   if (seq !== loadSeq) return;
   if (meR.data) T.me = meR.data;
   else if (!T.me) T.me = {base_access: []};
+  /* всё открыто: тарифы и режим разработчика не ограничивают работу (позже вернём) */
+  if (T.me){ T.me.base = true; T.me.free = true; T.me.active = T.me.active || "full"; }
   const meErr = meR.error;
   if (meErr) console.warn("me:", meErr.message);
   T.loaded = new Set();
@@ -1911,15 +1913,20 @@ function keysFor(cid, l){
 }
 /* встроенная база грузится по курсам, когда нужна (вся база – десятки мегабайт) */
 async function ensureCourses(keys){
-  if (!sb || !T.me?.base) return false;
+  /* уроки берём прямо с сайта (быстро, кэшируется браузером) – подписка и режим разработчика не нужны */
   keys = keys.filter(k => k && window.CATALOG?.[k] && !T.loaded?.has(k)); if (!keys.length) return false;
   keys.forEach(k => T.loaded.add(k));
-  const {data, error} = await sb.from("course_data").select("key,data,keys").in("key", keys);
-  if (error){ keys.forEach(k => T.loaded.delete(k)); return false; }
-  U.loadBase(data);
-  /* новые авторские курсы с сайта важнее старой копии в базе */
-  if (window.BuiltinLoader) for (const k of keys){ const row = (data || []).find(r => r.key === k); if (U.builtinNewer(k, row?.data)) await BuiltinLoader.ensure(k); }
-  return true;
+  let any = false;
+  if (window.BuiltinLoader) for (const k of keys){ try { if (await BuiltinLoader.ensure(k)) any = true; } catch (_) {} }
+  /* курсы, которых нет на сайте (авторские правки в базе) – догружаем из базы в фоне, не блокируя работу */
+  const rest = keys.filter(k => !(window.BUILTIN_INDEX || {})[k]);
+  if (sb && rest.length){
+    try {
+      const {data, error} = await sb.from("course_data").select("key,data,keys").in("key", rest);
+      if (error) rest.forEach(k => T.loaded.delete(k)); else if (data?.length){ U.loadBase(data); any = true; }
+    } catch (_) { rest.forEach(k => T.loaded.delete(k)); }
+  }
+  return any;
 }
 /* установка на телефон */
 let installEvt = null;
