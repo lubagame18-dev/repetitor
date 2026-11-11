@@ -796,3 +796,16 @@ body.play-open{overflow:hidden}
 @media (max-width:560px){.students-grid{gap:10px}.students-grid .card{padding:12px 14px}.students-grid .card h2{font-size:1.1rem}.students-hero{min-height:96px!important}}
 
 
+
+/* новые игры: анаграмма, виселица, угадай слово */
+.ag-ans{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px}
+.ag-slot{min-width:38px;height:46px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;border:2px dashed var(--hair);border-radius:12px;font-weight:800;font-size:1.25rem;background:var(--glass)}
+.ag-ans.ok .ag-slot{border:2px solid #1f9d55;background:color-mix(in srgb,#1f9d55 16%,var(--glass-2))}
+.ag-ans.bad .ag-slot{border:2px solid #d6334a;background:color-mix(in srgb,#d6334a 14%,var(--glass-2))}
+.ag-tiles{display:flex;flex-wrap:wrap;gap:8px}
+.ag-t{font:inherit;font-weight:800;font-size:1.2rem;min-width:46px;height:50px;border:0;border-radius:12px;cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--violet),var(--pink));box-shadow:0 3px 0 rgba(0,0,0,.18);transition:transform .1s}
+.ag-t:active:not(:disabled){transform:translateY(2px)}.ag-t:disabled{opacity:.25;cursor:default}
+.hg-lives{font-size:1.15rem;letter-spacing:2px;margin-bottom:2px}
+.hg-kb{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:6px}
+.hg-k{font:inherit;font-weight:800;text-transform:uppercase;height:42px;border:2px solid var(--hair);background:var(--glass);border-radius:10px;cursor:pointer;color:var(--ink)}
+.hg-k:hover:not(:disabled){border-color:var(--violet)}.hg-k.ok{border-color:#1f9d55;background:color-mix(in srgb,#1f9d55 16%,var(--glass-2))}.hg-k.bad{border-color:#d6334a;background:color-mix(in srgb,#d6334a 14%,var(--glass-2));opacity:.6}

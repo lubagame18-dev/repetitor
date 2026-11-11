@@ -1018,10 +1018,16 @@ function selfStressItems(){
   const built = selfBlocks().map((b, i) => ({block:b, task:i, custom:false}));
   return [...built, ...selfCustomSets().blocks.map(x => ({block:x, task:x.task, custom:true}))];
 }
+/* класс ученика: колоды и темы с min/max показываем только подходящим (5 класс не видит заданий ОГЭ и наоборот) */
+function selfGrade(){ return +S.profile?.grade || +S.course?.grade || 9; }
+const selfFitsGrade = x => { const g = selfGrade(); return (!x.min || g >= x.min) && (!x.max || g <= x.max); };
+function selfThemes(){ return (window.PLAY_BANKS?.themes || []).filter(selfFitsGrade); }
 function selfDeckItems(){
   const hist = selfIsHist();
-  const built = (selfData().decks || []).map((d, i) => ({deck:d, task:i, custom:false})).filter(x => (x.deck.subject || "rus") !== "hist" || hist);
-  return [...built, ...selfCustomSets().decks.map(x => ({deck:x, task:x.task, custom:true}))];
+  const built = (selfData().decks || []).map((d, i) => ({deck:d, task:i, custom:false})).filter(x => (x.deck.subject || "rus") !== "hist" || hist).filter(x => selfFitsGrade(x.deck));
+  /* история – только в курсе истории; свои наборы с названием «История…» в русском не показываем */
+  const own = selfCustomSets().decks.filter(x => hist || !/^\s*истори[яи]\b/i.test(x.title || "")).map(x => ({deck:x, task:x.task, custom:true}));
+  return [...built, ...own];
 }
 function selfStressState(task, block){
   block = block || (selfStressItems().find(x => x.task === task) || {}).block || {words:[]};
@@ -1135,7 +1141,7 @@ function viewSelf(){
   if (!S.course) return noCourse();
   const L = selfLessons(), l = selfLesson(), best = LS.get("self-best", {}) || {};
   const card = (act, emo, h, d, extra = "") => `<button class="pl-card" data-act="${act}" ${extra}><span class="pl-emo">${emo}</span><b>${h}</b><span class="small muted">${d}</span>${best[act] ? `<span class="chip" style="margin-top:4px">лучший: ${esc(best[act])}</span>` : ""}</button>`;
-  const games = selfGames(), themes = (window.PLAY_BANKS?.themes || []);
+  const games = selfGames(), themes = selfThemes(), young = selfGrade() <= 6, isOgeC = !!(window.OGE && OGE.isOge(S.course));
   const stressItems = selfStressItems();
   const blockStates = stressItems.map((it, i) => ({it, i, st: selfStressState(it.task, it.block)}));
   const nextBlock = blockStates.find(x => !x.st.done) || null;
@@ -1153,7 +1159,7 @@ function viewSelf(){
       : `<p class="small muted">${st ? "Слабых заданий не видно – закрепи результат пробным вариантом." : "Пройди тест или отработку – подскажем слабые задания."}</p>`;
   }
   const prep = `<div class="card stack self-prep" style="gap:10px">
-    <div class="kicker">Подготовка к ОГЭ</div>
+    <div class="kicker">${isOgeC ? "Подготовка к ОГЭ" : "Тренировка"}</div>
     <h3 style="margin:0">Что подтянуть</h3>
     ${recs}
     <div class="row" style="gap:8px;flex-wrap:wrap">
@@ -1161,15 +1167,22 @@ function viewSelf(){
       ${nextDeck ? `<button class="btn ghost sm" data-act="self-deck" data-d="${nextDeck.i}" data-task="${nextDeck.it.task}"${nextDeck.it.custom && nextDeck.it.deck.id ? ` data-custom="${esc(nextDeck.it.deck.id)}"` : ""}>Карточки: ${esc(nextDeck.it.deck.title)}</button>` : ""}
       ${OG && OG.isOge(S.course) ? `<button class="btn ghost sm" data-go="oge">Мой ОГЭ</button>` : ""}
     </div></div>`;
-  const stressSection = blockStates.length ? `<h3 style="margin:18px 0 10px">Ударения ОГЭ</h3>
+  const stressSection = blockStates.length ? `<h3 style="margin:18px 0 10px">${isOgeC ? "Ударения ОГЭ" : "Ударения"}</h3>
     <p class="small muted" style="margin-bottom:10px">Блок закончен, когда все слова отвечены верно; ошибся – слово вернётся ещё два раза. Прогресс сохраняется. Наборы учителя отмечены «от учителя».</p>
     <div class="pl-grid self-blocks">${blockStates.map(x => selfBlockHTML(x.i, x.it, x.st)).join("")}</div>` : "";
   const deckSection = deckStates.length ? `<h3 style="margin:18px 0 10px">Карточки-запоминалки</h3>
     <p class="small muted" style="margin-bottom:10px">Открывай карточку, вспоминай ответ и отмечай «Знаю» или «Ещё учить». Колода освоена, когда все карточки отмечены «Знаю».</p>
     <div class="pl-grid self-decks">${deckStates.map(x => selfDeckHTML(x.i, x.it, x.st)).join("")}
       ${errorsN ? `<button class="pl-card self-errors" data-act="self-errors" data-self-errors-left="${errorsN}"><span class="pl-emo">🩹</span><b>Мои ошибки</b><span class="small muted">Слова и карточки, где ты ошибался – повтори и закрой их</span><span class="chip bad">${errorsN}</span></button>` : ""}</div>` : "";
+  const gameCount = themes.reduce((n, t) => n + Play.gamesFor(t).length, 0);
+  const themeGrid = `<div class="pl-grid">${themes.map(t => `<button class="pl-card" data-play-theme="${t.id}"><span class="pl-emo">${t.emo || "🕹️"}</span><b>${esc(t.title)}</b><span class="small muted">${Play.gamesFor(t).map(k => Play.GAMES[k].e + " " + Play.GAMES[k].n).join(" · ")}</span></button>`).join("")}</div>`;
+  const hero = `<div class="card self-hero" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--violet) 22%,var(--glass-2)),color-mix(in srgb,var(--pink) 20%,var(--glass-2)))">
+      <div style="font-size:2.6rem;line-height:1">🎮</div>
+      <div style="flex:1;min-width:200px"><h3 style="margin:0">Игровая зона</h3><p class="small muted" style="margin:2px 0 0">${themes.length} тем и ${gameCount} игр: анаграммы, виселица, мемори, сортировка, викторины на время. Выбирай тему или нажми «Случайная игра».</p></div>
+      <button class="btn" data-act="self-random">🎲 Случайная игра</button></div>`;
   return `<div class="section-title" style="margin-top:6px"><h2>Самообучение</h2></div>
-    <p class="muted" style="margin-bottom:12px">Глубокая подготовка: блоки ударений, карточки-запоминалки и работа над своими ошибками. Учитель видит, что ты занимался.</p>
+    <p class="muted" style="margin-bottom:12px">${young ? "Учись играя: игры по темам, карточки-запоминалки и работа над ошибками. Учитель видит, что ты занимался." : "Глубокая подготовка: блоки ударений, карточки-запоминалки и работа над своими ошибками. Учитель видит, что ты занимался."}</p>
+    ${young ? `${hero}<h3 style="margin:6px 0 10px">Игры по темам</h3>${themeGrid}<div style="height:18px"></div>` : ""}
     ${prep}
     ${stressSection}
     ${deckSection}
@@ -1190,8 +1203,7 @@ function viewSelf(){
       ${card("self-spell", "✍️", "Вставь букву", "Орфография: корни, приставки, суффиксы, Н и НН, Ь")}
     </div>
     ${games.length ? `<h3 style="margin:6px 0 10px">Игры от учителя</h3><div class="pl-grid" style="margin-bottom:18px">${games.map(({m, l: gl}) => `<button class="pl-card" data-play-game="${m.id}"><span class="pl-emo">🎮</span><b>${esc(m.title || m.data.theme?.title || "Игра")}</b><span class="small muted">${esc(gl.title)}</span></button>`).join("")}</div>` : ""}
-    <h3 style="margin:6px 0 10px">Игры по темам</h3>
-    <div class="pl-grid">${themes.map(t => `<button class="pl-card" data-play-theme="${t.id}"><span class="pl-emo">🕹️</span><b>${esc(t.title)}</b><span class="small muted">${Play.gamesFor(t).map(k => Play.GAMES[k].n).join(" · ")}</span></button>`).join("")}</div>`;
+    ${young ? "" : `<h3 style="margin:6px 0 10px">Игры по темам</h3>${themeGrid}`}`;
 }
 /* результат самообучения уходит учителю: вид «self», в lesson_id – режим и урок, в wrong – ошибки */
 const SELF_MODE = {"self-trainer":"trainer", "self-tf":"tf", "self-cards":"cards", "self-quiz":"quiz", "self-lgames":"games", "self-mix":"mix", "self-stress":"stress", "self-spell":"spell"};
@@ -1230,6 +1242,12 @@ function selfAct(a, t){
   if (a === "self-stress-block"){ selfStartStress(+t.dataset.b); return; }
   if (a === "self-deck"){ selfStartDeck(+t.dataset.d); return; }
   if (a === "self-errors"){ selfStartErrors(); return; }
+  if (a === "self-random"){
+    const pool = selfThemes().filter(x => Play.gamesFor(x).length);
+    if (!pool.length) return;
+    const theme = pool[Math.floor(Math.random() * pool.length)], ks = Play.gamesFor(theme), k = ks[Math.floor(Math.random() * ks.length)];
+    Play.onDone = selfDone("theme-" + theme.id, ""); Play.game(k, theme); return;
+  }
   if (a === "self-trainer") Play.trainer(l);
   if (a === "self-tf") Play.tfCards(l.title, Play.tfFromQuiz(Play.quizFromLessons([l])));
   if (a === "self-cards") Play.flashcards(l.title, Play.cardsFromLessons([l]));

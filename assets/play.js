@@ -72,12 +72,27 @@ window.Play = (() => {
     return [];
   }
   const groupsOf = th => th.groups?.length >= 2 ? th.groups : null;
+  /* слова для словесных игр: только русские слова 4–12 букв без «ё»; src: "p" – есть описание/значение, "g" – подсказка-название группы */
+  const isW = s => /^[а-я]{4,12}$/.test(String(s).trim().toLowerCase());
+  function wordsOf(th){
+    const out = [], seen = new Set(), add = (w, h, src) => { w = String(w || "").trim().toLowerCase(); if (!isW(w) || seen.has(w)) return; seen.add(w); out.push({w, h: String(h || ""), src}); };
+    (th.words || []).forEach(x => Array.isArray(x) ? add(x[0], x[1], "p") : add(x, "", "g"));
+    pairsOf(th).forEach(([a, b]) => add(a, b, "p"));
+    (th.groups || []).forEach(([g, list]) => (list || []).forEach(x => add(x, g, "g")));
+    return out;
+  }
+  /* «лишнее слово»: нужна группа минимум из 3 слов и ещё одна группа */
+  const oddOk = th => { const g = groupsOf(th); return !!g && g.some(x => x[1].length >= 3) && g.length >= 2; };
   const GAMES = {
     quiz:   {n: "Викторина на время", d: "Как можно больше верных ответов за 60 секунд", e: "⏱️", ok: th => quizOf(th).filter(choiceOk).length >= 3},
     match:  {n: "Найди пару", d: "Соедини слово и значение", e: "🔗", ok: th => pairsOf(th).length >= 3},
     sort:   {n: "Сортировка", d: "Разложи слова по группам", e: "🗂️", ok: th => !!groupsOf(th)},
     memory: {n: "Мемори", d: "Открывай карточки и находи пары", e: "🃏", ok: th => pairsOf(th).length >= 3},
-    tf:     {n: "Верно или неверно", d: "Быстрые ответы за 45 секунд", e: "⚡", ok: th => pairsOf(th).length >= 3 || quizOf(th).filter(choiceOk).length >= 3}
+    tf:     {n: "Верно или неверно", d: "Быстрые ответы за 45 секунд", e: "⚡", ok: th => pairsOf(th).length >= 3 || quizOf(th).filter(choiceOk).length >= 3},
+    anagram:{n: "Анаграмма", d: "Собери слово из перепутанных букв", e: "🔤", ok: th => wordsOf(th).length >= 4},
+    hangman:{n: "Виселица", d: "Угадай слово по буквам, пока есть жизни", e: "🪢", ok: th => wordsOf(th).length >= 4},
+    odd:    {n: "Лишнее слово", d: "Найди слово, которое не подходит к остальным", e: "🧐", ok: oddOk},
+    guess:  {n: "Угадай слово", d: "Прочитай значение и впиши слово", e: "💡", ok: th => wordsOf(th).filter(x => x.src === "p" && x.h).length >= 4}
   };
   const gamesFor = th => Object.keys(GAMES).filter(k => GAMES[k].ok(th));
 
@@ -474,7 +489,102 @@ window.Play = (() => {
     timer(45, s => { stat(`⏱ ${s} с · очки: ${score}`); prog(45 - s, 45); }, () => { over = true; finish(body, th.title, score, done).then(r => r === "again" && gTF(th)); });
     next();
   }
-  function game(type, th){ ({quiz: gQuiz, match: gMatch, sort: gSort, memory: gMemory, tf: gTF}[type] || gQuiz)(th); }
+
+  /* ---------- новые игры: анаграмма, виселица, лишнее слово, угадай слово ---------- */
+  const normW = x => String(x || "").trim().toLowerCase().replace(/ё/g, "е");
+  const scramble = w => { let a = w, k = 0; while (a === w && k++ < 20) a = shuffle([...w]).join(""); return a; };
+  const heart = n => "❤️".repeat(Math.max(0, n)) + "🤍".repeat(Math.max(0, 6 - n));
+  function gAnagram(th){
+    const body = shell(th.title, GAMES.anagram.n), rounds = shuffle(wordsOf(th)).slice(0, 8);
+    let i = 0, ok = 0;
+    const next = () => {
+      if (i >= rounds.length){ finish(body, th.title, ok, rounds.length).then(r => r === "again" && gAnagram(th)); return; }
+      const it = rounds[i]; let tries = 0, ans = [];
+      const tiles = [...scramble(it.w)].map((c, k) => ({c, k, used: false}));
+      prog(i, rounds.length); stat(`${i + 1} из ${rounds.length} · верно: ${ok}`);
+      const draw = (state) => {
+        body.innerHTML = `<p class="small muted" style="margin:0 0 6px">${it.h ? "Подсказка: " + esc(it.h) : "Собери слово"}</p>
+          <div class="ag-ans ${state || ""}">${it.w.split("").map((_, k) => `<span class="ag-slot">${ans[k] ? esc(ans[k].c) : ""}</span>`).join("")}</div>
+          <div class="ag-tiles">${tiles.map(t => `<button class="ag-t" data-k="${t.k}" ${t.used ? "disabled" : ""}>${esc(t.c)}</button>`).join("")}</div>
+          <div class="row" style="gap:8px;margin-top:10px"><button class="btn ghost sm" data-back ${ans.length ? "" : "disabled"}>← стереть</button><button class="btn ghost sm" data-skip>Пропустить</button></div>`;
+        body.querySelectorAll(".ag-t").forEach(b => b.onclick = () => {
+          const t = tiles.find(x => x.k === +b.dataset.k); if (!t || t.used) return; t.used = true; ans.push(t);
+          if (ans.length < it.w.length) return draw();
+          const word = ans.map(x => x.c).join("");
+          if (word === it.w){ if (!tries) ok++; draw("ok"); setTimeout(() => { i++; next(); }, 650); }
+          else { tries++; miss(it.w); draw("bad"); setTimeout(() => { if (tries >= 2){ body.querySelector(".ag-ans").innerHTML = it.w.split("").map(c => `<span class="ag-slot">${esc(c)}</span>`).join(""); setTimeout(() => { i++; next(); }, 1100); } else { tiles.forEach(x => x.used = false); ans = []; draw(); } }, 700); }
+        });
+        body.querySelector("[data-back]").onclick = () => { const t = ans.pop(); if (t) t.used = false; draw(); };
+        body.querySelector("[data-skip]").onclick = () => { miss(it.w); i++; next(); };
+      };
+      draw();
+    };
+    next();
+  }
+  const RU = "абвгдежзийклмнопрстуфхцчшщъыьэюя".split("");
+  function gHangman(th){
+    const body = shell(th.title, GAMES.hangman.n), rounds = shuffle(wordsOf(th)).slice(0, 6);
+    let i = 0, ok = 0;
+    const next = () => {
+      if (i >= rounds.length){ finish(body, th.title, ok, rounds.length).then(r => r === "again" && gHangman(th)); return; }
+      const it = rounds[i], used = new Set(); let lives = 6;
+      prog(i, rounds.length); stat(`Слово ${i + 1} из ${rounds.length} · угадано: ${ok}`);
+      const draw = () => {
+        const won = it.w.split("").every(c => used.has(c)), lost = lives <= 0;
+        body.innerHTML = `<p class="small muted" style="margin:0 0 6px">${it.h ? (it.src === "g" ? "Относится к группе: " : "Подсказка: ") + esc(it.h) : ""}</p>
+          <div class="hg-lives" aria-label="Жизни: ${Math.max(0, lives)}">${heart(lives)}</div>
+          <div class="ag-ans ${won ? "ok" : lost ? "bad" : ""}">${it.w.split("").map(c => `<span class="ag-slot">${used.has(c) || lost ? esc(c) : ""}</span>`).join("")}</div>
+          ${won || lost ? "" : `<div class="hg-kb">${RU.map(c => `<button class="hg-k ${used.has(c) ? (it.w.includes(c) ? "ok" : "bad") : ""}" data-c="${c}" ${used.has(c) ? "disabled" : ""}>${c}</button>`).join("")}</div>`}`;
+        if (won || lost){ if (won) ok++; else miss(it.w); setTimeout(() => { i++; next(); }, won ? 800 : 1300); return; }
+        body.querySelectorAll(".hg-k").forEach(b => b.onclick = () => { const c = b.dataset.c; used.add(c); if (!it.w.includes(c)) lives--; draw(); });
+      };
+      draw();
+    };
+    next();
+  }
+  function gOdd(th){
+    const body = shell(th.title, GAMES.odd.n), groups = groupsOf(th).filter(g => g[1].length >= 1);
+    const big = groups.filter(g => g[1].length >= 3), rounds = [];
+    for (let k = 0; k < 10; k++){
+      const a = big[Math.floor(Math.random() * big.length)], others = groups.filter(g => g !== a), b = others[Math.floor(Math.random() * others.length)];
+      if (!a || !b) break;
+      const three = shuffle(a[1]).slice(0, 3), one = shuffle(b[1])[0];
+      rounds.push({opts: shuffle([...three.map(s => ({s, odd: false})), {s: one, odd: true}]), a: a[0], b: b[0]});
+    }
+    let i = 0, ok = 0;
+    const next = () => {
+      if (i >= rounds.length){ finish(body, th.title, ok, rounds.length).then(r => r === "again" && gOdd(th)); return; }
+      const r = rounds[i]; prog(i, rounds.length); stat(`${i + 1} из ${rounds.length} · верно: ${ok}`);
+      body.innerHTML = `<p class="play-q">Какое слово лишнее?</p><div class="play-opts">${r.opts.map((o, k) => `<button class="play-opt" data-k="${k}">${esc(o.s)}</button>`).join("")}</div><p class="small muted play-fb" style="min-height:1.4em;margin-top:10px"></p>`;
+      body.querySelectorAll(".play-opt").forEach(b => b.onclick = () => {
+        const o = r.opts[+b.dataset.k], good = o.odd; if (good) ok++; else miss(`${o.s} – не лишнее (${r.a})`);
+        body.querySelectorAll(".play-opt").forEach((x, k) => { x.disabled = true; if (r.opts[k].odd) x.classList.add("ok"); });
+        if (!good) b.classList.add("bad");
+        body.querySelector(".play-fb").innerHTML = `Остальные – «${esc(r.a)}», а <b>${esc(r.opts.find(x => x.odd).s)}</b> – «${esc(r.b)}».`;
+        setTimeout(() => { i++; next(); }, good ? 1400 : 2400);
+      });
+    };
+    next();
+  }
+  function gGuess(th){
+    const body = shell(th.title, GAMES.guess.n), rounds = shuffle(wordsOf(th).filter(x => x.src === "p" && x.h)).slice(0, 8);
+    let i = 0, ok = 0;
+    const next = () => {
+      if (i >= rounds.length){ finish(body, th.title, ok, rounds.length).then(r => r === "again" && gGuess(th)); return; }
+      const it = rounds[i]; let tries = 0; prog(i, rounds.length); stat(`${i + 1} из ${rounds.length} · верно: ${ok}`);
+      body.innerHTML = `<p class="small muted" style="margin:0 0 6px">Что это за слово? Подсказка: первая буква «${esc(it.w[0].toUpperCase())}», букв: ${it.w.length}</p>
+        <div class="tf-card"><p class="play-q" style="margin:0">${esc(it.h)}</p></div>
+        <form class="row" style="gap:8px;margin-top:10px"><input class="gs-in" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Впиши слово" style="flex:1"><button class="btn" type="submit">Проверить</button></form><p class="small play-fb" style="min-height:1.4em;margin-top:8px"></p>`;
+      const inp = body.querySelector(".gs-in"), fb = body.querySelector(".play-fb"); setTimeout(() => inp.focus(), 30);
+      body.querySelector("form").onsubmit = e => {
+        e.preventDefault(); const v = normW(inp.value); if (!v) return;
+        if (v === normW(it.w)){ if (!tries) ok++; fb.innerHTML = "✅ Верно!"; inp.disabled = true; setTimeout(() => { i++; next(); }, 700); }
+        else { tries++; miss(it.w); if (tries >= 2){ fb.innerHTML = `Правильно: <b>${esc(it.w)}</b>`; inp.disabled = true; setTimeout(() => { i++; next(); }, 1500); } else { fb.textContent = "Почти. Попробуй ещё раз."; inp.select(); } }
+      };
+    };
+    next();
+  }
+  function game(type, th){ ({quiz: gQuiz, match: gMatch, sort: gSort, memory: gMemory, tf: gTF, anagram: gAnagram, hangman: gHangman, odd: gOdd, guess: gGuess}[type] || gQuiz)(th); }
 
   /* выбор игры для темы */
   function chooseGame(th){
