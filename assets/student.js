@@ -255,7 +255,7 @@ function liveStart(){
   /* «учебные» экраны: тест, статистика, самообучение и т.п. – не выдёргиваем ученика в комнату урока */
   const quietView = () => ["quiz", "quizzes", "stats", "self", "plan", "look", "profile", "test", "entry"].includes(S.view);
   live.on("presence", {event:"sync"}, async () => {
-    if (presenceBusy) return;
+    if (presenceBusy || !S.profile) return;
     if (S.away && S.room) return;   // ученик сам ушёл в раздел – не выдёргиваем в комнату
     if (quietView()) return;
     const mine = [S.profile.id, ...(S.profile.subjects || []).map(x => x.id)];

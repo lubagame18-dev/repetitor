@@ -39,44 +39,53 @@ window.Quiz = (() => {
       .map(q => ({q: String(q.q), o: q.o.map(String), a: +q.a, e: String(q.e || ""), topic: String(q.topic || ""), topicId: String(q.topicId || "")}));
   }
 
-  /* агрегат по темам из попыток: [{details:{topics:[{id,title,total,ok,first,needsWork}]}, ...}] */
+  /* агрегат по темам из попыток: [{created_at, details:{topics:[{id,title,total,ok,first,needsWork}]}, ...}]
+     pct – общий процент по всем попыткам; lastPct/prevPct – по последней и предыдущей попытке (для динамики) */
   function topicStats(results){
     const map = new Map();
-    (results || []).forEach(r => {
+    const list = (results || []).map((r, i) => ({r, i, at: r && r.created_at ? Date.parse(r.created_at) || 0 : 0}))
+      .sort((x, y) => (x.at - y.at) || (y.i - x.i)).map(x => x.r);          /* от старых к новым */
+    list.forEach(r => {
       const topics = r?.details?.topics;
       if (!Array.isArray(topics)) return;
       topics.forEach(t => {
         if (!t || !t.title) return;
         const key = t.id || t.title;
-        const o = map.get(key) || {id: t.id || "", title: String(t.title), total: 0, ok: 0, first: 0, attempts: 0, needs: 0};
+        const o = map.get(key) || {id: t.id || "", title: String(t.title), total: 0, ok: 0, first: 0, attempts: 0, needs: 0, hist: []};
         o.total += +t.total || 0; o.ok += +t.ok || 0; o.first += +t.first || 0;
         o.attempts += 1; if (t.needsWork) o.needs += 1;
+        o.hist.push({p: (+t.total) ? Math.round((+t.first || 0) / (+t.total) * 100) : 0, nw: !!t.needsWork});
         map.set(key, o);
       });
     });
-    return [...map.values()].map(o => ({
-      ...o,
-      pct: o.total ? Math.round(o.ok / o.total * 100) : 0,
-      firstPct: o.total ? Math.round(o.first / o.total * 100) : 0,
-    })).sort((a, b) => a.pct - b.pct || a.firstPct - b.firstPct || a.title.localeCompare(b.title));
+    return [...map.values()].map(o => {
+      const last = o.hist[o.hist.length - 1], prev = o.hist.length > 1 ? o.hist[o.hist.length - 2] : null;
+      return {
+        ...o,
+        pct: o.total ? Math.round(o.ok / o.total * 100) : 0,
+        firstPct: o.total ? Math.round(o.first / o.total * 100) : 0,
+        lastPct: last.p, lastNeeds: last.nw, prevPct: prev ? prev.p : null,
+        delta: prev ? last.p - prev.p : null,
+      };
+    }).sort((a, b) => a.lastPct - b.lastPct || a.title.localeCompare(b.title));
   }
+  const topicLevel = s => (s.lastNeeds || s.lastPct < 60) ? "bad" : s.lastPct < 80 ? "mid" : "good";
 
-  /* визуальная карта тем: слабые сверху, полоска — доля верных, красным — темы на доработку */
+  /* карта тем: слабые сверху, у каждой темы – процент, стрелка к прошлой попытке и полоска; ниже коротко «что пройти» */
   function graphHTML(stats, opts){
     opts = opts || {};
     if (!stats || !stats.length) return `<p class="small muted">${esc(opts.empty || "Пока нет результатов тестов по темам – соберите тест, и здесь появится карта.")}</p>`;
-    const weak = stats.filter(s => s.needs > 0 || s.pct < 60);
+    const lv = stats.map(topicLevel);
+    const bad = stats.filter((s, i) => lv[i] === "bad"), mid = stats.filter((s, i) => lv[i] === "mid");
+    const arrow = s => s.delta == null ? "" : s.delta > 0 ? `<span class="small" style="color:var(--good,#1a8f4a)" title="было ${s.prevPct}%">↑ +${s.delta}</span>` : s.delta < 0 ? `<span class="small" style="color:var(--bad,#c0392b)" title="было ${s.prevPct}%">↓ ${Math.abs(s.delta)}</span>` : `<span class="small muted" title="было ${s.prevPct}%">=</span>`;
     return `<div class="qz-graph">
-      <div class="qz-graph-legend small muted"><span><i class="qz-dot good"></i> освоено</span><span><i class="qz-dot mid"></i> повторить</span><span><i class="qz-dot bad"></i> надо доработать</span></div>
-      ${stats.map(s => {
-        const bad = s.needs > 0 || s.pct < 60, mid = !bad && (s.pct < 80);
-        return `<div class="qz-topic ${bad ? "bad" : mid ? "mid" : "good"}" title="Верно ${s.ok} из ${s.total} ответов; с первой попытки ${s.first} из ${s.total}">
-          <div class="qz-topic-row"><b>${esc(s.title)}</b><span class="chip ${bad ? "bad" : mid ? "mid" : "good"}">${s.pct}%</span></div>
-          <div class="qz-bar"><i style="width:${Math.max(2, s.pct)}%"></i></div>
-          <div class="small muted">попыток: ${s.attempts} · с первой попытки: ${s.firstPct}%${s.needs ? " · ошибок после повтора: " + s.needs : ""}</div>
-        </div>`;
-      }).join("")}
-      ${weak.length ? `<div class="qz-need small"><b>Надо доработать:</b> ${weak.map(s => esc(s.title)).join("; ")}</div>` : `<div class="qz-need ok small"><b>Все темы освоены.</b> Можно переходить к новым.</div>`}
+      <div class="qz-graph-legend small muted"><span><i class="qz-dot good"></i> от 80%</span><span><i class="qz-dot mid"></i> 60–79%</span><span><i class="qz-dot bad"></i> ниже 60%</span></div>
+      ${stats.map((s, i) => `<div class="qz-topic ${lv[i]}" title="Всего верно ${s.ok} из ${s.total}; попыток: ${s.attempts}">
+          <div class="qz-topic-row"><b>${esc(s.title)}</b><span class="row" style="gap:8px;align-items:center">${arrow(s)}<span class="chip ${lv[i]}">${s.lastPct}%</span></span></div>
+          <div class="qz-bar"><i style="width:${Math.max(2, s.lastPct)}%"></i></div>
+        </div>`).join("")}
+      <div class="qz-need ${bad.length || mid.length ? "" : "ok"} small">${bad.length ? `<div><b>Надо доработать:</b> ${bad.map(s => esc(s.title)).join("; ")}</div>` : ""}${mid.length ? `<div><b>Закрепить:</b> ${mid.map(s => esc(s.title)).join("; ")}</div>` : ""}${bad.length || mid.length ? "" : "<b>Все темы освоены.</b> Можно переходить к новым."}</div>
+      <p class="small muted" style="margin:6px 0 0">Процент – верные ответы с первой попытки в последнем тесте; стрелка – изменение к прошлому.</p>
     </div>`;
   }
 
@@ -94,5 +103,5 @@ window.Quiz = (() => {
     return [...map.values()];
   }
 
-  return {newId, link, questionsFromTests, normQuestions, topicStats, graphHTML, summarize};
+  return {newId, link, questionsFromTests, normQuestions, topicStats, topicLevel, graphHTML, summarize};
 })();

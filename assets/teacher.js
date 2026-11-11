@@ -599,16 +599,20 @@ function studentAllHTML(s, c){
   return `<div class="stack" id="student-all" data-t-student-all style="gap:14px">${selfProgressHTML(s)}${studentBaseHTML(s, c)}${studentBoardsHTML(s, c)}${selfBaseHTML(s, c)}</div>`;
 }
 
+/* разбор нейросети: коротко, чтобы учитель не путался. Старые длинные отчёты тоже обрезаются */
+const aiCut = (t, n) => { t = String(t || "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n).replace(/[\s,;:–-]+\S*$/, "") + "…" : t; };
 function aiReportHTML(s, x){
   const rep = T.reports.find(r => r.student_id === s.id && r.kind === "analysis"), b = rep?.body;
+  const weak = (b?.weak || []).slice(0, 4), plan = (b?.plan || []).slice(0, 3), strong = (b?.strengths || []).slice(0, 3);
+  const note = [b?.time && ["Время", b.time], b?.essay && ["Письмо", b.essay]].filter(Boolean);
   return `<div class="ai-box stack" style="gap:10px"><div class="row between"><div><div class="kicker">Разбор нейросети</div>
-      <p class="small muted" style="margin-top:2px">Анализирует тесты, мини-практику, ДЗ, сочинения и время занятий – и предлагает, как поправить план.</p></div>
+      <p class="small muted" style="margin-top:2px">Коротко: слабые темы, динамика, что повторить.</p></div>
       <button class="btn sm" data-act="ai-analyze" ${T.busy ? "disabled" : ""}>${T.busy === "analyze" ? "Анализирую…" : rep ? "Обновить разбор" : "Сделать разбор"}</button></div>
-    ${b?.error ? `<p class="small" style="color:var(--bad)">${esc(b.error)}</p>` : b ? `<p>${esc(b.summary || "")}</p>
-      ${b.strengths?.length ? `<p class="small"><b>Сильные стороны:</b> ${b.strengths.map(esc).join("; ")}</p>` : ""}
-      ${b.weak?.length ? `<div class="small"><b>Слабые места:</b><ul style="margin:4px 0 0;padding-left:18px">${b.weak.map(w => `<li><b>${esc(w.topic)}</b> – ${esc(w.why)}</li>`).join("")}</ul></div>` : ""}
-      ${b.time ? `<p class="small"><b>Время и полнота:</b> ${esc(b.time)}</p>` : ""}${b.essay ? `<p class="small"><b>Письмо:</b> ${esc(b.essay)}</p>` : ""}
-      ${b.plan?.length ? `<div class="small"><b>Предложения к плану:</b>${b.plan.map((p, k) => `<div class="mat"><span class="ic">+</span><div style="flex:1"><b>${esc(p.title)}</b><p class="muted">${esc(p.why)}</p>${p.tasks?.length ? `<ul style="margin:4px 0 0;padding-left:18px">${p.tasks.map(t => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
+    ${b?.error ? `<p class="small" style="color:var(--bad)">${esc(b.error)}</p>` : b ? `${b.summary ? `<p style="margin:0"><b>${esc(aiCut(b.summary, 200))}</b></p>` : ""}
+      ${weak.length ? `<div class="small"><div class="kicker">Слабые места</div><ul style="margin:4px 0 0;padding-left:18px">${weak.map(w => `<li><b>${esc(aiCut(w.topic, 60))}</b>${w.why ? " – " + esc(aiCut(w.why, 80)) : ""}</li>`).join("")}</ul></div>` : ""}
+      ${strong.length ? `<p class="small" style="margin:0"><b>Освоено:</b> ${strong.map(t => esc(aiCut(t, 40))).join("; ")}</p>` : ""}
+      ${note.map(([k, v]) => `<p class="small" style="margin:0"><b>${k}:</b> ${esc(aiCut(v, 100))}</p>`).join("")}
+      ${plan.length ? `<div class="small"><div class="kicker">Что повторить</div>${plan.map((p, k) => `<div class="mat"><span class="ic">+</span><div style="flex:1"><b>${esc(aiCut(p.title, 70))}</b>${p.why ? `<p class="muted" style="margin:2px 0 0">${esc(aiCut(p.why, 110))}</p>` : ""}${p.tasks?.length ? `<ul style="margin:4px 0 0;padding-left:18px">${p.tasks.slice(0, 3).map(t => `<li>${esc(aiCut(t, 90))}</li>`).join("")}</ul>` : ""}
           ${x.c ? `<button class="btn ghost sm" style="margin-top:6px" data-act="ai-addlesson" data-k="${k}">Добавить урок в план ученика</button>` : ""}</div></div>`).join("")}</div>` : ""}
       <p class="small muted">${new Date(rep.created_at).toLocaleString("ru-RU",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</p>` : ""}</div>`;
 }

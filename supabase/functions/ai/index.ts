@@ -163,16 +163,24 @@ ${isTh ? 'Верни строго JSON: {"blocks":[{"h":"заголовок","t"
 
     if (action === "analyze_student") {
       const st = await own(body.student_id);
-      const [{ data: res }, { data: wr }, { data: act }, { data: hw }] = await Promise.all([
+      const [{ data: res }, { data: wr }, { data: act }, { data: hw }, { data: qz }] = await Promise.all([
         admin.from("results").select("lesson_id,kind,score,total,wrong,duration_sec,created_at").eq("student_id", st.id).order("created_at"),
         admin.from("writings").select("lesson_id,kind,total,max,errors,status").eq("student_id", st.id),
         admin.from("activity").select("lesson_id,day,seconds").eq("student_id", st.id),
         admin.from("homework").select("lesson_id,status").eq("student_id", st.id),
+        admin.from("topic_quiz_results").select("score,total,details,created_at").eq("student_id", st.id).order("created_at", { ascending: false }).limit(12),
       ]);
-      const r = await ask(`Ты – методист-репетитор по предмету «${SUBJ}». Проанализируй успехи ученика и предложи гибкую корректировку плана.
-Методика уроков: теория маленькими блоками → объяснение на примерах → мини-практика сразу после блока → снова теория → в конце задания формата ОГЭ/ЕГЭ.
-Верни строго JSON: {"summary":"3–5 предложений для учителя","strengths":["…"],"weak":[{"topic":"…","why":"по каким данным видно"}],"time":"вывод о времени занятий и полноте выполнения","plan":[{"title":"название урока повторения или нового урока","why":"…","tasks":["что делать на уроке"]}],"essay":"вывод по сочинениям/изложениям"}. В plan – не больше 4 пунктов.`,
-        JSON.stringify({ ученик: { класс: st.grade, цели: st.goals, курс: st.course }, план_уроков: body.lessons || [], результаты: res, письменные: wr, время: act, дз: hw, входной_тест_слабые_темы: body.entry_weak || [] }).slice(0, 24000), 2200);
+      /* тесты по темам: по каждой теме – процент верных с первой попытки в каждой попытке, от новых к старым */
+      const byTopic: Record<string, number[]> = {};
+      for (const q of qz || []) for (const t of (q.details?.topics || [])) {
+        if (!t?.title || !t.total) continue;
+        (byTopic[t.title] = byTopic[t.title] || []).push(Math.round((+t.first || 0) / +t.total * 100));
+      }
+      const r = await ask(`Ты – методист-репетитор по предмету «${SUBJ}». Проанализируй успехи ученика для учителя. Пиши КОРОТКО и по делу: учитель читает за полминуты.
+Данные: результаты уроков и ДЗ, тесты по темам (тесты_по_темам: тема → проценты верных с первой попытки, первый элемент – самый свежий), письменные работы, время.
+Верни строго JSON: {"summary":"ОДНО предложение, до 160 знаков: общий вывод","strengths":["до 3 тем, 1–3 слова каждая"],"weak":[{"topic":"тема","why":"до 10 слов: процент или динамика, например «45%, было 60%»"}],"time":"до 12 слов или пустая строка","plan":[{"title":"что повторить, до 6 слов","why":"до 12 слов","tasks":["до 3 коротких пунктов"]}],"essay":"до 12 слов или пустая строка"}.
+Правила: weak – не больше 4 самых слабых тем, сначала самая слабая; plan – не больше 3 пунктов; никаких вступлений, оценок и пересказа данных; не повторяй одно и то же в разных полях; если данных нет – верни пустые списки и пустые строки.`,
+        JSON.stringify({ ученик: { класс: st.grade, цели: st.goals, курс: st.course }, план_уроков: body.lessons || [], результаты: res, тесты_по_темам: byTopic, письменные: wr, время: act, дз: hw, входной_тест_слабые_темы: body.entry_weak || [] }).slice(0, 24000), 900);
       await admin.from("ai_reports").insert({ teacher_id: uid, student_id: st.id, kind: "analysis", body: r });
       return json(r);
     }
