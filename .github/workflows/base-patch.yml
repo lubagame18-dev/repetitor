@@ -1,0 +1,45 @@
+# Дополнения к встроенной базе (course_data): выполняет файлы supabase/base-patch/*.sql по порядку.
+# Запускается сам при загрузке файлов из supabase/base-patch/, либо вручную: Actions → «Supabase – дополнения к базе курсов» → Run workflow.
+# Нужен секрет SUPABASE_ACCESS_TOKEN (тот же, что у «Supabase – база и нейросеть»). Итог – в .github/base-patch-status.md.
+name: Supabase – дополнения к базе курсов
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["supabase/base-patch/**", ".github/workflows/base-patch.yml"]
+permissions:
+  contents: write
+concurrency: supabase-base-patch
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_REF: affncgnhqfvdbtyujfvz
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Выполнить дополнения
+        run: |
+          : > patch.log
+          rc=0
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then echo "нет секрета SUPABASE_ACCESS_TOKEN" >> patch.log; rc=1; fi
+          if [ "$rc" = 0 ]; then
+            for f in $(ls supabase/base-patch/*.sql | sort); do
+              echo "== $f" >> patch.log
+              { echo "begin;"; cat "$f"; echo; echo "commit;"; } | jq -Rs '{query: .}' > q.json
+              code=$(curl -sS -o resp.json -w "%{http_code}" -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" \
+                -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" --data-binary @q.json)
+              head -c 1500 resp.json >> patch.log; echo >> patch.log
+              if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then echo "ok ($code)" >> patch.log; else echo "ОШИБКА $code (изменения отменены)" >> patch.log; rc=1; fi
+            done
+          fi
+          {
+            echo "# Последние дополнения к базе курсов"
+            echo; echo "Время: $(date -u '+%Y-%m-%d %H:%M UTC') · коммит ${GITHUB_SHA::7}"
+            echo; echo '```'; sed -E 's#sbp_[A-Za-z0-9]+#sbp_***#g' patch.log | tail -c 4000; echo '```'
+          } > .github/base-patch-status.md
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add .github/base-patch-status.md
+          git commit -m "Отчёт о дополнениях к базе [skip ci]" || true
+          git pull --rebase -q && git push -q || true
+          exit $rc
