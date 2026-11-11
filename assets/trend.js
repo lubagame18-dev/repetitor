@@ -7,7 +7,8 @@ window.Trend = (() => {
   /* строки результатов -> точки графика: [{p, label, sub, at, kind}] */
   function pointsFromRows(rows, opts = {}){
     const titleOf = typeof opts.titleOf === "function" ? opts.titleOf : () => "";
-    const out = (rows || []).filter(r => r && +r.total > 0).map(r => {
+    /* мини-практику (kind "mini") в динамику не берём: с учениками её не решают, она остаётся только в уроках */
+    const out = (rows || []).filter(r => r && r.kind !== "mini" && +r.total > 0).map(r => {
       const total = +r.total || 1, score = Math.max(0, Math.min(total, +r.score || 0));
       return {
         p: Math.round(score / total * 100),
