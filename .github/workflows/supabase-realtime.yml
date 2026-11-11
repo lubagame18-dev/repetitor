@@ -1,0 +1,42 @@
+# Проверка Realtime (онлайн учеников, доска, «Подключиться к уроку»): настройки и состояние сервисов проекта.
+# Запуск: Actions → «Supabase – проверка Realtime» → Run workflow. Режим public-on включает «Allow public access».
+# Итог (без ключей) записывается в .github/supabase-realtime.md.
+name: Supabase – проверка Realtime
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check – только проверить, public-on – включить публичный доступ к Realtime"
+        required: false
+        default: "check"
+permissions:
+  contents: write
+jobs:
+  realtime:
+    runs-on: ubuntu-latest
+    env:
+      REF: affncgnhqfvdbtyujfvz
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка
+        run: |
+          api() { curl -sS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$REF/$1"; }
+          {
+            echo "# Realtime · $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo; echo "## Состояние сервисов"; echo '```json'
+            api "health?services=auth&services=db&services=realtime&services=rest&services=storage" | jq . 2>/dev/null | head -c 3000
+            echo '```'
+            echo; echo "## Настройки Realtime (до)"; echo '```json'
+            api "config/realtime" | jq 'del(.jwt_secret)' 2>/dev/null | head -c 3000
+            echo '```'
+          } > .github/supabase-realtime.md
+          if [ "${MODE:-check}" = "public-on" ]; then
+            code=$(curl -sS -o patch.json -w "%{http_code}" -X PATCH "https://api.supabase.com/v1/projects/$REF/config/realtime" \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" -d '{"private_only": false}')
+            { echo; echo "## Включение публичного доступа: HTTP $code"; echo '```json'; jq 'del(.jwt_secret)' patch.json 2>/dev/null | head -c 2000; echo '```'; } >> .github/supabase-realtime.md
+          fi
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add .github/supabase-realtime.md; git commit -m "Realtime: проверка [skip ci]" || exit 0
+          git pull --rebase -q && git push -q
