@@ -1,9 +1,21 @@
-# Диагностика 2026-11-02 16:22 UTC
+# Диагностика 2026-11-11 12:21 UTC
 ```json
 [
   {
     "diag": {
       "teachers": [
+        {
+          "t": "31d99ed3",
+          "role": "developer",
+          "students": 7,
+          "registered": 7,
+          "courses": [
+            "oge-rus / rus",
+            "rus-5 / rus",
+            "vpr-rus-7 / rus",
+            "vpr-rus-8 / rus"
+          ]
+        },
         {
           "t": "a2663102",
           "role": "developer",
@@ -19,18 +31,11 @@
           "courses": null
         },
         {
-          "t": "31d99ed3",
-          "role": "developer",
-          "students": 8,
-          "registered": 5,
-          "courses": [
-            " / rus",
-            "oge-rus / rus",
-            "rus-7 / rus",
-            "rus-8 / rus",
-            "vpr-rus-7 / rus",
-            "vpr-rus-8 / rus"
-          ]
+          "t": "088677bf",
+          "role": "teacher",
+          "students": 0,
+          "registered": 0,
+          "courses": null
         }
       ],
       "students_without_teacher": 0,
