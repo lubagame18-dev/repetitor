@@ -1943,8 +1943,16 @@ function followState(){
   const page = Board.keptPage() || r.shown || r.tab || null;
   return {on: true, lesson: r.lesson, tab: page, page, v: T.followV || null, rev: Date.now()};
 }
-function followSave(st){
+/* запасной канал «учитель перенёс ученика на урок/лист»: пишем в базу, даже когда «веду ученика» выключено */
+function roomPublish(){
   const r = T.room; if (!r || !sb || !T.session) return;
+  const tab = Board.keptPage() || r.shown || r.tab || null, rev = Date.now();
+  const st = r.follow ? {...followState(), rev} : {on: false, rev};
+  followSave({...st, room: {lesson: r.lesson, tab, page: tab, rev}}, true);
+}
+function followSave(st, keep){
+  const r = T.room; if (!r || !sb || !T.session) return;
+  if (!keep && st && !st.room && T.room) st = {...st, room: {lesson: r.lesson, tab: st.tab || r.shown || r.tab || null, page: st.page || null, rev: st.rev || Date.now()}};
   clearTimeout(followDbT);
   followDbT = setTimeout(async () => {
     for (const id of r.to){ try { await sb.from("student_follow").upsert({student_id: id, teacher_id: (T.students.find(x => x.id === id) || {}).teacher_id || T.session.user.id, follow: st}, {onConflict: "student_id"}); } catch (_) {} }
@@ -2460,7 +2468,7 @@ document.addEventListener("click", async e => {
     else { r.follow = true; followSend(true); toast(T.online[r.sid] ? "Веду ученика: он сразу видит то же, что вы" : "Ученик не в сети – подхватит, как только зайдёт"); }
     render(); return;
   }
-  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = Board.keptPage() || r.shown || r.tab || null; r.shown = tab; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab, page: tab, v: T.followV || null}));
+  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = Board.keptPage() || r.shown || r.tab || null; r.shown = tab; roomPublish(); r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab, page: tab, v: T.followV || null}));
     roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён сюда" : "Ученик не в сети – откроется здесь, когда зайдёт"); return; }
   if (a === "call-start"){ const s = T.students.find(x => x.id === T.room?.sid); if (s) startCallT(s); render(); return; }
   if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }
@@ -2491,12 +2499,12 @@ document.addEventListener("click", async e => {
     const d0 = nextLessonDate(s), nid = await insertLesson(s, curCourse(), T.open, d0, true);
     if (nid) toast(`Урок добавлен в план: ${s.name}, ${fmt(d0, {day: "numeric", month: "long"})}. Следующие уроки сдвинулись.`); return;
   }
-  if (a === "room-invite"){ const r = T.room; r.to.forEach(id => cmd(id, "room-pull", {lesson: r.lesson, url: r.url, tab: r.shown || r.tab || null})); roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён на урок" : "Ученик не в сети – перенесётся, как только откроет приложение"); return; }
+  if (a === "room-invite"){ const r = T.room; roomPublish(); r.to.forEach(id => cmd(id, "room-pull", {lesson: r.lesson, url: r.url, tab: r.shown || r.tab || null})); roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён на урок" : "Ученик не в сети – перенесётся, как только откроет приложение"); return; }
   if (a === "room-url"){ const u = $("#room-url").value.trim(); if (!/^https?:\/\//.test(u)){ toast("Вставьте ссылку, которая начинается с https://"); return; }
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
     await saveCall(s, u, true);
     roomSend("lesson"); render(); return; }
-  if (a === "room-end"){ if (T.room?.follow) followOff(); if (T.me) T.me.room = null; await roomCover(true); if (window.Call) Call.leave(true); const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
+  if (a === "room-end"){ if (T.room?.follow) followOff(); { const rr = T.room; if (rr && sb) for (const id of rr.to){ try { sb.from("student_follow").upsert({student_id: id, teacher_id: (T.students.find(x => x.id === id) || {}).teacher_id || T.session.user.id, follow: {on: false, rev: Date.now(), room: null}}, {onConflict: "student_id"}); } catch (_) {} } } if (T.me) T.me.room = null; await roomCover(true); if (window.Call) Call.leave(true); const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
   if (a === "open-drawer"){ T.drawer = true; render(); }
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();

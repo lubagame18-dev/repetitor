@@ -179,7 +179,7 @@ async function roomGoto(m, quiet){
   if (!ok){ if (!quiet) toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return false; }
   if (changed) await load();   // новый урок – сразу свежие материалы; смена вкладки – без задержки
   if (!S.room) S.room = {lesson: m.lesson, at: Date.now()};
-  if (S.joinHow === "call") return false;
+  if (S.joinHow === "call") S.joinHow = "both";   // учитель явно показывает урок – доска нужна, звонок остаётся
   if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
   S.room.lesson = m.lesson; S.open = m.lesson; S.test = null; S.testInRoom = false; if (m.tab){ S.sub = m.tab; S.boardPage = m.tab; } if (m.page) S.boardPage = m.page;
   closeJoin(); S.view = "room"; S.drawer = false; S.away = false; render(); scrollTo(0, 0);
@@ -350,6 +350,12 @@ async function livePoll(){
     const list = (data.follow || []).filter(x => x.follow).map(x => x.follow).sort((a, b) => (b.rev || 0) - (a.rev || 0));
     const f = list[0];
     if (f && (f.rev || 0) >= (S.followRev || 0) && (f.on ? (!S.follow || f.rev > (S.followRev || 0)) : !!S.follow)) await applyFollow(f);
+    /* запасной канал: учитель перенёс на урок/лист, а живое сообщение не дошло */
+    const rm = (data.follow || []).map(x => x.follow && x.follow.room).filter(Boolean).sort((x, y) => (y.rev || 0) - (x.rev || 0))[0];
+    if (rm && rm.lesson && (rm.rev || 0) > Math.max(S.roomRev || 0, S.roomEnded || 0, Date.now() - 3 * 3600e3)){
+      S.roomRev = rm.rev;
+      if (!S.follow && (!S.room || S.room.lesson !== rm.lesson || (rm.page && S.boardPage !== rm.page))) await roomGoto({lesson: rm.lesson, tab: rm.tab, page: rm.page, to: mine.find(id => id !== S.profile.id) || S.profile.id}, !!S.room);
+    }
   } catch (_) {}
 }
 /* тихое обновление материалов: перерисовываем, только если учитель что-то изменил и ученик не печатает */
