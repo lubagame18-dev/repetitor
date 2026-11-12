@@ -82,6 +82,8 @@ async function load(){
     if ((!S.base.length || U.builtinNewer(S.profile?.course, data.course_data)) && window.BuiltinLoader && S.profile?.course) BuiltinLoader.ensure(S.profile.course).then(ok => { if (ok && window.BUILTIN_COURSES?.[S.profile.course]) { S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); recompute(); render(); } });
     U.loadBase(S.base);
     LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats});
+    /* результаты тестов по темам нужны для «усвоено N%» в списке уроков – подгружаем фоном */
+    if (!S.quizzes && !S.qzBusy) setTimeout(() => loadQuizzes().then(ok => { if (ok && !typing()) { try { render(); } catch (_) {} } }).catch(() => {}), 300);
   } else {
     S.rows = LS.get("rows", []); S.hw = LS.get("hw", {}); S.writings = LS.get("writings", {}); S.sheets = {}; S.works = LS.get("works", {});
   }
@@ -493,6 +495,19 @@ function drawerHTML(){
 const TITLES = {profile:"Мой профиль", oge:"Мой ОГЭ", self:"Самообучение", room:"Урок с учителем", myboard:"Личная доска", look:"Оформление", home:"Главная", lessons:"Мои уроки", folder:"Урок", test:"Тест", stats:"Статистика", plan:"План работы", entry:"Входной тест", install:"Установить на телефон", quiz:"Тест по темам", quizzes:"Тесты"};
 
 /* ---------- экраны ---------- */
+/* «усвоено N%» по уроку: лучший тест на уроке, ДЗ-тест и тест по темам (если ученик его проходил) */
+function masteryOf(l){
+  const v = [], r = S.results[l.id], h = S.hwres[l.id];
+  if (r?.best) v.push(pct(r.best));
+  if (h?.best) v.push(pct(h.best));
+  try {
+    if (window.Quiz && S.qzResults?.length){
+      if (!S._tsFor || S._tsFor !== S.qzResults){ S._tsFor = S.qzResults; S._ts = Quiz.topicStats(S.qzResults); }
+      const t = (S._ts || []).find(x => x.id === l.id || x.title === l.title); if (t) v.push(t.lastPct);
+    }
+  } catch (_) {}
+  return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+}
 function folderHTML(l){
   const b = blockOf(l), i = S.course.lessons.indexOf(l), open = isOpen(l), nx = nextLesson();
   const r = S.results[l.id], hr = S.hwres[l.id], w = S.writings[l.id], hs = U.hwState(S.course, l.id, S.hw);
@@ -502,7 +517,7 @@ function folderHTML(l){
       ${open ? "" : `<span class="lockico">${I.lock}</span>`}
       <span class="num">№ ${String(i+1).padStart(2,"0")} · ${fmt(l.date,{day:"numeric",month:"short"}).toUpperCase()}${U.lessonTime(S.profile, l) ? " · " + esc(U.lessonTime(S.profile, l)) : ""}</span>
       <span class="ttl">${esc(l.title)}</span>
-      <span class="meta">${open ? `${(G => `${G.lesson ? `<span class="pill">урок: ${G.lesson.g}</span>` : ""}${G.home ? `<span class="pill">ДЗ: ${G.home.g}</span>` : ""}`)(U.lessonGrades(l, S.results, S.hwres, S.hw, S.writings))}${w?.max ? `<span class="pill">✍ ${w.total}/${w.max}</span>` : ""}${hs.c==="bad" ? '<span class="pill">ДЗ!</span>' : ""}<span class="arrow">→</span>`
+      <span class="meta">${open ? `${(m => m == null ? "" : `<span class="pill">усвоено ${m}%</span>`)(masteryOf(l))}${(G => `${G.lesson ? `<span class="pill">урок: ${G.lesson.g}</span>` : ""}${G.home ? `<span class="pill">ДЗ: ${G.home.g}</span>` : ""}`)(U.lessonGrades(l, S.results, S.hwres, S.hw, S.writings))}${w?.max ? `<span class="pill">✍ ${w.total}/${w.max}</span>` : ""}${hs.c==="bad" ? '<span class="pill">ДЗ!</span>' : ""}<span class="arrow">→</span>`
         : `<span class="pill">откроется ${fmt(l.date,{day:"numeric",month:"short"})}</span>`}</span>
     </span></button>`;
 }
@@ -577,7 +592,11 @@ function viewHome(){
 function viewLessons(){
   if (!S.course) return `<div class="section-title" style="margin-top:6px"><h2>Мои уроки · ${esc(subjName().toLowerCase())}</h2></div>` + noCourse();
   let out = "", month = "";
-  const items = [...S.course.lessons.map(l => ({date:l.date, l})), ...(S.course.events || []).map(e => ({date:e.date, e}))].sort((a,b) => a.date < b.date ? -1 : 1);
+  /* пройденные уроки (есть результат) – сверху, с процентом усвоения; остальные – по датам */
+  const doneL = S.course.lessons.filter(l => masteryOf(l) != null);
+  const doneSet = new Set(doneL);
+  const items = [...S.course.lessons.filter(l => !doneSet.has(l)).map(l => ({date:l.date, l})), ...(S.course.events || []).map(e => ({date:e.date, e}))].sort((a,b) => a.date < b.date ? -1 : 1);
+  if (doneL.length) out += `<div class="month">Пройдено · ${doneL.length}</div>` + doneL.map(folderHTML).join("");
   for (const it of items){
     const m = fmt(it.date, {month:"long", year:"numeric"});
     if (m !== month){ month = m; out += `<div class="month">${m[0].toUpperCase() + m.slice(1)}</div>`; }
