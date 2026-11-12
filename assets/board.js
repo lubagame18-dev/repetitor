@@ -139,6 +139,7 @@ window.Board = (() => {
     let fitMode = true;                // «По ширине»: scale = stage.clientWidth / W
     let zoom = 1;                      // абсолютный масштаб, CSS px на логический px
     let lastViewScale = 0;
+    let extraWidth = 0, widthL = W;      // «бесконечный» холст вправо: логическая ширина растёт при рисовании у правого края
     let extraHeight = 0;               // кнопка «Расширить лист»
     let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
     let pan = null;                    // перетаскивание холста инструментом «рука»
@@ -328,14 +329,15 @@ window.Board = (() => {
       if (anchorsDirty) markAnchors();
       const bgH = bg.scrollHeight;
       if (boxesDirty || scale !== lastScale || bgH !== lastBgH){ measureAnchors(); boxesDirty = false; lastScale = scale; lastBgH = bgH; }
-      let maxY = 0;
+      let maxY = 0, maxX = 0;
       items.forEach(it => {
-        if (it.t === "s"){ for (const q of shiftedPoints(it)) if (q[1] > maxY) maxY = q[1]; }
-        else if (it.t === "i"){ const [w2, h2] = imageSize(it); maxY = Math.max(maxY, it.y + h2); }
-        else { maxY = Math.max(maxY, it.y + (it.h || textHeight(it))); }
+        if (it.t === "s"){ for (const q of shiftedPoints(it)){ if (q[1] > maxY) maxY = q[1]; if (q[0] > maxX) maxX = q[0]; } }
+        else if (it.t === "i"){ const [w2, h2] = imageSize(it); maxY = Math.max(maxY, it.y + h2); if (it.x + w2 > W + 4) maxX = Math.max(maxX, it.x + w2); }
+        else { maxY = Math.max(maxY, it.y + (it.h || textHeight(it))); if (it.x > W - 200) maxX = Math.max(maxX, it.x + (it.w || 300)); }
       });
       height = Math.max(1400, bgH + 200, maxY + 300) + extraHeight;
-      const cssW = Math.max(1, Math.round(W * scale));
+      widthL = Math.max(W, maxX > W - 40 ? maxX + 400 : 0, W + extraWidth);
+      const cssW = Math.max(1, Math.round(widthL * scale));
       const cssH = Math.max(1, Math.round(height * scale));
       wrap.style.width = cssW + "px";
       wrap.style.height = cssH + "px";
@@ -392,7 +394,17 @@ window.Board = (() => {
       viewT = setTimeout(() => { const v = getRelView(), sig = JSON.stringify(v); if (sig === lastViewSig) return; lastViewSig = sig; try { o.onView(v); } catch (_) {} }, 160);
     }
     function getView(){ return {zoom:scale, scale, scrollX:stage.scrollLeft, scrollY:stage.scrollTop, x:Math.round(stage.scrollLeft / scale), y:Math.round(stage.scrollTop / scale)}; }
+    function maybeGrowWidth(p){
+      if (!p || p[0] < widthL - 100) return;
+      const now = performance.now();
+      if (now - lastGrowW < 400) return;
+      lastGrowW = now;
+      extraWidth = Math.max(extraWidth, widthL - W) + Math.max(300, Math.round(W * 0.4));
+      layout();
+    }
+    let lastGrowW = 0;
     function maybeGrowHeight(p){
+      if (p) maybeGrowWidth(p);
       if (!p || p[1] < height - 120) return;
       const now = performance.now();
       if (now - lastGrow < 500) return;
@@ -491,7 +503,7 @@ window.Board = (() => {
       ctx.save(); ctx.fillStyle = "#f1eefb"; ctx.fillRect(it.x, it.y, w2, h2); ctx.restore();
     }
     function redraw(){
-      ctx.clearRect(0, 0, W, height + 50);
+      ctx.clearRect(0, 0, widthL, height + 50);
       items.forEach(it => { if (it.t === "s") drawStroke(it); else if (it.t === "i") drawImageItem(it); else if (it.t === "t") drawText(it); });
       drafts.forEach(d => drawStroke(d));
       if (drawing && !drawing.erase) drawStroke(drawing);
@@ -588,7 +600,7 @@ window.Board = (() => {
         let bx = Math.round(x + w2 / 2 - bw / 2);
         let by = Math.round(y - bh - 8);
         if (by < 2) by = Math.round(y + h2 + 8);
-        const maxX = Math.max(2, Math.round(W * scale) - bw - 4);
+        const maxX = Math.max(2, Math.round(widthL * scale) - bw - 4);
         const maxY = Math.max(2, Math.round(height * scale) - bh - 4);
         selBar.style.left = Math.max(2, Math.min(bx, maxX)) + "px";
         selBar.style.top = Math.max(2, Math.min(by, maxY)) + "px";
@@ -1434,7 +1446,7 @@ window.Board = (() => {
     }
 
     /* «бесконечный» холст: у нижнего края лист сам удлиняется */
-    stage.addEventListener("scroll", () => { if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); viewChanged(); }, {passive: true});
+    stage.addEventListener("scroll", () => { if (stage.scrollLeft + stage.clientWidth > widthL * scale - 120 && widthL > W) maybeGrowWidth([widthL, 0]); if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); viewChanged(); }, {passive: true});
     /* ---------- жест двумя пальцами: щипок – масштаб, сдвиг – перемещение холста (любым инструментом) ---------- */
     const tps = new Map(); let gz = null, gRaf = 0;
     const tdist = () => { const a = [...tps.values()]; return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1; };
@@ -2279,7 +2291,7 @@ window.Board = (() => {
         ready: readyDone,
         page,
         scale,
-        width: W,
+        width: widthL,
         height,
         saving,
         anchors: bdBoxes.length,
