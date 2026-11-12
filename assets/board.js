@@ -80,6 +80,9 @@ window.Board = (() => {
     let page = (o.page && pagesArr.some(p => p.key === String(o.page))) ? String(o.page) : pagesArr[0].key;
 
     let items = new Map();             // id -> item
+    const stamp = new Map();           // id -> когда менялся (для сверки с базой: свежие изменения не трогаем)
+    const st8 = (...ids) => { const t = Date.now(); ids.flat().forEach(i => { if (i != null) stamp.set(String(i), t); }); };
+    const fresh8 = id => Date.now() - (stamp.get(String(id)) || 0) < 8000;
     let mine = [];                     // id своих объектов для «Отменить»
     /* история действий по листам: {added:[id], removed:[объекты]} – отмена и возврат, в т.ч. случайного удаления */
     const hmap = new Map(); let histMute = 0, histBusy = false, hbatch = null;
@@ -879,6 +882,7 @@ window.Board = (() => {
       const cached = pageCache.get(key);
       if (cached) { cached.forEach(r => { if (r && r.item) items.set(String(r.id), r.item); }); }
       layout();
+      if (cached) setTimeout(() => resync(true), 50);   // пока лист был закрыт, записи могли измениться
       if (!cached) {
         try {
           const list = await o.api.load(key) || [];
@@ -1031,6 +1035,7 @@ window.Board = (() => {
         if (page === pg){ items.set(id, item); mine.push(id); layout(); }
         else redraw();
         send("add", {id, item, page:pg});
+        st8(id);
         if (page === pg) hpush({added:[id], removed:[]});
         return id;
       } catch(_) {
@@ -1050,6 +1055,7 @@ window.Board = (() => {
       if (!ids || !ids.length) return;
       const pg = page;
       hpush({added:[], removed: ids.map(id => items.get(String(id)) || (snap && snap.get(String(id)))).filter(Boolean)});
+      st8(ids);
       ids.forEach(id => items.delete(String(id)));
       if (selectedId != null && ids.some(id => String(id) === String(selectedId))) selectedId = null;
       redraw(); layout();
@@ -1081,6 +1087,7 @@ window.Board = (() => {
         }
         const ok = await removeRow(pg, oldId);
         send("move", {id:oldId, newId, item:newItem, page:pg});
+        st8(oldId, newId);
         if (page === pg) hpush({added:[newId], removed:[fallback || old]});
         if (!ok) toast("Старая копия могла остаться на доске.");
       } finally { saving--; }
@@ -2052,8 +2059,10 @@ window.Board = (() => {
       const sp = p.el.querySelector("span"); if (sp) sp.dataset.n = p.name || "";
     }
     function placeCursors(){ peers.forEach(placeCursor); }
-    if (o.sb && o.channelName){
+    let chFails = 0, chBorn = 0, guardT = 0, syncT = 0, resyncBusy = false, hidHandlers = [];
+    function connect(){
       channel = o.sb.channel(o.channelName, {config:{broadcast:{self:false}, presence:{key:me}}});
+      const mine_ch = channel; chBorn = Date.now();
       channel.on("broadcast", {event:"ev"}, ({payload:m}) => {
         if (!m || m.from === me) return;
         /* общий фон живого листа: ученик присылает html, учитель просит его. Эти события
@@ -2097,15 +2106,16 @@ window.Board = (() => {
         }
         if (m.type === "add"){
           [...drafts.keys()].forEach(k => { if (k.startsWith(m.from + ":") && drafts.get(k).p.length >= ((m.item && m.item.p && m.item.p.length) || 0) - 2) drafts.delete(k); });
-          if (m.id != null) items.set(String(m.id), m.item);
+          if (m.id != null){ items.set(String(m.id), m.item); st8(m.id); }
           redraw(); layout();
         }
         if (m.type === "remove"){
-          (m.ids || []).forEach(id => items.delete(String(id)));
+          st8(m.ids || []); (m.ids || []).forEach(id => items.delete(String(id)));
           if (selectedId != null && (m.ids || []).some(id => String(id) === String(selectedId))) selectedId = null;
           redraw(); layout();
         }
         if (m.type === "move"){
+          st8(m.id, m.newId);
           if (m.id != null) items.delete(String(m.id));
           if (m.newId != null) items.set(String(m.newId), m.item);
           if (selectedId != null && String(selectedId) === String(m.id)) selectedId = m.newId != null ? String(m.newId) : null;
@@ -2122,7 +2132,56 @@ window.Board = (() => {
         renderWho();
         maybeRequestBg();     // ученик появился – просим у него фон живого листа
       });
-      channel.subscribe(s => { if (s === "SUBSCRIBED"){ sendPresence(); renderWho(); } });
+      channel.subscribe(s => {
+        if (channel !== mine_ch) return;
+        if (s === "SUBSCRIBED"){ chFails = 0; sendPresence(); renderWho(); resync(true); }
+        else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT" || s === "CLOSED"){
+          const d = Math.min(15000, 1200 * 2 ** Math.min(chFails++, 4));
+          setTimeout(() => { if (channel === mine_ch && o.sb) reconnect(); }, d);
+        }
+      });
+    }
+    function reconnect(){
+      if (!o.sb || !o.channelName || destroyed) return;
+      const old = channel; channel = null;
+      if (old){ try { o.sb.removeChannel(old); } catch (_) {} }
+      connect();
+    }
+    function ensureChannel(){
+      if (!o.sb || !o.channelName || destroyed || document.hidden) return;
+      if (!channel){ connect(); return; }
+      const st = typeof channel.state === "string" ? channel.state : "joined", stuck = st === "joining" && Date.now() - chBorn > 15000;
+      if (st !== "joined" && (st !== "joining" || stuck)) reconnect(); else sendPresence();
+    }
+    /* «сверка с базой»: что записано в board_items, то и должно быть на листе – даже если живое событие потерялось или лист был закрыт */
+    async function resync(force){
+      if (resyncBusy || destroyed || !page || !o.api || typeof o.api.load !== "function") return;
+      if (!force && (drawing || moving || pan || editor)) return;
+      resyncBusy = true; const key = page, tok0 = openTok;
+      try {
+        const list = await o.api.load(key) || [];
+        if (destroyed || page !== key || tok0 !== openTok || (!force && (drawing || moving || pan || editor))) return;
+        if (list.some(r => !r || r.id == null)) return;          // без id сверять нечем
+        const db = new Map(); list.forEach(r => { if (r.item && r.item.t && !fresh8(r.id)) db.set(String(r.id), r.item); });
+        const local = [...items.keys()].filter(id => !id.startsWith("tmp") && !id.startsWith("er") && !fresh8(id));
+        let same = local.length === db.size; if (same) for (const id of local) if (!db.has(id)) { same = false; break; }
+        if (!same){
+          const keep = [...items.entries()].filter(([id]) => id.startsWith("tmp") || id.startsWith("er") || fresh8(id));
+          items = new Map([...db.entries(), ...keep]);
+          if (selectedId != null && !items.has(String(selectedId))) selectedId = null;
+          pageCache.set(key, list);
+          redraw(); layout();
+        }
+      } catch (_) {} finally { resyncBusy = false; }
+    }
+    let destroyed = false;
+    if (o.sb && o.channelName){
+      connect();
+      guardT = setInterval(ensureChannel, 15000);
+      syncT = setInterval(() => { if (!document.hidden) resync(false); }, 6000);
+      const onVis = () => { if (document.hidden) return; ensureChannel(); resync(true); };
+      document.addEventListener("visibilitychange", onVis); window.addEventListener("online", onVis); window.addEventListener("focus", onVis);
+      hidHandlers = [["visibilitychange", onVis, document], ["online", onVis, window], ["focus", onVis, window]];
     }
     renderWho();
 
@@ -2190,6 +2249,8 @@ window.Board = (() => {
       if (editor){ const ed = editor; editor = null; ed.closed = true; try { ed.el.remove(); } catch (_) {} }
       peers.forEach(p => { if (p.el){ try { p.el.remove(); } catch (_) {} } });
       drafts.clear();
+      destroyed = true; clearInterval(guardT); clearInterval(syncT);
+      hidHandlers.forEach(([ev, fn, el]) => { try { el.removeEventListener(ev, fn); } catch (_) {} });
       if (channel && o.sb && typeof o.sb.removeChannel === "function"){ try { o.sb.removeChannel(channel); } catch (_) {} }
       channel = null;
       try { menu.remove(); } catch (_) {}

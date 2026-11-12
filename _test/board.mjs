@@ -950,6 +950,14 @@ test("H6", "Вид ведущего: getRelView у учителя → setView у
   if (!sf.fit) throw new Error("setView fit:true не включил режим «по ширине»: " + JSON.stringify(sf));
 });
 
+test("H7", "Сверка с базой: запись, попавшая в базу без живого события, появляется у второй стороны сама (≤ 9 c)", async ({ page }) => {
+  await fresh(page);
+  const have = a => itemsOfType(a, "t").some(r => r.item.s === "H7 только в базе");
+  const cur = await page.eval(`${B}.currentPage("student")`);
+  await page.eval(`(() => { const rows = ${B}.dump(${JSON.stringify(cur)}); rows.push({id: 9001, item: {t:"t", x:220, y:360, s:"H7 только в базе", c:"#111", w:300}}); ${B}.seed(${JSON.stringify(cur)}, rows); return true; })()`);
+  await waitSideItems(page, "student", have, "запись из базы без события появилась сама", 9500);
+});
+
 test("H4", "Вставка в точку: paste текста/картинки и API insertText/insertImage/insertPage — объект в точке клика и виден второй стороне", async ({ page, fixtures }) => {
   await fresh(page);
   /* клик по холсту запоминает lastPoint */
