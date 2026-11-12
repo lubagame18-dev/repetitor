@@ -63,7 +63,7 @@ window.Board = (() => {
   const TEXT_MAX_W = 460;               // авто-ширина/максимум логических px
   const TEXT_MAX_H = 300;               // авто-высота инлайн-редактора
   const ZOOM_MIN = 0.25, ZOOM_MAX = 4;   // ручной зум: CSS px на логический px
-  const ER = 7;                         // радиус точечного ластика (логические px)
+  const ER_SIZES = {s:4, m:7, l:16};   // размеры ластика: маленький / средний / большой (логические px)
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const rid = () => Math.random().toString(36).slice(2, 10);
   const toast = t => { try { if (window.U && typeof U.toast === "function") U.toast(t); } catch (_) {} };
@@ -82,6 +82,7 @@ window.Board = (() => {
     let items = new Map();             // id -> item
     const isTemp = id => /^(tmp|er|rtmp:|rtxt:)/.test(String(id));
     const textHeld = new Map();        // удалённая печать: ключ → исходный объект, пока его правят
+    let ER = ER_SIZES.m; try { const sv = localStorage.getItem("bd-er"); if (sv && ER_SIZES[sv]) ER = ER_SIZES[sv]; } catch (_) {}
     const stamp = new Map();           // id -> когда менялся (для сверки с базой: свежие изменения не трогаем)
     const st8 = (...ids) => { const t = Date.now(); ids.flat().forEach(i => { if (i != null) stamp.set(String(i), t); }); };
     const fresh8 = id => Date.now() - (stamp.get(String(id)) || 0) < 8000;
@@ -170,29 +171,36 @@ window.Board = (() => {
         <div class="bd-who small muted" aria-live="polite"></div>
       </div>
       <div class="bd-body"><div class="bd-side"><div class="bd-tools" role="group" aria-label="Инструменты">
-          <button data-tool="pen" title="Ручка">✎</button>
-          <button data-tool="hl" title="Маркер">▮</button>
-          <button data-tool="text" title="Текст">T</button>
-          <button data-tool="move" title="Переместить">✥</button>
-          <button data-tool="erase" title="Ластик: стирает только то, по чему провести" aria-label="Ластик"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg></button>
-          <button data-tool="hand" title="Листать холст рукой">✋</button>
-          <button data-zoom="out" title="Уменьшить (зум)" aria-label="Уменьшить">−</button>
-          <button data-zoom="reset" title="Масштаб 100%" data-zoom-label aria-label="Масштаб 100%">100%</button>
-          <button data-zoom="in" title="Увеличить (зум)" aria-label="Увеличить">+</button>
-          <button data-zoom="fit" title="По ширине" aria-label="По ширине">⇔</button>
-          <button data-act="extend" title="Расширить лист">↕</button>
-          <button data-act="insert-text" title="Вставить текст или заметку в последнюю точку">📝</button>
-          <button data-act="insert-image" title="Вставить картинку по ссылке">🖼</button>
+          <button data-tool="pen" data-l="Ручка" title="Ручка">✎</button>
+          <button data-tool="hl" data-l="Маркер" title="Маркер (полупрозрачный)">🖍</button>
+          <button data-tool="text" data-l="Текст" title="Написать текст: нажмите на лист">T</button>
+          <button data-tool="move" data-l="Двигать" title="Двигать надпись или картинку">✥</button>
+          <button data-tool="erase" data-l="Ластик" title="Ластик: стирает только то, по чему провести" aria-label="Ластик"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg></button>
+          <div class="bd-esz" hidden role="group" aria-label="Размер ластика">
+            <button data-esz="s" title="Ластик маленький" aria-label="Маленький"><i style="width:6px;height:6px"></i></button>
+            <button data-esz="m" title="Ластик средний" aria-label="Средний"><i style="width:11px;height:11px"></i></button>
+            <button data-esz="l" title="Ластик большой" aria-label="Большой"><i style="width:18px;height:18px"></i></button>
+          </div>
+          <button data-tool="hand" data-l="Рука" title="Листать холст рукой (или двумя пальцами)">✋</button>
+          <span class="bd-sep"></span>
           ${COLORS.map(c => `<button class="bd-color" data-color="${c}" style="--bc:${c}" aria-label="Цвет"></button>`).join("")}
-          <button data-tool="touch" title="Работать с сайтом или презентацией (нажимать внутри)">👆</button>
-          <button data-act="attach" title="Прикрепить файл (фото, PDF-презентация, документ)">📎</button>
-          <button data-act="embed" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…">🌐</button>
-          <button data-act="camera" title="Фото с камеры">📷</button>
-          <button data-act="stick" title="Прикрепить задание урока на холст">📌</button>
-          <button data-act="undo" title="Отменить последнее действие (Ctrl+Z)">↶</button>
-          <button data-act="redo" title="Вернуть отменённое (Ctrl+Shift+Z)">↷</button>
-          <button data-act="snap" title="Снимок листа: картинка с заданиями и всеми пометками">📸</button>
-          ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">🧹</button>` : ""}
+          <span class="bd-sep"></span>
+          <button data-zoom="in" title="Увеличить" aria-label="Увеличить">+</button>
+          <button data-zoom="reset" title="Масштаб 100%" data-zoom-label aria-label="Масштаб 100%">100%</button>
+          <button data-zoom="out" title="Уменьшить" aria-label="Уменьшить">−</button>
+          <button data-zoom="fit" data-l="По ширине" title="По ширине экрана" aria-label="По ширине">⇔</button>
+          <span class="bd-sep"></span>
+          <button data-act="undo" data-l="Отмена" title="Отменить (Ctrl+Z)">↶</button>
+          <button data-act="redo" data-l="Вернуть" title="Вернуть (Ctrl+Shift+Z)">↷</button>
+          <button data-tool="touch" data-l="Нажимать" title="Нажимать и вводить внутри листа, сайта или презентации">👆</button>
+          <button data-act="attach" data-l="Файл" title="Прикрепить фото, PDF или документ">📎</button>
+          <span class="bd-sep"></span>
+          <button data-act="embed" data-l="Сайт" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…" ${o.role === "teacher" ? "" : "hidden"}>🌐</button>
+          <button data-act="camera" data-l="Камера" title="Фото с камеры" ${o.role === "teacher" ? "" : "hidden"}>📷</button>
+          <button data-act="stick" data-l="Задание" title="Прикрепить задание урока на холст" ${o.role === "teacher" ? "" : "hidden"}>📌</button>
+          <button data-act="snap" data-l="Снимок" title="Снимок листа со всеми пометками" ${o.role === "teacher" ? "" : "hidden"}>📸</button>
+          ${o.role === "teacher" ? `<button data-act="clear" data-l="Очистить" title="Очистить лист">🧹</button>` : ""}
+          <button data-act="extend" hidden>↕</button><button data-act="insert-text" hidden>📝</button><button data-act="insert-image" hidden>🖼</button>
         </div></div>
       <div class="bd-stage"><div class="bd-wrap">
         <div class="bd-bg"></div>
@@ -1023,6 +1031,11 @@ window.Board = (() => {
       cv.style.pointerEvents = t === "touch" ? "none" : "";
       bg.style.pointerEvents = t === "touch" ? "auto" : "";
       if (eraseCur) eraseCur.hidden = t !== "erase";
+      const esz = root.querySelector(".bd-esz"); if (esz){ esz.hidden = t !== "erase"; syncEraseSize(); }
+    }
+    function syncEraseSize(){
+      const cur = Object.keys(ER_SIZES).find(k => ER_SIZES[k] === ER) || "m";
+      root.querySelectorAll("[data-esz]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.esz === cur)));
     }
     function setColor(c){ color = c; root.querySelectorAll("[data-color]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.color === c))); }
 
@@ -2025,6 +2038,7 @@ window.Board = (() => {
     root.addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
       if (b.dataset.zoom){ zoomAction(b.dataset.zoom); return; }
+      if (b.dataset.esz){ ER = ER_SIZES[b.dataset.esz] || ER; try { localStorage.setItem("bd-er", b.dataset.esz); } catch (_) {} syncEraseSize(); placeEraseCur(); return; }
       if (b.dataset.act === "extend"){ extendHeight(800); return; }
       if (b.dataset.act === "insert-text"){ openEditor({x:lastPoint.x, y:lastPoint.y}); return; }
       if (b.dataset.act === "insert-image"){

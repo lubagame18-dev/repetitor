@@ -816,3 +816,16 @@ body.play-open{overflow:hidden}
 .lz button{min-width:44px;min-height:40px;border:0;border-radius:10px;background:transparent;color:inherit;font:700 14px/1 Manrope,system-ui,sans-serif;cursor:pointer}
 .lz button:active{background:rgba(123,76,245,.16)}
 .lz .lz-v{font-weight:600;font-size:12px;opacity:.8}
+
+/* панель инструментов: подписи под значками, группы, размер ластика */
+.bd-side{width:60px}
+.bd-side button[data-l]{display:flex;flex-direction:column;align-items:center;gap:1px;height:auto;min-height:44px;justify-content:center}
+.bd-side button[data-l]::after{content:attr(data-l);font-size:9px;font-weight:700;line-height:1;opacity:.75;letter-spacing:.01em}
+.bd-side button{width:46px;min-width:46px}
+.bd-side button[hidden]{display:none}
+.bd-sep{display:block;width:30px;height:1px;background:var(--line);margin:3px auto;flex:none}
+.bd-esz{display:flex;gap:3px;justify-content:center;padding:2px 0}
+.bd-esz[hidden]{display:none}
+.bd-side .bd-esz button{width:28px;min-width:28px;height:28px;min-height:28px;padding:0;display:flex;align-items:center;justify-content:center}
+.bd-esz i{display:block;border-radius:50%;background:currentColor}
+.bd-side .bd-esz button[aria-pressed="true"]{background:var(--ink);color:var(--base)}

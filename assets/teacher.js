@@ -1363,25 +1363,28 @@ function viewRoom(){
   if (tab && tab !== "tools") r.shown = tab;
   else if (!r.shown || !tabs.some(t => t[0] === r.shown)) r.shown = (tabs.find(t => t[0] !== "tools") || [])[0] || null;
   const where = T.online[s.id];
+  /* по умолчанию – один лист посередине (там работа ученика); ключи, ответы и подсказки открываются кнопкой справа */
+  const sideOn = !!(tabs.length && (r.side || r.tab === "tools"));
   return `<div class="roombar glass">
       <div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок: ${esc(s.name)}${pair ? " и " + esc(pair.name) : ""}</b><span data-online="${s.id}"></span></div>
       <div class="row" style="gap:8px">
         ${roomPicker(s, c, r)}
         ${window.Call && !Call.active() ? `<button class="btn sm" data-act="call-start">🎥 Видеозвонок</button>` : ""}
         ${r.url ? `<a class="btn ghost sm" href="${esc(r.url)}" target="_blank" rel="noopener" title="Если видеозвонок не соединяется">Звонок по ссылке</a>` : ""}
+        ${tabs.length ? `<button class="btn ghost sm ${sideOn && r.tab !== "tools" ? "accent" : ""}" data-act="room-side" aria-pressed="${sideOn && r.tab !== "tools"}" title="Ключи, ответы, ход теста и подсказки учителя">🔑 Ключи и подсказки</button>` : ""}
         <button class="btn ghost sm ${r.tab === "tools" ? "accent" : ""}" data-act="room-tools" aria-pressed="${r.tab === "tools"}" title="Генерация материала, заметки, картинки, поиск ресурсов">🧰 Инструменты</button>
         <button class="btn ghost sm" data-act="room-invite" title="Ученик сразу окажется на уроке, чем бы он ни занимался">Позвать</button>
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
       ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : ""}</div>
   ${r.take ? `<div class="card" style="margin-bottom:14px"><div class="kicker">Сегодня – урок из другого класса или предмета</div><p class="small muted">Урок встанет на сегодняшнее занятие, папки по плану сдвинутся на следующие.</p>${takePick(s, "room")}</div>` : ""}
-  <div class="room">
+  <div class="room ${sideOn ? "" : "room-one"}">
     <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head row between" style="gap:8px;flex-wrap:wrap"><h1 style="font-size:1.25rem">${esc(l.title)}</h1>
       <span class="row" style="gap:8px;align-items:center"><span class="small muted" data-where="${s.id}">${where ? `Ученик сейчас: ${esc(where.where || "")}` : "Ученик пока не на уроке"}</span>
       <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок, лист и масштаб – прямо туда, где вы сейчас">➜ Перенести ученика сюда</button>
       <button class="btn sm ${r.follow ? "accent" : "ghost"}" data-act="room-follow" aria-pressed="${!!r.follow}" title="Ученик всё время видит то же, что вы: урок, лист, масштаб и место. Его действия этот режим не сбрасывают – выключаете только вы">${r.follow ? "👁 Веду ученика · выключить" : "👁 Вести ученика"}</button></span></div>
       <p class="small muted room-hint">Урок прямо на доске: листы вверху – теория, задания, тест, письмо. 👆 – работать с листом (нажимать, вписывать), ✎ – писать поверх. Ученик видит тот же лист.</p>
       <div class="pane"><div class="board glass" id="board"></div></div></article>
-    ${tabs.length ? `<article class="window glass room-side" style="--c:${blockOf(c, l).color}">
+    ${sideOn ? `<article class="window glass room-side" style="--c:${blockOf(c, l).color}">
       <div class="tabs" role="group" aria-label="Разделы урока">${tabs.map(([k, n]) => `<button data-act="room-tab" data-tab="${k}" aria-pressed="${tab === k}">${n}</button>`).join("")}</div>
       <div class="pane">${tab === "tools" ? "" : `<p class="small muted" style="margin-bottom:8px">Заметки учителя: ключи, ответы, ход теста и подсказки. На доске слева – лист ученика (чтобы пометки совпадали).</p>`}<div class="room-pane">${roomPane(s, c, l, tab)}</div></div></article>` : ""}
   </div>`;
@@ -2443,7 +2446,8 @@ document.addEventListener("click", async e => {
     if (T.room?.sid === s.id && !t.dataset.rl){ T.sel = s.id; T.view = "room"; render(); scrollTo(0, 0); return; }
     const rm = T.me?.room; if (!T.room && rm?.sid === s.id && Date.now() - (rm.at || 0) < 5 * 3600e3 && !t.dataset.rl){ joinRoom(s, rm); return; }
     startRoom(s, t.dataset.rl); return; }
-  if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); roomPersist(); followSend(); return; }
+  if (a === "room-side"){ const r = T.room; if (!r) return; if (r.tab === "tools"){ r.tab = r.shown || null; r.side = true; } else r.side = !r.side; render(); return; }
+  if (a === "room-tab"){ T.room.tab = t.dataset.tab; T.room.side = true; render(); roomPersist(); followSend(); return; }
   if (a === "room-back"){ if (T.room){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); return; }
     const rm = T.me?.room, st = rm && T.students.find(x => x.id === rm.sid); if (!st){ toast("Урок уже завершён"); T.me.room = null; render(); return; }
     joinRoom(st, rm); return; }
