@@ -435,6 +435,24 @@ test("b1", "Смена урока в комнате → у ученика нов
 });
 
 /* ---------- F1: «Вести ученика» – включает только учитель, действия ученика режим не снимают ---------- */
+test("R0", "Ученик: все 54 урока ОГЭ и все их вкладки отрисовываются без ошибок и не пустые", async ({ student }) => {
+  const res = await student.eval(`(async () => {
+    const S = window.__app.S; const bad = [];
+    await window.BuiltinLoader.ensure("oge-ru");
+    const keepP = S.profile.course, keepM = S.mats; S.profile.course = "oge-ru"; S.mats = [];
+    const c = U.courseFor(S.profile, []);
+    const keep = S.course; S.course = c;
+    for (const l of c.lessons){
+      let tabs = []; try { tabs = __app.lessonTabs(l).filter(t => t[0] !== "board"); } catch (e) { bad.push(l.id + " tabs: " + e.message); continue; }
+      if (!tabs.length) bad.push(l.id + ": нет вкладок");
+      for (const [k] of tabs){ try { const h = __app.lessonPane(l, k); if (!h || h.length < 40) bad.push(l.id + "/" + k + ": пусто"); } catch (e) { bad.push(l.id + "/" + k + ": " + e.message); } }
+    }
+    S.course = keep; S.profile.course = keepP; S.mats = keepM; return {n: c.lessons.length, bad: bad.slice(0, 12), nbad: bad.length};
+  })()`);
+  console.log("       [R0] " + JSON.stringify(res));
+  if (res.nbad) throw new Error("R0: " + JSON.stringify(res.bad));
+});
+
 test("F1", "Учитель включает «Вести ученика»: у ученика S.follow.on; уход ученика в раздел режим не сбрасывает; снимает только учитель", async ({ teacher, student }) => {
   await student.waitFor(`(() => { const S = window.__app.S; return S && S.view === "room" && S.room ? 1 : 0; })()`, { timeout: 8000, label: "F1: ученик в комнате" });
   await teacher.eval(`(() => { const b = document.querySelector('[data-act="room-follow"]'); if (!b) return false; b.click(); return true; })()`);

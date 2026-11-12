@@ -1490,6 +1490,7 @@ function joinBox(self){
   document.body.appendChild(box); box.querySelector("[data-how]")?.focus();
 }
 function applyJoin(how, auto){
+  if (how === "call" && auto) how = "both";   // учитель зовёт на урок – доска открывается всегда, звонок остаётся
   closeJoin(); const l = roomLesson(); S.joinHow = how; S.away = false;
   try { sessionStorage.setItem(JK, JSON.stringify({teacher: S.profile.teacher, how, t: Date.now()})); } catch(_) {}
   if (S.room?.self) liveAct2({room: true, lesson: S.room.lesson, title: l.title}, `начинает урок «${l.title}» (${JOIN[how].toLowerCase()})`);
@@ -1900,5 +1901,5 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
   render();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
-window.__app = {S, render, openQuiz, openQuizzes, loadQuizzes};   // для отладки и автотестов
+window.__app = {S, render, openQuiz, openQuizzes, loadQuizzes, lessonTabs, lessonPane};   // для отладки и автотестов
 })();
