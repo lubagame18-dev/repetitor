@@ -1200,7 +1200,7 @@ function roomSend(type){
   const r = T.room; if (!r) return;
   const s = T.students.find(x => x.id === r.sid), c = U.courseFor(s, T.mats), l = r.lesson === "free" ? FREE : c?.lessons.find(x => x.id === r.lesson);
   r.to.forEach(id => cmd(id, type, {lesson: r.lesson, url: r.url, title: l?.title || ""}));
-  roomTrack();
+  roomTrack(); followSend(true);
 }
 /* идущий урок хранится на сервере: после случайного выхода или с другого устройства к нему можно вернуться */
 let roomSaveT = 0;
@@ -1377,7 +1377,8 @@ function viewRoom(){
   <div class="room">
     <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head row between" style="gap:8px;flex-wrap:wrap"><h1 style="font-size:1.25rem">${esc(l.title)}</h1>
       <span class="row" style="gap:8px;align-items:center"><span class="small muted" data-where="${s.id}">${where ? `Ученик сейчас: ${esc(where.where || "")}` : "Ученик пока не на уроке"}</span>
-      <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок и этот лист">➜ Перенести ученика сюда</button></span></div>
+      <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок, лист и масштаб – прямо туда, где вы сейчас">➜ Перенести ученика сюда</button>
+      <button class="btn sm ${r.follow ? "accent" : "ghost"}" data-act="room-follow" aria-pressed="${!!r.follow}" title="Ученик всё время видит то же, что вы: урок, лист, масштаб и место. Его действия этот режим не сбрасывают – выключаете только вы">${r.follow ? "👁 Веду ученика · выключить" : "👁 Вести ученика"}</button></span></div>
       <p class="small muted room-hint">Урок прямо на доске: листы вверху – теория, задания, тест, письмо. 👆 – работать с листом (нажимать, вписывать), ✎ – писать поверх. Ученик видит тот же лист.</p>
       <div class="pane"><div class="board glass" id="board"></div></div></article>
     ${tabs.length ? `<article class="window glass room-side" style="--c:${blockOf(c, l).color}">
@@ -1423,7 +1424,7 @@ function render(){
     const {pages, live} = roomBoardPages(s, c, l);
     const menu = () => !s || l === FREE ? [] : [{label: "✨ Добавить тему или объяснение", run: () => ceModal(s, l, "theory")}, {label: "🧩 Сгенерировать задания", run: () => ceModal(s, l, "practice")},
       {label: "🎯 Отработать слабую зону", run: () => ceModal(s, l, "practice", weakReq(s, l))}];
-    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages, live, page: T.view === "room" ? T.room?.shown || pages[0]?.key : (T.boardPage || undefined), onPage: p => { if (T.view === "room" && T.room){ T.room.tab = T.room.shown = p; roomPersist(); } else T.boardPage = p; }, menu});
+    T.board = Board.keep($("#board"), `t:${owner}:${l.id}`, {api: Board.api("teacher", sb, {studentId: owner, lesson: l.id}), sb, channelName: `board-${owner}-${l.id}`, role: "teacher", name: T.me?.name || CFG.TEACHER_NAME || "Учитель", pages, live, page: T.view === "room" ? T.room?.shown || pages[0]?.key : (T.boardPage || undefined), onPage: p => { if (T.view === "room" && T.room){ T.room.tab = T.room.shown = p; roomPersist(); followSend(); } else T.boardPage = p; }, onView: v => { T.followV = v; if (T.view === "room") followSend(); }, menu});
   }
   if (!$("#board")){ Board.release(); T.board = null; }
   if (T.session && !T.loading && T.routeReady) try { sessionStorage.setItem("t-route", JSON.stringify({view: T.view, sel: T.sel, open: T.open, sub: T.sub, courseId: T.courseId, matSubject: T.matSubject, boardLesson: T.boardLesson, workLesson: T.workLesson, room: T.room ? {sid: T.room.sid, lesson: T.room.lesson} : null, y: scrollY})); } catch(_) {}
@@ -1932,6 +1933,39 @@ async function ensureCourses(keys){
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
 
+/* ---------- «вести ученика»: ученик всё время на том же уроке, листе, масштабе и месте; снимает режим только учитель ---------- */
+let followT = 0, followDbT = 0;
+function followState(){
+  const r = T.room; if (!r) return null;
+  const page = Board.keptPage() || r.shown || r.tab || null;
+  return {on: true, lesson: r.lesson, tab: page, page, v: T.followV || null, rev: Date.now()};
+}
+function followSave(st){
+  const r = T.room; if (!r || !sb || !T.session) return;
+  clearTimeout(followDbT);
+  followDbT = setTimeout(async () => {
+    for (const id of r.to){ try { await sb.from("student_follow").upsert({student_id: id, teacher_id: (T.students.find(x => x.id === id) || {}).teacher_id || T.session.user.id, follow: st}, {onConflict: "student_id"}); } catch (_) {} }
+  }, 500);
+}
+function followSend(now){
+  const r = T.room; if (!r?.follow) return;
+  clearTimeout(followT);
+  followT = setTimeout(() => {
+    if (!T.room?.follow) return;
+    const st = followState(); if (!st) return;
+    T.followLast = st;
+    T.room.to.forEach(id => cmd(id, "follow", {f: st}));
+    followSave(st);
+  }, now ? 0 : 140);
+}
+function followResend(){ if (T.room?.follow) followSend(true); }
+function followOff(){
+  const r = T.room; if (!r) return;
+  const st = {on: false, rev: Date.now()};
+  r.follow = false; clearTimeout(followT);
+  r.to.forEach(id => cmd(id, "follow", {f: st}));
+  followSave(st);
+}
 /* ---------- живая связь: кто из учеников сейчас на платформе и где; мгновенные обновления ---------- */
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || ["board","room"].includes(T.view);
 /* канал «онлайн и команды»: свой, а у разработчика – ещё каналы других его кабинетов (ученики могут быть закреплены за любым) */
@@ -1978,7 +2012,50 @@ function liveChan(id){
     }
     T.feed.unshift({...m, at: Date.now()}); T.feed = T.feed.slice(0, 30);
     toast(`${m.name.split(" ")[0]}: ${m.text}`); refreshSoon();
-  }).subscribe(st => { if (st === "SUBSCRIBED"){ T.liveOk = true; roomTrack(); } });
+  }).subscribe(st => {
+    if (T.live.chans.get(id) !== ch) return;
+    if (st === "SUBSCRIBED"){ T.liveOk = true; T.liveFails = 0; roomTrack(); followResend(); }
+    else if (st === "CHANNEL_ERROR" || st === "TIMED_OUT" || st === "CLOSED"){ T.liveOk = [...T.live.chans.values()].some(c => c.state === "joined"); liveRetryT(id, ch); }
+  });
+  ch.__born = Date.now();
+  liveGuardT();
+}
+/* связь не должна «умирать» посреди урока: переподключаем канал сами */
+function liveRebuild(id){
+  const old = T.live?.chans.get(id); if (old){ T.live.chans.delete(id); try { sb.removeChannel(old); } catch (_) {} }
+  if (sb && T.session) liveChan(id);
+}
+function liveRetryT(id, ch){
+  clearTimeout(ch.__rt); const d = Math.min(15000, 1200 * 2 ** Math.min((T.liveFails = (T.liveFails || 0) + 1) - 1, 4));
+  ch.__rt = setTimeout(() => { if (T.live?.chans.get(id) === ch) liveRebuild(id); }, d);
+}
+function liveEnsureT(){
+  if (!sb || !T.session || !T.live || document.hidden) return;
+  T.live.chans.forEach((ch, id) => {
+    const stuck = ch.state === "joining" && Date.now() - (ch.__born || 0) > 15000;
+    if (ch.state !== "joined" && (ch.state !== "joining" || stuck)) liveRebuild(id);
+  });
+  if ([...T.live.chans.values()].some(c => c.state === "joined")){ T.liveOk = true; roomTrack(); }
+}
+let liveGuardTm = 0, seenTm = 0;
+function liveGuardT(){
+  if (liveGuardTm) return;
+  liveGuardTm = setInterval(liveEnsureT, 15000);
+  ["visibilitychange", "online", "focus", "pageshow"].forEach(ev => (ev === "visibilitychange" ? document : window).addEventListener(ev, () => {
+    if (ev === "visibilitychange" && document.hidden) return;
+    liveEnsureT(); pollSeen();
+  }));
+  seenTm = setInterval(pollSeen, 10000); pollSeen();
+}
+/* запасной признак «в сети»: ученик подаёт сигнал в базу, даже если живой канал оборвался */
+async function pollSeen(){
+  if (!sb || !T.session || document.hidden) return;
+  try {
+    const {data, error} = await sb.from("student_follow").select("student_id,seen_at,seen_where");
+    if (error) return;
+    T.seen = {}; (data || []).forEach(x => { if (x.seen_at && Date.now() - Date.parse(x.seen_at) < 50000) T.seen[x.student_id] = x.seen_where || ""; });
+    onlineNow(); paintOnline();
+  } catch (_) {}
 }
 /* кто онлайн: ученик может войти под любым своим предметом – онлайн считаются все его записи (один человек) */
 function onlineNow(){
@@ -1987,6 +2064,8 @@ function onlineNow(){
   Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role !== "student") return;
     T.online[p.id] = p; const me = T.students.find(x => x.id === p.id);
     if (me) T.students.filter(x => person(x) === person(me)).forEach(x => { if (!T.online[x.id]) T.online[x.id] = p; }); });
+  /* запасной признак: ученик недавно подал сигнал через базу (живой канал мог оборваться) */
+  Object.entries(T.seen || {}).forEach(([sid, wh]) => { if (!T.online[sid]) T.online[sid] = {role: "student", id: sid, where: wh, viaDb: true}; });
   /* «Показать ученику», нажатое пока ученик был не в сети: досылаем, как только он зашёл */
   const now = new Set(Object.keys(T.online).filter(k => !k.startsWith("p:")));
   if (T.lastShow && Date.now() - T.lastShow.at < 15 * 60e3){
@@ -2364,14 +2443,20 @@ document.addEventListener("click", async e => {
     if (T.room?.sid === s.id && !t.dataset.rl){ T.sel = s.id; T.view = "room"; render(); scrollTo(0, 0); return; }
     const rm = T.me?.room; if (!T.room && rm?.sid === s.id && Date.now() - (rm.at || 0) < 5 * 3600e3 && !t.dataset.rl){ joinRoom(s, rm); return; }
     startRoom(s, t.dataset.rl); return; }
-  if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); roomPersist(); return; }
+  if (a === "room-tab"){ T.room.tab = t.dataset.tab; render(); roomPersist(); followSend(); return; }
   if (a === "room-back"){ if (T.room){ T.sel = T.room.sid; T.view = "room"; render(); scrollTo(0, 0); return; }
     const rm = T.me?.room, st = rm && T.students.find(x => x.id === rm.sid); if (!st){ toast("Урок уже завершён"); T.me.room = null; render(); return; }
     joinRoom(st, rm); return; }
   if (a === "room-forget"){ if (T.me) T.me.room = null; if (!T.room) sb.rpc("teacher_set_room", {p_room: null}).then(() => {}, () => {}); render(); return; }
   if (a === "room-who"){ T.room.who = t.dataset.id; T.room.tab = "work"; render(); return; }
   if (a === "room-undo"){ T.room.lesson = T.room.planned; T.room.since = Date.now(); T.room.tab = null; roomSend("lesson"); render(); roomReplan(); return; }
-  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = Board.keptPage() || r.shown || r.tab || null; r.shown = tab; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab}));
+  if (a === "room-follow"){
+    const r = T.room; if (!r) return;
+    if (r.follow){ followOff(); toast("Ученик снова свободен: больше его не веду"); }
+    else { r.follow = true; followSend(true); toast(T.online[r.sid] ? "Веду ученика: он сразу видит то же, что вы" : "Ученик не в сети – подхватит, как только зайдёт"); }
+    render(); return;
+  }
+  if (a === "room-move"){ const r = T.room, l = r.lesson, tab = Board.keptPage() || r.shown || r.tab || null; r.shown = tab; r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab, page: tab, v: T.followV || null}));
     roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён сюда" : "Ученик не в сети – откроется здесь, когда зайдёт"); return; }
   if (a === "call-start"){ const s = T.students.find(x => x.id === T.room?.sid); if (s) startCallT(s); render(); return; }
   if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }
@@ -2407,7 +2492,7 @@ document.addEventListener("click", async e => {
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
     await saveCall(s, u, true);
     roomSend("lesson"); render(); return; }
-  if (a === "room-end"){ if (T.me) T.me.room = null; await roomCover(true); if (window.Call) Call.leave(true); const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
+  if (a === "room-end"){ if (T.room?.follow) followOff(); if (T.me) T.me.room = null; await roomCover(true); if (window.Call) Call.leave(true); const r = T.room, sid = r?.sid; T.room = null; roomTrack(); r?.to.forEach(id => cmd(id, "endlesson", {lesson: r.lesson})); T.view = "student"; T.sel = sid; render(); toast("Урок завершён"); return; }
   if (a === "open-drawer"){ T.drawer = true; render(); }
   if (a === "close-drawer"){ T.drawer = false; render(); }
   if (a === "reload") loadAll();

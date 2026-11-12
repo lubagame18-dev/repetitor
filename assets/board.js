@@ -132,6 +132,7 @@ window.Board = (() => {
     /* вид: масштаб/скролл/последняя точка; инлайн-текст, ластик-курсор, панорама рукой */
     let fitMode = true;                // «По ширине»: scale = stage.clientWidth / W
     let zoom = 1;                      // абсолютный масштаб, CSS px на логический px
+    let lastViewScale = 0;
     let extraHeight = 0;               // кнопка «Расширить лист»
     let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
     let pan = null;                    // перетаскивание холста инструментом «рука»
@@ -309,6 +310,7 @@ window.Board = (() => {
       if (fitMode) zoom = fitScale();
       else zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
       scale = zoom;
+      if (scale !== lastViewScale){ lastViewScale = scale; try { viewChanged(); } catch (_) {} }
       bg.style.width = W + "px"; bg.style.transform = `scale(${scale})`;
       if (anchorsDirty) markAnchors();
       const bgH = bg.scrollHeight;
@@ -358,6 +360,24 @@ window.Board = (() => {
     function zoomBy(d){ return setZoom(scale + (+d || 0)); }
     function fitWidth(){ fitMode = true; zoom = 1; layout(); stage.scrollLeft = 0; stage.scrollTop = 0; return scale; }
     function extendHeight(px){ extraHeight += Math.max(100, Math.round(+px || 800)); layout(); return height; }
+    /* вид относительно «по ширине»: ведущий и ведомый экраны разного размера видят одно и то же место */
+    function getRelView(){ return {fit: fitMode, z: +(scale / fitScale()).toFixed(3), x: Math.round(stage.scrollLeft / scale), y: Math.round(stage.scrollTop / scale)}; }
+    function setRelView(v){
+      if (!v || typeof v !== "object") return null;
+      applyingView = true;
+      try {
+        if (v.fit){ fitMode = true; layout(); }
+        else { fitMode = false; zoom = clampZoom((+v.z || 1) * fitScale()); layout(); }
+        stage.scrollLeft = Math.max(0, Math.round((+v.x || 0) * scale)); stage.scrollTop = Math.max(0, Math.round((+v.y || 0) * scale));
+      } finally { setTimeout(() => { applyingView = false; }, 150); }
+      return scale;
+    }
+    let applyingView = false, viewT = 0, lastViewSig = "";
+    function viewChanged(){
+      if (applyingView || typeof o.onView !== "function") return;
+      clearTimeout(viewT);
+      viewT = setTimeout(() => { const v = getRelView(), sig = JSON.stringify(v); if (sig === lastViewSig) return; lastViewSig = sig; try { o.onView(v); } catch (_) {} }, 160);
+    }
     function getView(){ return {zoom:scale, scale, scrollX:stage.scrollLeft, scrollY:stage.scrollTop, x:Math.round(stage.scrollLeft / scale), y:Math.round(stage.scrollTop / scale)}; }
     function maybeGrowHeight(p){
       if (!p || p[1] < height - 120) return;
@@ -1370,7 +1390,7 @@ window.Board = (() => {
     }
 
     /* «бесконечный» холст: у нижнего края лист сам удлиняется */
-    stage.addEventListener("scroll", () => { if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); }, {passive: true});
+    stage.addEventListener("scroll", () => { if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); viewChanged(); }, {passive: true});
     /* ---------- жест двумя пальцами: щипок – масштаб, сдвиг – перемещение холста (любым инструментом) ---------- */
     const tps = new Map(); let gz = null, gRaf = 0;
     const tdist = () => { const a = [...tps.values()]; return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1; };
@@ -2202,6 +2222,8 @@ window.Board = (() => {
       attach: files => handleFiles(files),
       addPage: (label, html, broadcast) => addPageP(label, html, broadcast),
       stickPage: key => stickPage(key),
+      setView: v => setRelView(v),
+      getRelView: () => getRelView(),
       undo: () => undo(),
       redo: () => redo(),
       insertPage: (label, html, broadcast, opts) => insertPageAt(label, html, broadcast, opts),

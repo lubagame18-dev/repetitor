@@ -934,6 +934,22 @@ test("H5", "Отмена/возврат: случайно удалённое о�
   await waitSideItems(page, "teacher", has, "второй ↶ снова вернул текст");
 });
 
+test("H6", "Вид ведущего: getRelView у учителя → setView у ученика даёт тот же относительный масштаб и место (экраны разной ширины)", async ({ page }) => {
+  await fresh(page);
+  await bcall(page, "teacher", "setZoom", 1.6);
+  await bcall(page, "teacher", "extendHeight", 2000);
+  const tv = await bcall(page, "teacher", "getRelView");
+  if (!tv || tv.fit || !(tv.z > 1.2)) throw new Error("getRelView учителя: " + JSON.stringify(tv));
+  await bcall(page, "student", "extendHeight", 2000);
+  await bcall(page, "student", "setView", {fit: false, z: tv.z, x: 0, y: 120});
+  const sv = await bcall(page, "student", "getRelView");
+  if (Math.abs(sv.z - tv.z) > 0.05) throw new Error("относительный масштаб ученика не совпал: " + JSON.stringify({tv, sv}));
+  if (Math.abs(sv.y - 120) > 8) throw new Error("место (y) ученика не совпало: " + JSON.stringify(sv));
+  await bcall(page, "student", "setView", {fit: true, y: 0});
+  const sf = await bcall(page, "student", "getRelView");
+  if (!sf.fit) throw new Error("setView fit:true не включил режим «по ширине»: " + JSON.stringify(sf));
+});
+
 test("H4", "Вставка в точку: paste текста/картинки и API insertText/insertImage/insertPage — объект в точке клика и виден второй стороне", async ({ page, fixtures }) => {
   await fresh(page);
   /* клик по холсту запоминает lastPoint */

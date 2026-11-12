@@ -811,12 +811,39 @@ drop policy if exists "teacher_delete_materials" on storage.objects;
 create policy "teacher_delete_materials" on storage.objects for delete to authenticated
   using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
 
+-- «Вести ученика» и «в сети»: состояние хранится на сервере, поэтому не теряется, если живое соединение оборвалось
+create table if not exists public.student_follow (
+  student_id uuid primary key references public.students(id) on delete cascade,
+  teacher_id uuid not null,
+  follow     jsonb,                 -- null = учитель не ведёт ученика; иначе {lesson, tab, page, v:{z,x,y}, rev}
+  seen_at    timestamptz,           -- когда ученик последний раз подавал признак жизни
+  seen_where text
+);
+alter table public.student_follow enable row level security;
+drop policy if exists "follow_team" on public.student_follow;
+create policy "follow_team" on public.student_follow for all to authenticated
+  using (public.my_team(teacher_id)) with check (public.my_team(teacher_id));
+revoke all on public.student_follow from anon;
+-- ученик раз в несколько секунд: «я здесь» + забирает, куда его ведёт учитель (по всем своим предметам)
+create or replace function public.student_live(p_code text, p_where text default null)
+returns json language plpgsql security definer set search_path = public as $$
+declare sid uuid := student_id_by_code(p_code); tid uuid; pid uuid;
+begin
+  if sid is null then return null; end if;
+  select teacher_id, coalesce(person_id, id) into tid, pid from students where id = sid;
+  insert into student_follow(student_id, teacher_id, seen_at, seen_where) values (sid, tid, now(), left(p_where, 120))
+  on conflict (student_id) do update set seen_at = now(), seen_where = coalesce(left(p_where, 120), student_follow.seen_where);
+  return json_build_object('follow', coalesce((select json_agg(json_build_object('student_id', f.student_id, 'follow', f.follow))
+    from student_follow f join students s on s.id = f.student_id where coalesce(s.person_id, s.id) = pid and f.follow is not null), '[]'::json));
+end $$;
+
+
 -- ---------- Доступ к функциям ----------
 drop function if exists public.student_login(text);
 do $$ declare f text; begin
   foreach f in array array[
     'public.invite_info(text)', 'public.student_register(text, text, int, text[], text, text, text, text)', 'public.student_login(text, text)',
-    'public.student_state(text, boolean)', 'public.student_submit_result(text, text, int, int, jsonb, text, int, jsonb)', 'public.student_ping(text, text, int)',
+    'public.student_state(text, boolean)', 'public.student_live(text, text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int, jsonb)', 'public.student_ping(text, text, int)',
     'public.student_set_theme(text, text)', 'public.student_set_profile(text, text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])',
@@ -836,6 +863,7 @@ end $$;
 
 -- всё открыто для всех: тарифы пока отключены (вернуть: update app_settings set value='0' where key='free_access')
 insert into public.app_settings(key, value) values ('free_access', to_jsonb(true)) on conflict (key) do update set value = excluded.value;
+
 
 -- обновить кэш схемы PostgREST, чтобы новые таблицы и функции стали видны сразу
 notify pgrst, 'reload schema';

@@ -434,6 +434,23 @@ test("b1", "Смена урока в комнате → у ученика нов
   eq(cmd.lesson, L2.id, "lesson в команде смены урока");
 });
 
+/* ---------- F1: «Вести ученика» – включает только учитель, действия ученика режим не снимают ---------- */
+test("F1", "Учитель включает «Вести ученика»: у ученика S.follow.on; уход ученика в раздел режим не сбрасывает; снимает только учитель", async ({ teacher, student }) => {
+  await student.waitFor(`(() => { const S = window.__app.S; return S && S.view === "room" && S.room ? 1 : 0; })()`, { timeout: 8000, label: "F1: ученик в комнате" });
+  await teacher.eval(`(() => { const b = document.querySelector('[data-act="room-follow"]'); if (!b) return false; b.click(); return true; })()`);
+  await student.waitFor(`(() => { const S = window.__app.S; return S.follow && S.follow.on ? 1 : 0; })()`, { timeout: 8000, label: "F1: у ученика включился режим ведения" });
+  /* ученик нажимает у себя в меню – режим остаётся */
+  await student.eval(`(() => { const b = document.querySelector('[data-act="open-drawer"]'); if (b) b.click(); return true; })()`);
+  await student.eval(`(() => { const b = document.querySelector('[data-go="self"]'); if (b) b.click(); return true; })()`);
+  await sleep(1500);
+  eq(await student.eval(`!!(window.__app.S.follow && window.__app.S.follow.on)`), true, "F1: действие ученика сбросило режим ведения");
+  /* учитель снимает вручную */
+  await teacher.eval(`(() => { const b = document.querySelector('[data-act="room-follow"]'); if (!b) return false; b.click(); return true; })()`);
+  await student.waitFor(`(() => { const S = window.__app.S; return !S.follow ? 1 : 0; })()`, { timeout: 8000, label: "F1: учитель выключил – у ученика режим снят" });
+  /* вернуть ученика на урок для следующих проверок */
+  await student.eval(`(() => { const b = document.querySelector('.lesson-backbar [data-act="back-to-room"]'); if (b) b.click(); return true; })()`);
+});
+
 /* ---------- R1: меню ученика во время урока и баннер «Вернуться к уроку» ---------- */
 test("R1", "Ученик: меню во время урока (data-go), баннер .lesson-backbar, presence не выдёргивает, завершение/повторный старт", async ({ teacher, student }) => {
   /* 1) урок уже идёт (после a/b1), ученик в комнате */

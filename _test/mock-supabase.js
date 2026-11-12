@@ -94,11 +94,11 @@
     cfg = cfg || {};
     const key = (cfg.presence && cfg.presence.key) || ("k-" + TAB + "-" + Math.random().toString(36).slice(2, 6));
     const ch = {
-      name, cfg, _handlers: [], _key: key, _state: null, _sub: false,
+      name, cfg, _handlers: [], _key: key, _state: null, _sub: false, state: "joining",
       on(kind, filter, cb) { ch._handlers.push({ kind, filter: filter || {}, cb }); return ch; },
       subscribe(cb) {
         ch._sub = true;
-        setTimeout(() => { try { cb && cb("SUBSCRIBED"); } catch (e) { say("sub cb", e && e.message); } }, 0);
+        setTimeout(() => { ch.state = "joined"; try { cb && cb("SUBSCRIBED"); } catch (e) { say("sub cb", e && e.message); } }, 0);
         post({ kind: "presence-req", channel: name, from: TAB });
         setTimeout(() => firePresence(name), 30);
         return ch;
@@ -408,6 +408,14 @@
   }
   const RPC = {
     me: () => teacherRow(),
+    student_live: ({ p_code }) => {
+      const st = (table("students") || []).find(x => x.code === p_code);
+      if (!st) return null;
+      const seen = table("student_follow"); const ex = seen.find(r => r.student_id === st.id);
+      if (ex) ex.seen_at = new Date().toISOString(); else seen.push({ student_id: st.id, teacher_id: st.teacher_id, seen_at: new Date().toISOString() });
+      saveDB();
+      return { follow: seen.filter(r => r.follow && (r.student_id === st.id)).map(r => ({ student_id: r.student_id, follow: r.follow })) };
+    },
     student_state: ({ p_code }) => {
       const row = rowByToken(p_code);
       if (!row) return null;
