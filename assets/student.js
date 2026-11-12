@@ -354,7 +354,7 @@ async function livePoll(){
     const rm = (data.follow || []).map(x => x.follow && x.follow.room).filter(Boolean).sort((x, y) => (y.rev || 0) - (x.rev || 0))[0];
     if (rm && rm.lesson && (rm.rev || 0) > Math.max(S.roomRev || 0, S.roomEnded || 0, Date.now() - 3 * 3600e3)){
       S.roomRev = rm.rev;
-      if (!S.follow && (!S.room || S.room.lesson !== rm.lesson || (rm.page && S.boardPage !== rm.page))) await roomGoto({lesson: rm.lesson, tab: rm.tab, page: rm.page, to: mine.find(id => id !== S.profile.id) || S.profile.id}, !!S.room);
+      if (!S.follow && (!S.room || S.room.lesson !== rm.lesson)) await roomGoto({lesson: rm.lesson, tab: rm.tab, page: rm.page, to: mine.find(id => id !== S.profile.id) || S.profile.id}, !!S.room);
     }
   } catch (_) {}
 }
@@ -1565,7 +1565,6 @@ function render(){
       </div></header>
       <main class="main">${S.loadError ? `<div class="card" data-t-student-load-error role="status" style="margin:10px 0;gap:8px"><b>Не удалось обновить уроки</b><p class="small muted">${esc(S.loadError)}. Показываю сохранённые материалы.</p><div class="row" style="gap:8px"><button class="btn sm" data-act="reload-data">Повторить</button></div></div>` : ""}${backbar}${body}</main>
     </div></div>`;
-  if (S.lastRV === keepV && keepY > 0 && !S.routeY) { scrollTo(0, keepY); requestAnimationFrame(() => { if (Math.abs(scrollY - keepY) > 2) scrollTo(0, keepY); }); }
   S.lastRV = keepV;
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);

@@ -1979,7 +1979,6 @@ function roomPublish(){
 }
 function followSave(st, keep){
   const r = T.room; if (!r || !sb || !T.session) return;
-  if (!keep && st && !st.room && T.room) st = {...st, room: {lesson: r.lesson, tab: st.tab || r.shown || r.tab || null, page: st.page || null, rev: st.rev || Date.now()}};
   clearTimeout(followDbT);
   followDbT = setTimeout(async () => {
     for (const id of r.to){ try { await sb.from("student_follow").upsert({student_id: id, teacher_id: (T.students.find(x => x.id === id) || {}).teacher_id || T.session.user.id, follow: st}, {onConflict: "student_id"}); } catch (_) {} }
