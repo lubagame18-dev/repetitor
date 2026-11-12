@@ -958,6 +958,19 @@ test("H7", "Сверка с базой: запись, попавшая в баз
   await waitSideItems(page, "student", have, "запись из базы без события появилась сама", 9500);
 });
 
+test("H8", "Мгновенно: объект виден второй стороне раньше, чем сохранился в базе (база медленная, 1.5 c)", async ({ page }) => {
+  await fresh(page);
+  await page.eval(`(() => { const api = ${B}.api, orig = api.add; api.add = async (p, it) => { await ${B}.sleep(1500); return orig(p, it); }; return true; })()`);
+  const have = a => itemsOfType(a, "t").some(r => r.item.s === "H8 мгновенно");
+  const t0 = Date.now();
+  bcall(page, "teacher", "insertText", "H8 мгновенно", 240, 380);
+  await waitSideItems(page, "student", have, "объект у ученика до записи в базу", 900);
+  const dt = Date.now() - t0;
+  if (dt > 1000) throw new Error("доставка заняла " + dt + " мс – дожидалась базы");
+  await sleep(1900);
+  await waitSideItems(page, "student", a => itemsOfType(a, "t").filter(r => r.item.s === "H8 мгновенно").length === 1, "после записи в базу – ровно один экземпляр у ученика");
+});
+
 test("H4", "Вставка в точку: paste текста/картинки и API insertText/insertImage/insertPage — объект в точке клика и виден второй стороне", async ({ page, fixtures }) => {
   await fresh(page);
   /* клик по холсту запоминает lastPoint */

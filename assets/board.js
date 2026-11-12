@@ -80,6 +80,8 @@ window.Board = (() => {
     let page = (o.page && pagesArr.some(p => p.key === String(o.page))) ? String(o.page) : pagesArr[0].key;
 
     let items = new Map();             // id -> item
+    const isTemp = id => /^(tmp|er|rtmp:|rtxt:)/.test(String(id));
+    const textHeld = new Map();        // удалённая печать: ключ → исходный объект, пока его правят
     const stamp = new Map();           // id -> когда менялся (для сверки с базой: свежие изменения не трогаем)
     const st8 = (...ids) => { const t = Date.now(); ids.flat().forEach(i => { if (i != null) stamp.set(String(i), t); }); };
     const fresh8 = id => Date.now() - (stamp.get(String(id)) || 0) < 8000;
@@ -788,7 +790,7 @@ window.Board = (() => {
       if (!isStudent || !channel) return;
       k = String(k || page);
       clearTimeout(bgSendT);
-      bgSendT = setTimeout(() => { bgSendT = 0; sendBgNow(k); }, 240);
+      bgSendT = setTimeout(() => { bgSendT = 0; sendBgNow(k); }, 150);
     }
     /* ученик: после отрисовки живого листа отправляем его html учителю (без повторов) */
     function sendBgNow(k){
@@ -870,7 +872,7 @@ window.Board = (() => {
       if (!pagesArr.some(p => p.key === key)) key = pagesArr[0].key;
       if (editor) closeEditor(true);
       moving = null; textTap = null; selectedId = null; selResize = null;
-      if (page && page !== key) pageCache.set(page, [...items.entries()].filter(([id]) => !id.startsWith("tmp") && !id.startsWith("er")).map(([id, item]) => ({id, item})));
+      if (page && page !== key) pageCache.set(page, [...items.entries()].filter(([id]) => !isTemp(id)).map(([id, item]) => ({id, item})));
       const tok = ++openTok;
       page = key;
       renderPageButtons();
@@ -1028,18 +1030,20 @@ window.Board = (() => {
       const pg = page;
       const tmp = "tmp" + rid();
       items.set(tmp, item); redraw();
+      send("add", {id:tmp, item, page:pg, opt:true});     // сразу показываем второй стороне, не ждём базу
       saving++;
       try {
         const id = String(await o.api.add(pg, item));
         items.delete(tmp);
         if (page === pg){ items.set(id, item); mine.push(id); layout(); }
         else redraw();
-        send("add", {id, item, page:pg});
+        send("add", {id, item, page:pg, tmp});
         st8(id);
         if (page === pg) hpush({added:[id], removed:[]});
         return id;
       } catch(_) {
         items.delete(tmp); redraw();
+        send("remove", {ids:["rtmp:" + tmp], page:pg});
         toast("Не сохранилось на доске. Проверьте интернет.");
         return null;
       } finally { saving--; }
@@ -1059,10 +1063,10 @@ window.Board = (() => {
       ids.forEach(id => items.delete(String(id)));
       if (selectedId != null && ids.some(id => String(id) === String(selectedId))) selectedId = null;
       redraw(); layout();
+      send("remove", {ids, page:pg});                       // сначала второй стороне, потом база
       saving++;
       try { await o.api.remove(pg, ids.filter(id => !String(id).startsWith("tmp"))); } catch(_) {}
       finally { saving--; }
-      send("remove", {ids, page:pg});
     }
     /* заменить объект: сначала сохраняем новую позицию, потом убираем старую (ретрай). Возвращает новый id. */
     async function replaceItem(oldId, newItem, fallback){
@@ -1072,11 +1076,14 @@ window.Board = (() => {
       if (!old){ await addItem(newItem); return null; }
       if (oldId.startsWith("tmp")){ items.set(oldId, newItem); redraw(); layout(); return oldId; }
       let newId;
+      const optId = "tmp" + rid();
+      send("move", {id:oldId, newId:optId, item:newItem, page:pg, opt:true});     // второй стороне – сразу
       saving++;
       try {
         try { newId = String(await o.api.add(pg, newItem)); }
         catch (_) {
           if (items.has(oldId)){ items.set(oldId, fallback || old); redraw(); }
+          send("move", {id:"rtmp:" + optId, newId:oldId, item:fallback || old, page:pg});
           toast("Не удалось сохранить. Объект остался на прежнем месте.");
           return null;
         }
@@ -1086,7 +1093,7 @@ window.Board = (() => {
           redraw(); layout();
         }
         const ok = await removeRow(pg, oldId);
-        send("move", {id:oldId, newId, item:newItem, page:pg});
+        send("move", {id:oldId, newId, item:newItem, page:pg, tmp:optId});
         st8(oldId, newId);
         if (page === pg) hpush({added:[newId], removed:[fallback || old]});
         if (!ok) toast("Старая копия могла остаться на доске.");
@@ -1172,7 +1179,7 @@ window.Board = (() => {
       el.addEventListener("pointermove", markHover, {passive:true});
       el.addEventListener("mousemove", markHover, {passive:true});
       el.addEventListener("pointerdown", markHover, {passive:true});
-      ta.addEventListener("input", () => autoSizeInline(ed));
+      ta.addEventListener("input", () => { autoSizeInline(ed); textDraftSend(ed); });
       ta.addEventListener("keydown", e => {
         if (e.isComposing) return;
         if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey){ e.preventDefault(); closeEditor(true); }
@@ -1254,6 +1261,22 @@ window.Board = (() => {
       later(3);
       return ed;
     }
+    /* печать видно сразу: пока текст набирается, вторая сторона видит его по мере ввода */
+    let tdT = 0;
+    function textDraftSend(ed, drop, commit){
+      if (!ed) return;
+      if (!ed.sid) ed.sid = rid();
+      clearTimeout(tdT);
+      const go = () => {
+        if (drop){ send("tdraft", {sid:ed.sid, drop:true, commit:!!commit, page}); return; }
+        const text = String(ed.ta.value || "");
+        if (!text.trim()) return;
+        const item = {t:"t", x:Math.round(ed.x), y:Math.round(ed.y), w:Math.max(TEXT_MIN_W, Math.round(ed.w || (ed.el.offsetWidth / scale))), h:Math.max(textLineH(ed.sz), Math.round(ed.h || (ed.el.offsetHeight / scale))), s:text.slice(0, TEXT_MAX), c:ed.c, sz:Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, +ed.sz || TEXT_SZ_DEFAULT))};
+        if (ed.note) item.note = true; if (ed.blank) item.blank = true;
+        send("tdraft", {sid:ed.sid, item, edId: ed.id != null ? String(ed.id) : null, page});
+      };
+      if (drop) go(); else tdT = setTimeout(go, 90);
+    }
     function closeEditor(save){
       const ed = editor;
       if (!ed) return;
@@ -1263,6 +1286,7 @@ window.Board = (() => {
       const h2 = Math.max(textLineH(ed.sz), Math.round(ed.h || (ed.el.offsetHeight / scale)));
       const text = String(ed.ta.value || "").trim();
       try { ed.el.remove(); } catch (_) {}
+      textDraftSend(ed, true, save && !!text);
       if (!save) return;
       if (text){
         const item = {t:"t", x:Math.round(ed.x), y:Math.round(ed.y), w:w2, h:h2, s:text.slice(0, TEXT_MAX), c:ed.c, sz:Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, +ed.sz || TEXT_SZ_DEFAULT))};
@@ -2104,6 +2128,28 @@ window.Board = (() => {
           if (m.end) setTimeout(() => { drafts.delete(k); redraw(); }, 1500);
           redraw();
         }
+        if (m.type === "add" && m.opt){          // мгновенная копия до сохранения в базе
+          const k = "rtmp:" + m.id; items.set(k, m.item); st8(k); redraw(); layout(); return;
+        }
+        if (m.type === "add" && m.tmp) items.delete("rtmp:" + m.tmp);
+        if (m.type === "move" && m.opt){
+          st8(m.id, m.newId); if (m.id != null) items.delete(String(m.id));
+          const k = "rtmp:" + m.newId; items.set(k, m.item); st8(k);
+          redraw(); layout(); return;
+        }
+        if (m.type === "move" && m.tmp) items.delete("rtmp:" + m.tmp);
+        if (m.type === "tdraft"){
+          const k = m.from + ":" + (m.sid || ""), key = "rtxt:" + k;
+          if (m.drop){
+            items.delete(key);
+            const h = textHeld.get(k); textHeld.delete(k);
+            if (h && !m.commit && !items.has(String(h.id))) items.set(String(h.id), h.item);
+            redraw(); layout(); return;
+          }
+          if (m.edId != null && !textHeld.has(k) && items.has(String(m.edId))){ textHeld.set(k, {id:String(m.edId), item:items.get(String(m.edId))}); items.delete(String(m.edId)); }
+          const h = textHeld.get(k); if (h) st8(h.id);
+          items.set(key, m.item); st8(key); redraw(); layout(); return;
+        }
         if (m.type === "add"){
           [...drafts.keys()].forEach(k => { if (k.startsWith(m.from + ":") && drafts.get(k).p.length >= ((m.item && m.item.p && m.item.p.length) || 0) - 2) drafts.delete(k); });
           if (m.id != null){ items.set(String(m.id), m.item); st8(m.id); }
@@ -2163,10 +2209,11 @@ window.Board = (() => {
         if (destroyed || page !== key || tok0 !== openTok || (!force && (drawing || moving || pan || editor))) return;
         if (list.some(r => !r || r.id == null)) return;          // без id сверять нечем
         const db = new Map(); list.forEach(r => { if (r.item && r.item.t && !fresh8(r.id)) db.set(String(r.id), r.item); });
-        const local = [...items.keys()].filter(id => !id.startsWith("tmp") && !id.startsWith("er") && !fresh8(id));
+        [...items.keys()].forEach(id => { if ((id.startsWith("rtmp:") || id.startsWith("rtxt:")) && Date.now() - (stamp.get(id) || 0) > 20000) items.delete(id); });
+        const local = [...items.keys()].filter(id => !isTemp(id) && !fresh8(id));
         let same = local.length === db.size; if (same) for (const id of local) if (!db.has(id)) { same = false; break; }
         if (!same){
-          const keep = [...items.entries()].filter(([id]) => id.startsWith("tmp") || id.startsWith("er") || fresh8(id));
+          const keep = [...items.entries()].filter(([id]) => isTemp(id) || fresh8(id));
           items = new Map([...db.entries(), ...keep]);
           if (selectedId != null && !items.has(String(selectedId))) selectedId = null;
           pageCache.set(key, list);
