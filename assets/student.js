@@ -1541,6 +1541,7 @@ function liveAct2(extra, text){ if (live) live.send({type:"broadcast", event:"ac
 function render(){
   S.syncPending = false;
   const app = $("#app");
+  const keepY = scrollY, keepV = S.view + "|" + S.open + "|" + S.sub;   // фоновая перерисовка не должна подбрасывать страницу вверх
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   /* урок ещё не загрузился (после перезагрузки) – пока показываем главную, маршрут не теряем */
@@ -1564,6 +1565,8 @@ function render(){
       </div></header>
       <main class="main">${S.loadError ? `<div class="card" data-t-student-load-error role="status" style="margin:10px 0;gap:8px"><b>Не удалось обновить уроки</b><p class="small muted">${esc(S.loadError)}. Показываю сохранённые материалы.</p><div class="row" style="gap:8px"><button class="btn sm" data-act="reload-data">Повторить</button></div></div>` : ""}${backbar}${body}</main>
     </div></div>`;
+  if (S.lastRV === keepV && keepY > 0 && !S.routeY) { scrollTo(0, keepY); requestAnimationFrame(() => { if (Math.abs(scrollY - keepY) > 2) scrollTo(0, keepY); }); }
+  S.lastRV = keepV;
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
     S.board = Board.keep($("#board"), "s:" + l.id, {

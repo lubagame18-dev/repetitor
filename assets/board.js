@@ -2240,7 +2240,8 @@ window.Board = (() => {
         const db = new Map(); list.forEach(r => { if (r.item && r.item.t && !fresh8(r.id)) db.set(String(r.id), r.item); });
         [...items.keys()].forEach(id => { if ((id.startsWith("rtmp:") || id.startsWith("rtxt:")) && Date.now() - (stamp.get(id) || 0) > 20000) items.delete(id); });
         const local = [...items.keys()].filter(id => !isTemp(id) && !fresh8(id));
-        let same = local.length === db.size; if (same) for (const id of local) if (!db.has(id)) { same = false; break; }
+        const sgOf = it => it ? (it.t + "|" + (it.p ? it.p.length : "") + "|" + (it.x == null ? "" : Math.round(it.x)) + "|" + (it.y == null ? "" : Math.round(it.y)) + "|" + (it.s || "") + "|" + (it.w || "") + "|" + (it.h || "")) : "";
+        let same = local.length === db.size; if (same) for (const id of local) if (!db.has(id) || sgOf(db.get(id)) !== sgOf(items.get(id))) { same = false; break; }
         if (!same){
           const keep = [...items.entries()].filter(([id]) => isTemp(id) || fresh8(id));
           items = new Map([...db.entries(), ...keep]);
@@ -2254,7 +2255,7 @@ window.Board = (() => {
     if (o.sb && o.channelName){
       connect();
       guardT = setInterval(ensureChannel, 15000);
-      syncT = setInterval(() => { if (!document.hidden) resync(false); }, 6000);
+      syncT = setInterval(() => { if (!document.hidden){ resync(false); if (isTeacher && channel) { try { sendBgReq(page); } catch (_) {} } } }, 4000);
       const onVis = () => { if (document.hidden) return; ensureChannel(); resync(true); };
       document.addEventListener("visibilitychange", onVis); window.addEventListener("online", onVis); window.addEventListener("focus", onVis);
       hidHandlers = [["visibilitychange", onVis, document], ["online", onVis, window], ["focus", onVis, window]];
@@ -2442,7 +2443,10 @@ window.Board = (() => {
   let kept = null;
   function keep(container, key, opts){
     if (!container) return null;
-    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); if (opts?.live) kept.inst.setLive(opts.live, opts.pages); kept.inst.refresh(); container.replaceChildren(kept.holder); requestAnimationFrame(() => kept && kept.inst.relayout()); return kept.inst; }
+    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); if (opts?.live) kept.inst.setLive(opts.live, opts.pages); const stg = kept.holder.querySelector(".bd-stage"), sT = stg ? stg.scrollTop : 0, sL = stg ? stg.scrollLeft : 0;
+      kept.inst.refresh(); container.replaceChildren(kept.holder);
+      if (stg){ stg.scrollTop = sT; stg.scrollLeft = sL; }                         // перенос в новый контейнер не должен сбрасывать прокрутку листа
+      requestAnimationFrame(() => { if (!kept) return; kept.inst.relayout(); if (stg){ stg.scrollTop = sT; stg.scrollLeft = sL; } }); return kept.inst; }
     release();
     const holder = document.createElement("div"); holder.className = "bd-holder"; container.replaceChildren(holder);
     const inst = mount(holder, opts); kept = {key, holder, inst}; return inst;
