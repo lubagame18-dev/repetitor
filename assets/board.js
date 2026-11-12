@@ -62,7 +62,7 @@ window.Board = (() => {
   const TEXT_MIN_W = 120;               // авто-ширина инлайн-редактора
   const TEXT_MAX_W = 460;               // авто-ширина/максимум логических px
   const TEXT_MAX_H = 300;               // авто-высота инлайн-редактора
-  const ZOOM_MIN = 0.5, ZOOM_MAX = 3;   // ручной зум: CSS px на логический px
+  const ZOOM_MIN = 0.25, ZOOM_MAX = 4;   // ручной зум: CSS px на логический px
   const ER = 7;                         // радиус точечного ластика (логические px)
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const rid = () => Math.random().toString(36).slice(2, 10);
@@ -81,6 +81,41 @@ window.Board = (() => {
 
     let items = new Map();             // id -> item
     let mine = [];                     // id своих объектов для «Отменить»
+    /* история действий по листам: {added:[id], removed:[объекты]} – отмена и возврат, в т.ч. случайного удаления */
+    const hmap = new Map(); let histMute = 0, histBusy = false, hbatch = null;
+    const HS = () => { let h = hmap.get(page); if (!h){ h = {u: [], r: []}; hmap.set(page, h); } return h; };
+    function hpush(a){
+      if (histMute || !a || (!a.added.length && !a.removed.length)) return;
+      if (hbatch){ hbatch.added.push(...a.added); hbatch.removed.push(...a.removed); return; }
+      const h = HS(); h.u.push(a); if (h.u.length > 200) h.u.shift(); h.r.length = 0; histState();
+    }
+    function histState(){
+      const h = HS();
+      root.querySelectorAll('[data-act="undo"]').forEach(b => { b.disabled = !h.u.length; b.style.opacity = h.u.length ? "" : ".45"; });
+      root.querySelectorAll('[data-act="redo"]').forEach(b => { b.disabled = !h.r.length; b.style.opacity = h.r.length ? "" : ".45"; });
+    }
+    async function applyAct(a){
+      histMute++;
+      try {
+        const inv = {added: [], removed: []};
+        const rem = a.added.map(String).filter(id => items.has(id)).map(id => ({id, item: items.get(id)}));
+        if (rem.length){ await removeIds(rem.map(r => r.id)); inv.removed.push(...rem.map(r => r.item)); }
+        for (const it of a.removed){ const nid = await addItem(it); if (nid != null) inv.added.push(nid); }
+        return inv;
+      } finally { histMute--; }
+    }
+    async function undo(){
+      if (histBusy) return; const h = HS(), a = h.u.pop();
+      if (!a){ toast("Нечего отменять"); histState(); return; }
+      histBusy = true;
+      try { const inv = await applyAct(a); HS().r.push(inv); } finally { histBusy = false; histState(); }
+    }
+    async function redo(){
+      if (histBusy) return; const h = HS(), a = h.r.pop();
+      if (!a){ toast("Нечего возвращать"); histState(); return; }
+      histBusy = true;
+      try { const inv = await applyAct(a); HS().u.push(inv); } finally { histBusy = false; histState(); }
+    }
     let tool = "pen", color = COLORS[0], drawing = null, moving = null, textTap = null;
     let scale = 1, height = 1400;
     let editor = null;                 // инлайн-редактор текста
@@ -147,7 +182,9 @@ window.Board = (() => {
           <button data-act="attach" title="Прикрепить файл (фото, PDF-презентация, документ)">📎</button>
           <button data-act="embed" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…">🌐</button>
           <button data-act="camera" title="Фото с камеры">📷</button>
-          <button data-act="undo" title="Отменить своё последнее">↶</button>
+          <button data-act="stick" title="Прикрепить задание урока на холст">📌</button>
+          <button data-act="undo" title="Отменить последнее действие (Ctrl+Z)">↶</button>
+          <button data-act="redo" title="Вернуть отменённое (Ctrl+Shift+Z)">↷</button>
           <button data-act="snap" title="Снимок листа: картинка с заданиями и всеми пометками">📸</button>
           ${o.role === "teacher" ? `<button data-act="clear" title="Очистить лист">🧹</button>` : ""}
         </div></div>
@@ -659,6 +696,8 @@ window.Board = (() => {
       if (!root.isConnected) return;
       const ae = document.activeElement;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(ae?.tagName || "") || ae?.isContentEditable) return;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "z" || e.key === "Z" || e.key === "я" || e.key === "Я")){ e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y" || e.key === "н" || e.key === "Н")){ e.preventDefault(); redo(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedItem()){
         e.preventDefault(); deleteSelected(); return;
       }
@@ -816,7 +855,7 @@ window.Board = (() => {
       if (!paintLive(true)){ bg.innerHTML = pg ? pg.html : ""; bgSource = "static"; }
       afterSheet();
       if (live[key]) setTool("touch");
-      items = new Map(); mine = []; drafts.clear();
+      items = new Map(); mine = []; drafts.clear(); setTimeout(histState, 0);
       const cached = pageCache.get(key);
       if (cached) { cached.forEach(r => { if (r && r.item) items.set(String(r.id), r.item); }); }
       layout();
@@ -972,6 +1011,7 @@ window.Board = (() => {
         if (page === pg){ items.set(id, item); mine.push(id); layout(); }
         else redraw();
         send("add", {id, item, page:pg});
+        if (page === pg) hpush({added:[id], removed:[]});
         return id;
       } catch(_) {
         items.delete(tmp); redraw();
@@ -986,9 +1026,10 @@ window.Board = (() => {
       }
       return false;
     }
-    async function removeIds(ids){
+    async function removeIds(ids, snap){
       if (!ids || !ids.length) return;
       const pg = page;
+      hpush({added:[], removed: ids.map(id => items.get(String(id)) || (snap && snap.get(String(id)))).filter(Boolean)});
       ids.forEach(id => items.delete(String(id)));
       if (selectedId != null && ids.some(id => String(id) === String(selectedId))) selectedId = null;
       redraw(); layout();
@@ -1020,6 +1061,7 @@ window.Board = (() => {
         }
         const ok = await removeRow(pg, oldId);
         send("move", {id:oldId, newId, item:newItem, page:pg});
+        if (page === pg) hpush({added:[newId], removed:[fallback || old]});
         if (!ok) toast("Старая копия могла остаться на доске.");
       } finally { saving--; }
       return newId;
@@ -1327,6 +1369,44 @@ window.Board = (() => {
       if (kind === "fit") return fitWidth();
     }
 
+    /* «бесконечный» холст: у нижнего края лист сам удлиняется */
+    stage.addEventListener("scroll", () => { if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); }, {passive: true});
+    /* ---------- жест двумя пальцами: щипок – масштаб, сдвиг – перемещение холста (любым инструментом) ---------- */
+    const tps = new Map(); let gz = null, gRaf = 0;
+    const tdist = () => { const a = [...tps.values()]; return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1; };
+    const tmid = () => { const a = [...tps.values()]; return {x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2}; };
+    stage.addEventListener("pointerdown", e => {
+      if (e.pointerType !== "touch") return;
+      tps.set(e.pointerId, {x: e.clientX, y: e.clientY});
+      if (tps.size === 2){
+        try { cancelStroke(); } catch (_) {}
+        pan = null; moving = null; textTap = null; lpClear();
+        const m = tmid(); gz = {d0: tdist(), z0: scale, mx: m.x, my: m.y};
+      }
+      if (gz){ e.stopPropagation(); e.preventDefault(); }
+    }, true);
+    stage.addEventListener("pointermove", e => {
+      if (e.pointerType !== "touch" || !tps.has(e.pointerId)) return;
+      tps.set(e.pointerId, {x: e.clientX, y: e.clientY});
+      if (!gz || tps.size < 2) return;
+      e.stopPropagation(); e.preventDefault();
+      if (gRaf) return;
+      gRaf = requestAnimationFrame(() => {
+        gRaf = 0; if (!gz || tps.size < 2) return;
+        const m = tmid(), nz = clampZoom(gz.z0 * tdist() / gz.d0);
+        if (Math.abs(nz - scale) > 0.004) setZoom(nz, m.x, m.y);
+        stage.scrollLeft -= m.x - gz.mx; stage.scrollTop -= m.y - gz.my;
+        gz.mx = m.x; gz.my = m.y;
+      });
+    }, true);
+    const tpEnd = e => {
+      if (e.pointerType !== "touch") return;
+      const was = !!gz; tps.delete(e.pointerId);
+      if (tps.size < 2) gz = null;
+      if (was){ e.stopPropagation(); }
+    };
+    stage.addEventListener("pointerup", tpEnd, true);
+    stage.addEventListener("pointercancel", tpEnd, true);
     /* ---------- указатели ---------- */
     /* рисует только один указатель: второй палец, ладонь при стилусе и правая кнопка мыши не дают «зигзагов» */
     let penSeen = 0, lp = null;
@@ -1421,7 +1501,7 @@ window.Board = (() => {
     }
     function eraseAt(pt){
       const d = drawing; if (!d?.erase) return; let changed = false;
-      const drop = id => { items.delete(id); if (id.startsWith("er")) d.made.delete(id); else d.gone.add(id); changed = true; };
+      const drop = id => { const cur = items.get(id); items.delete(id); if (id.startsWith("er")) d.made.delete(id); else { d.gone.add(id); (d.snap = d.snap || new Map()).set(id, cur); } changed = true; };
       [...items.entries()].forEach(([id, it]) => {
         if (it.t === "s"){
           /* штрих с якорем сдвинут к текущему положению элемента – проверяем в его координатах */
@@ -1444,8 +1524,13 @@ window.Board = (() => {
     }
     async function eraseCommit(d){
       if (!d.gone.size && !d.made.size) return;
-      const gone = [...d.gone]; if (gone.length) await removeIds(gone);
-      for (const [nid, it] of d.made){ items.delete(nid); await addItem(it); }
+      const gone = [...d.gone];
+      const prevB = hbatch, mine2 = {added: [], removed: []}; if (!histMute) hbatch = mine2;
+      try {
+        if (gone.length) await removeIds(gone, d.snap);
+        for (const [nid, it] of d.made){ items.delete(nid); await addItem(it); }
+      } finally { hbatch = prevB; }
+      hpush(mine2);
       redraw();
     }
     function cancelStroke(){ if (drawing && !drawing.erase) send("draft", {sid:drawing.sid, p:[], end:true, drop:true}); drawing = null; redraw(); }
@@ -1500,6 +1585,44 @@ window.Board = (() => {
         const a = document.createElement("a"); a.href = shot.toDataURL("image/png"); a.download = `Доска – ${label} – ${new Date().toLocaleString("ru-RU").replace(/[:,]/g, "-")}.png`; a.click();
       } catch(_) { U.toast("Не получилось сделать снимок. Можно сделать снимок экрана: Win + Shift + S."); }
     }
+    /* ---------- «прикрепить задание»: лист урока (теория, практика, тест…) ложится на холст картинками, их можно двигать и менять размер ---------- */
+    async function stickPage(key){
+      const pg = pagesArr.find(x => x.key === key);
+      if (!pg || !pg.html){ toast("Этот лист «живой» – его нельзя прикрепить. Откройте его на доске и работайте прямо там."); return; }
+      toast("Готовлю задание…");
+      try {
+        if (!window.html2canvas) await new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+        const host = document.createElement("div"); host.className = "bd-bg";
+        host.style.cssText = `position:fixed;left:-10000px;top:0;width:${W}px;transform:none;background:#fff;pointer-events:none`;
+        host.innerHTML = pg.html; document.body.appendChild(host);
+        await delay(250);
+        let cnv; try { cnv = await window.html2canvas(host, {backgroundColor: "#ffffff", scale: 1, useCORS: true, logging: false}); } finally { host.remove(); }
+        const v = getView(), x0 = Math.max(10, Math.round(v.x) + 20); let y = Math.max(20, Math.round(v.y) + 20);
+        const prev = hbatch, bt = {added: [], removed: []}; hbatch = bt;
+        try {
+          for (let y0 = 0; y0 < cnv.height; y0 += 700){
+            const c2 = document.createElement("canvas"); c2.width = cnv.width; c2.height = Math.min(700, cnv.height - y0);
+            const cx2 = c2.getContext("2d"); cx2.fillStyle = "#fff"; cx2.fillRect(0, 0, c2.width, c2.height); cx2.drawImage(cnv, 0, y0, c2.width, c2.height, 0, 0, c2.width, c2.height);
+            const w = Math.min(W - 20, c2.width), ratio = c2.width / c2.height;
+            const rec = await insertImageItem(fitDataUrl(c2, ITEM_MAX, 900), x0, y, w);
+            y += (rec ? rec.h : Math.round(w / ratio)) + 6;
+          }
+        } finally { hbatch = prev; }
+        hpush(bt); layout();
+        toast("Задание на холсте: двигайте ✥, меняйте размер, отменяйте ↶");
+      } catch (_) { toast("Не получилось прикрепить задание. Попробуйте ещё раз."); }
+    }
+    function openStickMenu(btn){
+      const pgs = pagesArr.filter(x => x.html);
+      if (!pgs.length){ toast("На этом уроке нет листов, которые можно прикрепить."); return; }
+      menu.innerHTML = `<div class="bd-mlist"><b style="padding:4px 8px;font-size:12px;opacity:.7">Прикрепить на холст:</b>${pgs.map(x => `<button data-mstick="${esc(x.key)}">📌 ${esc(x.label || "Лист")}</button>`).join("")}</div>`;
+      if (menu.parentElement !== document.body) document.body.appendChild(menu);
+      menu.hidden = false;
+      const r = btn.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+      menu.style.left = Math.max(4, Math.min(r.right + 6, innerWidth - mw - 4)) + "px";
+      menu.style.top = Math.max(4, Math.min(r.top, innerHeight - mh - 4)) + "px";
+      menu.onclick = ev => { const b = ev.target.closest("button"); if (!b) return; const k = b.dataset.mstick; closeMenu(); if (k) stickPage(k); };
+    }
     /* ---------- быстрая панель: правая кнопка мыши, кнопка стилуса или долгое нажатие ---------- */
     const menu = root.querySelector(".bd-menu");
     function openMenu(x, y){
@@ -1511,7 +1634,7 @@ window.Board = (() => {
       const icons = {pen:"✎", hl:"▮", text:"T", move:"✥", erase:'<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 17l8-8 6 6-4 4H6z" fill="#f48fb1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 9l4-4 6 6-4 4" fill="#fff" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13 19h8" stroke="currentColor" stroke-width="1.5"/></svg>', hand:"✋"};
       menu.innerHTML = `<div class="bd-mrow">${["pen","hl","text","move","erase","hand"].map(t => `<button data-mtool="${t}" aria-pressed="${tool === t}" title="${titles[t]}">${icons[t]}</button>`).join("")}</div>
         <div class="bd-mrow">${COLORS.map(c => `<button class="bd-color" data-mcolor="${c}" style="--bc:${c}" aria-pressed="${color === c}" aria-label="Цвет"></button>`).join("")}</div>
-        <div class="bd-mlist">${sel ? `<button data-mact="del">🗑 Удалить</button>` : ""}<button data-mact="undo">↶ Отменить</button><button data-mact="blank">📄 Чистый лист</button>${extra.map((m, i) => `<button data-mext="${i}">${esc(m.label)}</button>`).join("")}</div>`;
+        <div class="bd-mlist">${sel ? `<button data-mact="del">🗑 Удалить</button>` : ""}<button data-mact="undo">↶ Отменить</button><button data-mact="redo">↷ Вернуть</button><button data-mact="blank">📄 Чистый лист</button>${extra.map((m, i) => `<button data-mext="${i}">${esc(m.label)}</button>`).join("")}</div>`;
       if (menu.parentElement !== document.body) document.body.appendChild(menu);   // над всеми окнами (у «стеклянных» окон свой слой)
       menu.hidden = false;
       const mw = menu.offsetWidth, mh = menu.offsetHeight;
@@ -1522,7 +1645,8 @@ window.Board = (() => {
         if (b.dataset.mtool) setTool(b.dataset.mtool);
         if (b.dataset.mcolor){ setColor(b.dataset.mcolor); if (tool !== "pen" && tool !== "text") setTool("pen"); }
         if (b.dataset.mact === "del") deleteSelected();
-        if (b.dataset.mact === "undo") root.querySelector('[data-act="undo"]')?.click();
+        if (b.dataset.mact === "undo") undo();
+        if (b.dataset.mact === "redo") redo();
         if (b.dataset.mact === "blank"){ const bl = pagesArr.find(p => p.key === "blank") || pagesArr.find(p => p.key === "p1"); if (bl){ openPage(bl.key); if (o.role === "teacher") send("page", {page: bl.key}); } }
         if (b.dataset.mext != null){ try { extra[+b.dataset.mext].run(); } catch(_) {} }
         closeMenu();
@@ -1538,10 +1662,12 @@ window.Board = (() => {
       if (b.dataset.bpage){ openPage(b.dataset.bpage); if (o.role === "teacher") send("page", {page:b.dataset.bpage}); }
       if (b.dataset.tool) setTool(b.dataset.tool);
       if (b.dataset.color){ setColor(b.dataset.color); if (tool !== "pen" && tool !== "text") setTool("pen"); }
-      if (b.dataset.act === "undo"){ const id = mine.pop(); if (id) removeIds([id]); }
+      if (b.dataset.act === "stick"){ openStickMenu(b); return; }
+      if (b.dataset.act === "undo") undo();
+      if (b.dataset.act === "redo") redo();
       if (b.dataset.act === "snap") snapshot();
       if (b.dataset.act === "clear"){
-        if (b.dataset.sure){ await o.api.clear(page); items.clear(); mine = []; selectedId = null; redraw(); layout(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
+        if (b.dataset.sure){ hpush({added:[], removed:[...items.entries()].filter(([k]) => !k.startsWith("tmp")).map(([, v]) => v)}); await o.api.clear(page); items.clear(); mine = []; selectedId = null; redraw(); layout(); send("clear", {}); b.textContent = "🧹"; delete b.dataset.sure; }
         else { b.dataset.sure = "1"; b.textContent = "✔?"; b.title = "Нажмите ещё раз, чтобы очистить лист"; setTimeout(() => { b.textContent = "🧹"; delete b.dataset.sure; }, 3000); }
       }
     });
@@ -2075,6 +2201,9 @@ window.Board = (() => {
       whenIdle: async () => { await readyP; while (saving > 0 || selPending > 0) await delay(50); return info(); },
       attach: files => handleFiles(files),
       addPage: (label, html, broadcast) => addPageP(label, html, broadcast),
+      stickPage: key => stickPage(key),
+      undo: () => undo(),
+      redo: () => redo(),
       insertPage: (label, html, broadcast, opts) => insertPageAt(label, html, broadcast, opts),
       insertText: (text, x, y) => insertTextItem(text, x, y, false),
       insertNote: (text, x, y, opts) => insertTextItem(text, x, y, true),

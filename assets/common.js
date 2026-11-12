@@ -414,3 +414,48 @@ window.U = (() => {
 
   return {lessonTime, pnParse, pnSel, pnOk, pnText, pnHTML, findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();
+
+/* Масштаб материала урока (теория, задания, тесты): кнопки −/+ внизу слева, запоминается на устройстве.
+   На доске не действует: там свой зум (щипок двумя пальцами, кнопки −/+). */
+(() => {
+  const KEY = "oge-lz", MIN = 0.7, MAX = 2.4;
+  const get = () => { try { const z = +localStorage.getItem(KEY); return z >= MIN && z <= MAX ? z : 1; } catch (_) { return 1; } };
+  const set = z => { try { localStorage.setItem(KEY, String(z)); } catch (_) {} };
+  let w = null, raf = 0;
+  function build(){
+    w = document.createElement("div"); w.id = "lz"; w.className = "lz glass"; w.hidden = true;
+    w.setAttribute("role", "group"); w.setAttribute("aria-label", "Масштаб материала");
+    w.innerHTML = `<button type="button" data-lz="-" aria-label="Уменьшить">A−</button><button type="button" data-lz="0" class="lz-v" aria-label="Сбросить масштаб">100%</button><button type="button" data-lz="+" aria-label="Увеличить">A+</button>`;
+    w.addEventListener("click", e => {
+      const b = e.target.closest("[data-lz]"); if (!b) return;
+      let z = get(); const k = b.dataset.lz;
+      z = k === "0" ? 1 : Math.round((z + (k === "+" ? 0.1 : -0.1)) * 10) / 10;
+      set(Math.min(MAX, Math.max(MIN, z))); apply();
+    });
+    document.body.appendChild(w);
+  }
+  function apply(){
+    raf = 0;
+    const main = document.querySelector("#app .main");
+    const ok = !!main && !main.querySelector("#board, .login, .bd-root") && !document.querySelector("#app .lesson-room");
+    if (!w) build();
+    if (main) main.style.zoom = ok && get() !== 1 ? String(get()) : "";
+    w.hidden = !ok;
+    const v = w.querySelector(".lz-v"); if (v) v.textContent = Math.round(get() * 100) + "%";
+  }
+  const sched = () => { if (!raf) raf = requestAnimationFrame(apply); };
+  function start(){
+    const app = document.getElementById("app"); if (!app) return;
+    new MutationObserver(sched).observe(app, {childList: true, subtree: false});
+    new MutationObserver(sched).observe(app, {childList: true, subtree: true, attributes: false});
+    sched();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+  /* Ctrl/⌘ + колесо или щипок на тачпаде внутри материала – тот же масштаб */
+  document.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey) || !w || w.hidden) return;
+    if (e.target.closest && e.target.closest("#board, .bd-root")) return;
+    e.preventDefault();
+    set(Math.min(MAX, Math.max(MIN, Math.round((get() + (e.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10))); apply();
+  }, {passive: false});
+})();

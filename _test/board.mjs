@@ -911,6 +911,29 @@ test("H3", "Зум/пан/расширение: кнопки и колесо м�
   if (stroke && (Math.abs(stroke.item.p[0][0] - 300) > 8 || Math.abs(stroke.item.p[0][1] - 400) > 8)) throw new Error("штрих после зума не в логических координатах: " + JSON.stringify(stroke.item.p[0]));
 });
 
+test("H5", "Отмена/возврат: случайно удалённое объект возвращается (↶), ↷ снова удаляет; вторая сторона видит", async ({ page }) => {
+  await fresh(page);
+  const rec = await bcall(page, "teacher", "insertText", "H5 удалить меня", 200, 300);
+  if (!rec || !rec.id) throw new Error("insertText не вернул объект");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  const has = a => itemsOfType(a, "t").some(r => r.item.s === "H5 удалить меня");
+  await waitSideItems(page, "teacher", has, "текст H5 на доске");
+  await bcall(page, "teacher", "select", rec.id);
+  await bcall(page, "teacher", "deleteSelected");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  await waitSideItems(page, "teacher", a => !has(a), "текст H5 удалён");
+  await bcall(page, "teacher", "undo");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  await waitSideItems(page, "teacher", has, "после ↶ удалённый текст вернулся");
+  await waitSideItems(page, "student", has, "вернувшийся текст виден второй стороне");
+  await bcall(page, "teacher", "redo");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  await waitSideItems(page, "teacher", a => !has(a), "после ↷ текст снова удалён");
+  await bcall(page, "teacher", "undo");
+  await page.eval(`${B}.whenIdle("teacher")`);
+  await waitSideItems(page, "teacher", has, "второй ↶ снова вернул текст");
+});
+
 test("H4", "Вставка в точку: paste текста/картинки и API insertText/insertImage/insertPage — объект в точке клика и виден второй стороне", async ({ page, fixtures }) => {
   await fresh(page);
   /* клик по холсту запоминает lastPoint */

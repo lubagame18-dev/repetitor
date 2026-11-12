@@ -809,3 +809,10 @@ body.play-open{overflow:hidden}
 .hg-kb{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:6px}
 .hg-k{font:inherit;font-weight:800;text-transform:uppercase;height:42px;border:2px solid var(--hair);background:var(--glass);border-radius:10px;cursor:pointer;color:var(--ink)}
 .hg-k:hover:not(:disabled){border-color:var(--violet)}.hg-k.ok{border-color:#1f9d55;background:color-mix(in srgb,#1f9d55 16%,var(--glass-2))}.hg-k.bad{border-color:#d6334a;background:color-mix(in srgb,#d6334a 14%,var(--glass-2));opacity:.6}
+
+/* масштаб материала урока */
+.lz{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:40;display:flex;gap:2px;padding:4px;border-radius:14px;box-shadow:0 6px 18px rgba(36,24,61,.18)}
+.lz[hidden]{display:none}
+.lz button{min-width:44px;min-height:40px;border:0;border-radius:10px;background:transparent;color:inherit;font:700 14px/1 Manrope,system-ui,sans-serif;cursor:pointer}
+.lz button:active{background:rgba(123,76,245,.16)}
+.lz .lz-v{font-weight:600;font-size:12px;opacity:.8}
