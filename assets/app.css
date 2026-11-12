@@ -829,3 +829,4 @@ body.play-open{overflow:hidden}
 .bd-side .bd-esz button{width:28px;min-width:28px;height:28px;min-height:28px;padding:0;display:flex;align-items:center;justify-content:center}
 .bd-esz i{display:block;border-radius:50%;background:currentColor}
 .bd-side .bd-esz button[aria-pressed="true"]{background:var(--ink);color:var(--base)}
+.bd-bar [data-zoom]{display:none!important}

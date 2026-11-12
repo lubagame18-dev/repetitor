@@ -360,7 +360,9 @@ window.Board = (() => {
       return [Math.round((sr.left + sr.width / 2 - r.left) / scale), Math.round((sr.top + sr.height / 2 - r.top) / scale)];
     }
     function clampZoom(z){ z = +z; if (!Number.isFinite(z)) z = 1; return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)); }
+    const ZOOM_LOCK = true;            // масштаб временно отключён: лист всегда «по ширине», без самопроизвольного зума
     function setZoom(z, clientX, clientY){
+      if (ZOOM_LOCK){ if (!fitMode){ fitMode = true; layout(); } return scale; }
       const zz = clampZoom(z);
       let lx, ly, cx, cy;
       if (clientX != null && clientY != null){ const r = cv.getBoundingClientRect(); lx = (clientX - r.left) / scale; ly = (clientY - r.top) / scale; cx = clientX; cy = clientY; }
@@ -382,6 +384,7 @@ window.Board = (() => {
       applyingView = true;
       try {
         if (v.fit){ fitMode = true; layout(); }
+        else if (ZOOM_LOCK){ fitMode = true; layout(); }
         else { fitMode = false; zoom = clampZoom((+v.z || 1) * fitScale()); layout(); }
         stage.scrollLeft = Math.max(0, Math.round((+v.x || 0) * scale)); stage.scrollTop = Math.max(0, Math.round((+v.y || 0) * scale));
       } finally { setTimeout(() => { applyingView = false; }, 150); }

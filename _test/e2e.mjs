@@ -437,17 +437,19 @@ test("b1", "Смена урока в комнате → у ученика нов
 /* ---------- F1: «Вести ученика» – включает только учитель, действия ученика режим не снимают ---------- */
 test("R0", "Ученик: все 54 урока ОГЭ и все их вкладки отрисовываются без ошибок и не пустые", async ({ student }) => {
   const res = await student.eval(`(async () => {
-    const S = window.__app.S; const bad = [];
-    await window.BuiltinLoader.ensure("oge-ru");
-    const keepP = S.profile.course, keepM = S.mats; S.profile.course = "oge-ru"; S.mats = [];
-    const c = U.courseFor(S.profile, []);
-    const keep = S.course; S.course = c;
+    const S = window.__app.S; const bad = []; let total = 0;
+    const keepP = S.profile.course, keepM = S.mats, keep = S.course;
+    for (const key of ["oge-ru", "rus-7", "vpr-rus-7"]){
+    await window.BuiltinLoader.ensure(key);
+    S.profile.course = key; S.mats = [];
+    const c = U.courseFor(S.profile, []); S.course = c; total += c.lessons.length;
     for (const l of c.lessons){
       let tabs = []; try { tabs = __app.lessonTabs(l).filter(t => t[0] !== "board"); } catch (e) { bad.push(l.id + " tabs: " + e.message); continue; }
       if (!tabs.length) bad.push(l.id + ": нет вкладок");
       for (const [k] of tabs){ try { const h = __app.lessonPane(l, k); if (!h || h.length < 40) bad.push(l.id + "/" + k + ": пусто"); } catch (e) { bad.push(l.id + "/" + k + ": " + e.message); } }
     }
-    S.course = keep; S.profile.course = keepP; S.mats = keepM; return {n: c.lessons.length, bad: bad.slice(0, 12), nbad: bad.length};
+    }
+    S.course = keep; S.profile.course = keepP; S.mats = keepM; return {n: total, bad: bad.slice(0, 12), nbad: bad.length};
   })()`);
   console.log("       [R0] " + JSON.stringify(res));
   if (res.nbad) throw new Error("R0: " + JSON.stringify(res.bad));
@@ -1625,6 +1627,20 @@ test("U2", "Доступ без подписки: раздел «Доступ»,
   assert(!d.banner, "нет баннера «Подписка закончилась»");
 });
 /* ---------- W1: кабинет учителя на планшете — медленный запрос, ошибка/повтор, iPad ---------- */
+test("P1", "Карточка ученика: кнопка «Непроверенные работы» открывает окно по папкам; «Самообучение» прокручивает к разделу", async ({ teacher }) => {
+  await teacher.eval(`(() => { const b = document.querySelector('[data-view="students"]'); if (b) b.click(); return true; })()`); await sleep(600);
+  await clickStudentRow(teacher, ROW_A, "список учеников");
+  await teacher.waitFor(`document.querySelector('[data-act="pend-open"]') ? 1 : 0`, { timeout: 12000, label: "P1: кнопка «Непроверенные работы»" });
+  await teacher.eval(`(() => { document.querySelector('[data-act="pend-open"]').click(); return true; })()`);
+  await teacher.waitFor(`document.getElementById("pend-modal") ? 1 : 0`, { timeout: 5000, label: "P1: окно открылось" });
+  const txt = await teacher.eval(`document.getElementById("pend-modal").textContent`);
+  if (!/Непроверенные работы/.test(txt)) throw new Error("P1: нет заголовка окна: " + txt.slice(0, 80));
+  await teacher.eval(`(() => { document.querySelector('#pend-modal [data-act="pend-close"]').click(); return true; })()`);
+  await teacher.waitFor(`document.getElementById("pend-modal") ? 0 : 1`, { timeout: 3000, label: "P1: окно закрылось" });
+  const j = await teacher.eval(`(() => { const b = document.querySelector('[data-act="jump"][data-to="sec-self"]'); return !!(b && document.getElementById("sec-self")); })()`);
+  if (!j) throw new Error("P1: нет кнопки/раздела самообучения");
+});
+
 test("W1", "Кабинет учителя: медленный необязательный запрос не блокирует учеников; ошибка students → карточка и «Повторить»; iPad 820×1180", async ({ teacher, baseUrl }) => {
   const seed = JSON.parse(JSON.stringify(W.db));
   const reloadTeacher = async (label) => {

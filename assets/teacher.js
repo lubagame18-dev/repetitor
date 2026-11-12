@@ -125,6 +125,33 @@ async function loadBackground(seq){
   if (errs.length) console.warn("Фоновые данные не загрузились:", errs);
   if (!typing()) render(); else T.stale = true;
 }
+/* «Непроверенные работы» ученика: окно с работами по папкам (блокам курса), рядом оценка системы за ДЗ-тест */
+function pendingWorks(s){
+  const x = sData(s), c = x.c; if (!c) return {items: [], x, c};
+  const items = [];
+  c.lessons.forEach(l => {
+    const w = x.writings[l.id], h = x.hw[l.id], hr = x.hwres[l.id];
+    if (w && w.status === "sent") items.push({l, kind: "w", w, hr});
+    if (h && h.status === "sent") items.push({l, kind: "h", h, hr});
+  });
+  return {items, x, c};
+}
+function pendingModalHTML(s){
+  const {items, x, c} = pendingWorks(s);
+  const pc = r => r && r.total ? Math.round(r.score / r.total * 100) : null;
+  const groups = new Map();
+  items.forEach(it => { const b = (c.blocks && c.blocks[it.l.block]) || {name: "Свои уроки", color: "var(--violet)"}; const k = b.name; if (!groups.has(k)) groups.set(k, {b, list: []}); groups.get(k).list.push(it); });
+  const body = !items.length ? '<p class="muted" style="padding:12px 0">Непроверенных работ нет – всё проверено.</p>'
+    : [...groups.values()].map(g => `<div class="card" style="box-shadow:none;margin:10px 0"><div class="kicker" style="display:flex;align-items:center;gap:8px"><i class="dot" style="background:${g.b.color || "var(--violet)"}"></i>📁 ${esc(g.b.name)} · ${g.list.length}</div>
+      ${g.list.map(it => { const sys = it.hr ? pc(it.hr.last) : null; const when = (it.w ? it.w.submitted_at : it.h.sent_at) || "";
+        return `<div class="row between" style="gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid color-mix(in srgb,var(--violet) 14%,transparent)">
+          <span style="min-width:0"><b>${esc(it.l.title)}</b><div class="small muted">${it.w ? esc(U.KIND_NAME[it.w.kind] || "письмо") + (it.w.words ? " · " + it.w.words + " сл." : "") + (it.w.photos?.length ? " · фото: " + it.w.photos.length : "") : "домашняя работа"}${when ? " · " + new Date(when).toLocaleString("ru-RU", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}) : ""}</div></span>
+          <span class="row" style="gap:6px;align-items:center">${sys != null ? `<span class="chip ${U.lvl(sys)}" title="Автоматическая оценка системы за ДЗ-тест">ДЗ-тест: ${sys}%</span>` : `<span class="chip">ДЗ-теста нет</span>`}
+          <button class="btn sm" data-act="pend-close" data-student="${s.id}" ${it.w ? `data-wreview="${it.l.id}"` : `data-review="${it.l.id}"`}>Проверить</button></span></div>`; }).join("")}</div>`).join("");
+  return `<div id="pend-modal" role="dialog" aria-modal="true" aria-label="Непроверенные работы" style="position:fixed;inset:0;z-index:300;background:rgba(30,20,60,.45);display:flex;align-items:center;justify-content:center;padding:14px" data-act="pend-close-bg">
+    <div class="glass" style="background:var(--card,#fff);max-width:640px;width:100%;max-height:86vh;overflow:auto;border-radius:20px;padding:18px">
+      <div class="row between" style="gap:8px"><h2 style="margin:0">Непроверенные работы · ${esc(s.name)}</h2><button class="iconbtn" data-act="pend-close" aria-label="Закрыть">✕</button></div>${body}</div></div>`;
+}
 function sData(s){
   const rows = T.rows.filter(r => r.student_id === s.id);
   const c = U.courseFor(s, T.mats);
@@ -798,7 +825,7 @@ function viewStudent(){
   const unlocked = s.unlocked || [], others = T.students.filter(o => o.id !== s.id && !pending(o));
   return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-view="students">← Все ученики</button><button class="btn ghost sm" data-act="reload">Обновить</button></div>
   <section class="hero glass" style="min-height:150px"><span class="mono muted">${s.grade ? s.grade + " класс" : "класс не указан"} · ${esc(c ? c.course : "план не выбран")}</span>
-    ${!pending(s) ? `<div class="row" style="gap:8px;margin:8px 0"><button class="btn" data-act="start-lesson">▶ Начать занятие</button>${T.room?.sid === s.id || T.me?.room?.sid === s.id ? `<button class="btn ghost" data-act="room-back">↩ Вернуться к идущему уроку</button>` : ""}</div>` : ""}
+    ${!pending(s) ? `<div class="row" style="gap:8px;margin:8px 0;flex-wrap:wrap"><button class="btn" data-act="start-lesson">▶ Начать занятие</button><button class="btn ghost" data-act="pend-open">📥 Непроверенные работы${(() => { const n = pendingWorks(s).items.length; return n ? " · " + n : ""; })()}</button><button class="btn ghost" data-act="jump" data-to="sec-self">📈 Самообучение</button><button class="btn ghost" data-act="jump" data-to="sec-all">🧩 Что делает ученик</button>${T.room?.sid === s.id || T.me?.room?.sid === s.id ? `<button class="btn ghost" data-act="room-back">↩ Вернуться к идущему уроку</button>` : ""}</div>` : ""}
     <h1 style="display:flex;gap:12px;align-items:center">${s.avatar ? `<img src="${esc(s.avatar)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : ""}${esc(pending(s) ? "Ожидает регистрации" : s.name)}</h1><p>${s.goal ? esc(U.goalLabel(s.goal)) + " · " : ""}${s.school ? esc(s.school) + " · " : ""}логин ${esc(s.code)}</p><div data-online="${s.id}" style="margin-top:6px"></div><img class="cat" data-m src="${U.mascot()}" alt=""></section>
   ${inviteBox(s)}
   <div class="grid2" style="margin-top:16px">
@@ -849,8 +876,8 @@ function viewStudent(){
   ${T.liveTest?.[s.id] && !T.liveTest[s.id].done && !T.liveTest[s.id].quit ? `<div class="section-title"><h2>Сейчас проходит тест</h2></div><div class="card" data-livetest="${s.id}">${liveTestHTML(T.liveTest[s.id])}</div>` : ""}
   ${(() => { const L = T.rows.filter(r => r.student_id === s.id && (r.kind === "lesson" || r.kind === "hw") && r.answers?.length).slice(-4).reverse(); if (!L.length) return "";
     return `<div class="section-title"><h2>Последние тесты – ответы</h2></div><div class="card">${L.map(r => { const l = U.findLesson(c, r.lesson_id); return `<div style="margin-bottom:10px"><b>${r.kind === "hw" ? "ДЗ-тест" : "Тест"}: ${esc(l?.title || r.lesson_id)}</b> <span class="chip ${U.lvl(Math.round(r.score / r.total * 100))}">${r.score}/${r.total}</span> <span class="small muted">${new Date(r.created_at).toLocaleString("ru-RU", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"})}</span>${answersHTML(r.answers, false)}</div>`; }).join("")}</div>`; })()}
-  ${!pending(s) ? `<div class="section-title"><h2>Всё, что делает ученик</h2><span class="small muted">самообучение, база и доска – так же, как видит ученик</span></div>${studentAllHTML(s, c)}` : ""}
-  ${!pending(s) ? `<div class="section-title"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
+  ${!pending(s) ? `<div class="section-title" id="sec-all"><h2>Всё, что делает ученик</h2><span class="small muted">самообучение, база и доска – так же, как видит ученик</span></div>${studentAllHTML(s, c)}` : ""}
+  ${!pending(s) ? `<div class="section-title" id="sec-self"><h2>Самообучение и отработка</h2></div>${selfLogHTML(s, c)}` : ""}
   ${!pending(s) && !courseLoading && c?.labLessons?.length ? `<div class="section-title"><h2>Тренажёр изложений</h2></div><div class="card">${labPaneT(s, c, false)}</div>` : ""}
   ${!pending(s) && !courseLoading && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
   <div style="margin-top:16px">${U.progressHTML(T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id) && !pending(o)).map(o => ({subject: o.subject || U.subjectOf(o.course), ...U.subjectNow(T.rows.filter(r => r.student_id === o.id), T.writings.filter(w => w.student_id === o.id))})))}</div>
@@ -2283,7 +2310,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.view){ T.view = t.dataset.view; if (t.dataset.grade) T.grade = t.dataset.grade; if (t.dataset.subjf) T.subject = t.dataset.subjf; T.confirmDel = null; T.drawer = false; T.justInvited = null; render(); scrollTo(0,0); return; }
   if (t.dataset.grade){ T.grade = t.dataset.grade; render(); return; }
   if (t.dataset.subjf){ T.subject = t.dataset.subjf; render(); return; }
-  if (t.dataset.student){ T.sel = t.dataset.student; T.view = "student"; T.review = t.dataset.review || null; T.wreview = t.dataset.wreview || null; T.drawer = false; render(); if (!T.review && !T.wreview) scrollTo(0,0); return; }
+  if (t.dataset.student){ document.getElementById("pend-modal")?.remove(); T.sel = t.dataset.student; T.view = "student"; T.review = t.dataset.review || null; T.wreview = t.dataset.wreview || null; T.drawer = false; render(); if (!T.review && !T.wreview) scrollTo(0,0); return; }
   if (t.dataset.lesson){ T.open = t.dataset.lesson; T.view = "lesson"; T.sub = "method"; T.gen = null; render(); scrollTo(0,0); return; }
   if (t.dataset.sub){ T.sub = t.dataset.sub; render(); return; }
   if (t.dataset.goto){
@@ -2531,6 +2558,9 @@ document.addEventListener("click", async e => {
     if (v){ s.pair_id = v; T.students.find(x => x.id === v).pair_id = s.id; }
     render(); cmd(s.id, "refresh", {msg:"Учитель обновил работу в паре"}); if (v) cmd(v, "refresh", {msg:"Учитель обновил работу в паре"}); toast(v ? "Пара сохранена: доска на уроках общая" : "Ученик занимается один");
   }
+  if (a === "pend-open"){ document.getElementById("pend-modal")?.remove(); const st = T.students.find(o => o.id === T.sel); if (st) document.body.insertAdjacentHTML("beforeend", pendingModalHTML(st)); return; }
+  if (a === "pend-close" || a === "pend-close-bg"){ if (a === "pend-close-bg" && e.target !== t) return; document.getElementById("pend-modal")?.remove(); if (a === "pend-close" && !(t.dataset.review || t.dataset.wreview)) return; }
+  if (a === "jump"){ document.getElementById(t.dataset.to)?.scrollIntoView({behavior: "smooth", block: "start"}); return; }
   if (a === "shift"){
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), dates = {...(s.dates || {})}, now = U.iso(new Date());
     c.lessons.filter(l => l.date >= now).forEach(l => dates[l.id] = U.iso(new Date(new Date(l.date + "T00:00:00").getTime() + 7 * 864e5)));
