@@ -1391,7 +1391,7 @@ function viewRoom(){
   else if (!r.shown || !tabs.some(t => t[0] === r.shown)) r.shown = (tabs.find(t => t[0] !== "tools") || [])[0] || null;
   const where = T.online[s.id];
   /* по умолчанию – один лист посередине (там работа ученика); ключи, ответы и подсказки открываются кнопкой справа */
-  const sideOn = !!(tabs.length && (r.side || r.tab === "tools"));
+  const sideOn = !!(tabs.length && (r.side !== false || r.tab === "tools"));   // ключи и подсказки открыты по умолчанию, закрываются кнопкой
   return `<div class="roombar glass">
       <div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок: ${esc(s.name)}${pair ? " и " + esc(pair.name) : ""}</b><span data-online="${s.id}"></span></div>
       <div class="row" style="gap:8px">
