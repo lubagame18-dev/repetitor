@@ -62,7 +62,6 @@ window.Board = (() => {
   const TEXT_MIN_W = 120;               // авто-ширина инлайн-редактора
   const TEXT_MAX_W = 460;               // авто-ширина/максимум логических px
   const TEXT_MAX_H = 300;               // авто-высота инлайн-редактора
-  const ZOOM_MIN = 0.25, ZOOM_MAX = 4;   // ручной зум: CSS px на логический px
   const ER_SIZES = {s:4, m:7, l:16};   // размеры ластика: маленький / средний / большой (логические px)
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const rid = () => Math.random().toString(36).slice(2, 10);
@@ -145,7 +144,6 @@ window.Board = (() => {
     let pan = null;                    // перетаскивание холста инструментом «рука»
     let lastGrow = 0;                  // авто-расширение высоты при рисовании у нижнего края
     let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
-    let lastWheelSig = "", lastWheelAt = 0;      // дедупликация повторно отправленного wheel-события
     let selectedId = null;                       // выделенный объект (картинка/надпись)
     let selResize = null;                        // текущий жест ресайза рамкой выделения
     let selBusy = false;                         // идёт сохранение изменения выделенного (защита от двойных кликов)
@@ -185,11 +183,7 @@ window.Board = (() => {
           <button data-tool="hand" data-l="Рука" title="Листать холст рукой (или двумя пальцами)">✋</button>
           <span class="bd-sep"></span>
           ${COLORS.map(c => `<button class="bd-color" data-color="${c}" style="--bc:${c}" aria-label="Цвет"></button>`).join("")}
-          <span class="bd-sep"></span>
-          <button data-zoom="in" title="Увеличить" aria-label="Увеличить">+</button>
-          <button data-zoom="reset" title="Масштаб 100%" data-zoom-label aria-label="Масштаб 100%">100%</button>
-          <button data-zoom="out" title="Уменьшить" aria-label="Уменьшить">−</button>
-          <button data-zoom="fit" data-l="По ширине" title="По ширине экрана" aria-label="По ширине">⇔</button>
+          
           <span class="bd-sep"></span>
           <button data-act="undo" data-l="Отмена" title="Отменить (Ctrl+Z)">↶</button>
           <button data-act="redo" data-l="Вернуть" title="Вернуть (Ctrl+Shift+Z)">↷</button>
@@ -314,16 +308,10 @@ window.Board = (() => {
 
     /* ---------- размеры, масштаб и перерисовка ---------- */
     function fitScale(){ const w = Math.max(0, stage.clientWidth || root.clientWidth || 0); return w > 0 ? w / W : 1; }
-    function updateZoomLabel(){
-      const b = root.querySelector("[data-zoom-label]");
-      if (b) b.textContent = Math.round(scale * 100) + "%";
-    }
     function layout(){
       const bar = root.querySelector(".bd-bar"), side = root.querySelector(".bd-side .bd-tools");
       if (bar && side){ const top = 66 + bar.offsetHeight + 6; side.style.top = `calc(${top}px + env(safe-area-inset-top,0px))`; side.style.maxHeight = `calc(100vh - ${top + 10}px)`; }
-      if (fitMode) zoom = fitScale();
-      else zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
-      scale = zoom;
+      zoom = fitScale(); fitMode = true; scale = zoom;
       if (scale !== lastViewScale){ lastViewScale = scale; try { viewChanged(); } catch (_) {} }
       bg.style.width = W + "px"; bg.style.transform = `scale(${scale})`;
       if (anchorsDirty) markAnchors();
@@ -347,7 +335,6 @@ window.Board = (() => {
       cv.style.width = cssW + "px";
       cv.style.height = cssH + "px";
       ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
-      updateZoomLabel();
       redraw();
       placeEditor();
       placeCursors();
@@ -359,33 +346,17 @@ window.Board = (() => {
       const sr = stage.getBoundingClientRect(), r = cv.getBoundingClientRect();
       return [Math.round((sr.left + sr.width / 2 - r.left) / scale), Math.round((sr.top + sr.height / 2 - r.top) / scale)];
     }
-    function clampZoom(z){ z = +z; if (!Number.isFinite(z)) z = 1; return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)); }
-    const ZOOM_LOCK = true;            // масштаб временно отключён: лист всегда «по ширине», без самопроизвольного зума
-    function setZoom(z, clientX, clientY){
-      if (ZOOM_LOCK){ if (!fitMode){ fitMode = true; layout(); } return scale; }
-      const zz = clampZoom(z);
-      let lx, ly, cx, cy;
-      if (clientX != null && clientY != null){ const r = cv.getBoundingClientRect(); lx = (clientX - r.left) / scale; ly = (clientY - r.top) / scale; cx = clientX; cy = clientY; }
-      else { [lx, ly] = viewCenterLogical(); const sr = stage.getBoundingClientRect(); cx = sr.left + sr.width / 2; cy = sr.top + sr.height / 2; }
-      fitMode = false; zoom = zz; layout();
-      const sr = stage.getBoundingClientRect();
-      stage.scrollLeft = Math.max(0, Math.round(lx * scale - (cx - sr.left)));
-      stage.scrollTop = Math.max(0, Math.round(ly * scale - (cy - sr.top)));
-      placeEraseCur();
-      return scale;
-    }
-    function zoomBy(d){ return setZoom(scale + (+d || 0)); }
-    function fitWidth(){ fitMode = true; zoom = 1; layout(); stage.scrollLeft = 0; stage.scrollTop = 0; return scale; }
+    function setZoom(){ fitMode = true; layout(); return scale; }
+    function zoomBy(){ return scale; }
+    function fitWidth(){ fitMode = true; layout(); stage.scrollLeft = 0; stage.scrollTop = 0; return scale; }
     function extendHeight(px){ extraHeight += Math.max(100, Math.round(+px || 800)); layout(); return height; }
     /* вид относительно «по ширине»: ведущий и ведомый экраны разного размера видят одно и то же место */
-    function getRelView(){ return {fit: fitMode, z: +(scale / fitScale()).toFixed(3), x: Math.round(stage.scrollLeft / scale), y: Math.round(stage.scrollTop / scale)}; }
+    function getRelView(){ return {fit:true, z:1, x: Math.round(stage.scrollLeft / scale), y: Math.round(stage.scrollTop / scale)}; }
     function setRelView(v){
       if (!v || typeof v !== "object") return null;
       applyingView = true;
       try {
-        if (v.fit){ fitMode = true; layout(); }
-        else if (ZOOM_LOCK){ fitMode = true; layout(); }
-        else { fitMode = false; zoom = clampZoom((+v.z || 1) * fitScale()); layout(); }
+        fitMode = true; layout();
         stage.scrollLeft = Math.max(0, Math.round((+v.x || 0) * scale)); stage.scrollTop = Math.max(0, Math.round((+v.y || 0) * scale));
       } finally { setTimeout(() => { applyingView = false; }, 150); }
       return scale;
@@ -1440,48 +1411,38 @@ window.Board = (() => {
         }
       } catch (_) {}
       return null;
-    }
-    function zoomAction(kind){
-      if (kind === "in") return zoomBy(Math.max(0.1, scale * 0.2));
-      if (kind === "out") return zoomBy(-Math.max(0.1, scale * 0.2));
-      if (kind === "reset") return setZoom(1);
-      if (kind === "fit") return fitWidth();
-    }
+    } 
 
     /* «бесконечный» холст: у нижнего края лист сам удлиняется */
     stage.addEventListener("scroll", () => { if (stage.scrollLeft + stage.clientWidth > widthL * scale - 120 && widthL > W) maybeGrowWidth([widthL, 0]); if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); viewChanged(); }, {passive: true});
     /* ---------- жест двумя пальцами: щипок – масштаб, сдвиг – перемещение холста (любым инструментом) ---------- */
-    const tps = new Map(); let gz = null, gRaf = 0;
-    const tdist = () => { const a = [...tps.values()]; return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1; };
-    const tmid = () => { const a = [...tps.values()]; return {x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2}; };
+        /* жест двумя пальцами: только прокрутка холста (без масштабирования) */
+    const tps = new Map(); let gp = null;
+    const tmid = () => { const a = [...tps.values()]; return {x:(a[0].x + a[1].x)/2, y:(a[0].y + a[1].y)/2}; };
     stage.addEventListener("pointerdown", e => {
       if (e.pointerType !== "touch") return;
       tps.set(e.pointerId, {x: e.clientX, y: e.clientY});
       if (tps.size === 2){
         try { cancelStroke(); } catch (_) {}
         pan = null; moving = null; textTap = null; lpClear();
-        const m = tmid(); gz = {d0: tdist(), z0: scale, mx: m.x, my: m.y};
+        const m = tmid(); gp = {mx:m.x, my:m.y};
       }
-      if (gz){ e.stopPropagation(); e.preventDefault(); }
+      if (gp){ e.stopPropagation(); e.preventDefault(); }
     }, true);
     stage.addEventListener("pointermove", e => {
       if (e.pointerType !== "touch" || !tps.has(e.pointerId)) return;
       tps.set(e.pointerId, {x: e.clientX, y: e.clientY});
-      if (!gz || tps.size < 2) return;
+      if (!gp || tps.size < 2) return;
       e.stopPropagation(); e.preventDefault();
-      if (gRaf) return;
-      gRaf = requestAnimationFrame(() => {
-        gRaf = 0; if (!gz || tps.size < 2) return;
-        const m = tmid(), nz = clampZoom(gz.z0 * tdist() / gz.d0);
-        if (Math.abs(nz - scale) > 0.004) setZoom(nz, m.x, m.y);
-        stage.scrollLeft -= m.x - gz.mx; stage.scrollTop -= m.y - gz.my;
-        gz.mx = m.x; gz.my = m.y;
-      });
+      const m = tmid();
+      stage.scrollLeft -= m.x - gp.mx;
+      stage.scrollTop  -= m.y - gp.my;
+      gp.mx = m.x; gp.my = m.y;
     }, true);
     const tpEnd = e => {
       if (e.pointerType !== "touch") return;
-      const was = !!gz; tps.delete(e.pointerId);
-      if (tps.size < 2) gz = null;
+      const was = !!gp; tps.delete(e.pointerId);
+      if (tps.size < 2) gp = null;
       if (was){ e.stopPropagation(); }
     };
     stage.addEventListener("pointerup", tpEnd, true);
@@ -2052,7 +2013,6 @@ window.Board = (() => {
 
     root.addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
-      if (b.dataset.zoom){ zoomAction(b.dataset.zoom); return; }
       if (b.dataset.esz){ ER = ER_SIZES[b.dataset.esz] || ER; try { localStorage.setItem("bd-er", b.dataset.esz); } catch (_) {} syncEraseSize(); placeEraseCur(); return; }
       if (b.dataset.act === "extend"){ extendHeight(800); return; }
       if (b.dataset.act === "insert-text"){ openEditor({x:lastPoint.x, y:lastPoint.y}); return; }
@@ -2260,19 +2220,7 @@ window.Board = (() => {
       hidHandlers = [["visibilitychange", onVis, document], ["online", onVis, window], ["focus", onVis, window]];
     }
     renderWho();
-
     /* ---------- запуск ---------- */
-    /* колесо с Ctrl/Alt/Meta – зум к точке под курсором; обычное колесо – нативный скролл */
-    const onWheel = e => {
-      if (!(e.ctrlKey || e.altKey || e.metaKey)) return;
-      e.preventDefault();
-      const now = performance.now();
-      const sig = e.clientX + "," + e.clientY + "," + e.deltaY + "," + (e.ctrlKey ? 1 : 0) + (e.altKey ? 1 : 0) + (e.metaKey ? 1 : 0);
-      if (sig === lastWheelSig && now - lastWheelAt < 80) return;   // одно событие могли прислать и на canvas, и на stage
-      lastWheelSig = sig; lastWheelAt = now;
-      setZoom(scale * (e.deltaY > 0 ? 0.9 : 1.1), e.clientX, e.clientY);
-    };
-    stage.addEventListener("wheel", onWheel, {passive:false});
     let roT = 0; const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(layout, 30); }); ro.observe(stage); ro.observe(bg);
     setTool("pen"); setColor(COLORS[0]);
 
@@ -2315,7 +2263,6 @@ window.Board = (() => {
       try { ro.disconnect(); } catch (_) {}
       clearTimeout(roT);
       clearTimeout(bgSendT); clearTimeout(bgReqT);
-      try { stage.removeEventListener("wheel", onWheel); } catch (_) {}
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onDocDown, true);
       document.removeEventListener("paste", onPaste);
