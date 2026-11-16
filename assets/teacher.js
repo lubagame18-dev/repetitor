@@ -2683,7 +2683,7 @@ document.addEventListener("click", async e => {
 
 /* ---------- запуск ---------- */
 (async () => {
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => { try { r.update(); } catch (_) {} }).catch(() => {});
   try{ const th = localStorage.getItem("oge-theme-t"); if (th) U.applyTheme(th); U.setMascot(localStorage.getItem("oge-mascot-t")); }catch(_){}
   render();
   if (!sb) return;

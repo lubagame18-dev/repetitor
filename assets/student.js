@@ -1901,7 +1901,7 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
     else if (S.view === "quizzes") await openQuizzes();
   }
   render();
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => { try { r.update(); } catch (_) {} }).catch(() => {});
 })();
 window.__app = {S, render, openQuiz, openQuizzes, loadQuizzes, lessonTabs, lessonPane};   // для отладки и автотестов
 })();

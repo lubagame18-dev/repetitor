@@ -1805,19 +1805,68 @@ window.Board = (() => {
       } catch (_) { toast("Не удалось открыть изображение"); return []; }
       finally { URL.revokeObjectURL(url); }
     }
+    /* PDF.js грузим с нашего сайта (на планшетах внешняя CDN бывает недоступна) */
+    async function loadPdfJs(){
+      if (window.pdfjsLib) return true;
+      try { await loadScript("assets/pdfjs/pdf.min.js?v=1"); } catch (_) {
+        try { await loadScript("https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"); } catch (_) { return false; }
+      }
+      if (!window.pdfjsLib) return false;
+      try {
+        const base = new URL("assets/pdfjs/", location.href).href;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.js?v=1";
+      } catch (_) {}
+      return true;
+    }
+    /* максимально качественная картинка страницы PDF в пределах лимита размера листа доски:
+       сначала WebP высокого качества, потом плавное уменьшение; JPEG — только если WebP не поддержан */
+    function fitPdfDataUrl(cv2, maxChars, maxW){
+      let c = cv2;
+      const k = Math.min(1, (maxW || 2200) / c.width);
+      if (k < 1){
+        const c2 = document.createElement("canvas");
+        c2.width = Math.max(1, Math.round(c.width * k)); c2.height = Math.max(1, Math.round(c.height * k));
+        c2.getContext("2d").drawImage(c, 0, 0, c2.width, c2.height); c = c2;
+      }
+      const enc = q => {
+        try { const u = c.toDataURL("image/webp", q); if (/^data:image\/webp/.test(u)) return u; } catch (_) {}
+        try { return c.toDataURL("image/jpeg", q); } catch (_) { return ""; }
+      };
+      let url = enc(0.94);
+      if (url && url.length <= maxChars) return url;
+      for (const q of [0.88, 0.8, 0.72, 0.64, 0.56]){
+        url = enc(q);
+        if (url && url.length <= maxChars) return url;
+      }
+      for (let i = 0; i < 9 && (!url || url.length > maxChars); i++){
+        const w = Math.max(900, Math.round(c.width * 0.88));
+        const h = Math.max(1, Math.round(c.height * (w / Math.max(1, c.width))));
+        const c2 = document.createElement("canvas");
+        c2.width = w; c2.height = h; c2.getContext("2d").drawImage(c, 0, 0, w, h); c = c2;
+        url = enc(0.8);
+      }
+      return url || fitDataUrl(cv2, maxChars, maxW);
+    }
     async function pdfToImages(file, budget, limit){
       try {
-        if (!window.pdfjsLib) await loadScript("https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js");
-        if (!window.pdfjsLib) throw new Error("PDF-модуль не загрузился (нет интернета)");
+        if (!(await loadPdfJs())) throw new Error("PDF-модуль не загрузился");
         const buf = await file.arrayBuffer();
         const doc = await pdfjsLib.getDocument({data:buf}).promise;
         const out = []; const n = Math.min(doc.numPages, limit || 8);
+        if (n > 1) toast(`Готовлю страницы PDF (${n})…`);
         for (let i = 1; i <= n; i++){
-          const pg = await doc.getPage(i), vp = pg.getViewport({scale:1.4});
+          const pg = await doc.getPage(i);
+          /* рендерим крупно (чёткий текст), затем ужимаем под лимит одного листа */
+          const base = pg.getViewport({scale:1});
+          const sc = Math.max(1.8, Math.min(3.4, 1900 / Math.max(1, base.width)));
+          const vp = pg.getViewport({scale:sc});
           const c2 = document.createElement("canvas");
           c2.width = Math.max(1, Math.round(vp.width)); c2.height = Math.max(1, Math.round(vp.height));
-          await pg.render({canvasContext:c2.getContext("2d"), viewport:vp}).promise;
-          out.push({src: fitDataUrl(c2, budget || ITEM_MAX, 1600), ratio: c2.width / c2.height});
+          const cx = c2.getContext("2d");
+          cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, c2.width, c2.height);
+          await pg.render({canvasContext:cx, viewport:vp, background:"#ffffff"}).promise;
+          out.push({src: fitPdfDataUrl(c2, budget || ITEM_MAX, 2200), ratio: c2.width / c2.height});
+          await delay(0);
         }
         return out;
       } catch (e) { toast("PDF не удалось открыть: " + oneLine(e && e.message)); return []; }
@@ -1916,7 +1965,7 @@ window.Board = (() => {
       return [{label:file.name || "Картинка", html:`<div class="bd-sheet"><h2>${esc(file.name || "Картинка")}</h2><img src="${src}" alt="" style="width:100%;border-radius:8px;border:1px solid #e6e2f2"></div>`}];
     }
     async function buildPdfPages(file){
-      const imgs = await pdfToImages(file, 48000, 60);
+      const imgs = await pdfToImages(file, PAGE_HTML_MAX - 1200, 60);
       return imgs.map((it, i) => ({label:"PDF " + (i + 1), html:`<div class="bd-sheet"><h2>${esc(file.name)} — страница ${i + 1}</h2><img src="${it.src}" alt="" style="width:100%;border-radius:8px;border:1px solid #e6e2f2"></div>`}));
     }
     async function buildVideoPage(file){
