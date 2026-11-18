@@ -142,6 +142,8 @@ window.Board = (() => {
         let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
     let pan = null;                    // перетаскивание холста инструментом «рука»
     let scrollGuard = null;            // пока пишем – не даём странице/листу прыгнуть вверх
+    let lastDrawAt = 0;                // когда последний раз рисовали – защита от случайного переключения листа ладонью
+    let touchCount = 0;                // сколько пальцев на экране (ладонь при письме)
     
     let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
     let selectedId = null;                       // выделенный объект (картинка/надпись)
@@ -1436,6 +1438,7 @@ window.Board = (() => {
         return;
       }
       /* защита от «прыжка» страницы/холста вверх во время письма */
+      lastDrawAt = Date.now();
       scrollGuard = {y: scrollY, st: stage.scrollTop, sl: stage.scrollLeft, at: Date.now()};
       const p = pos(e);
       lastPoint = {x:p[0], y:p[1]};
@@ -1545,7 +1548,7 @@ window.Board = (() => {
     function cancelStroke(){ if (drawing && !drawing.erase) send("draft", {sid:drawing.sid, p:[], end:true, drop:true}); drawing = null; redraw(); }
     function end(e){
       if (e && drawing && drawing.pid !== e.pointerId) return;
-      scrollGuard = null;
+      scrollGuard = null; lastDrawAt = Date.now();
       lpClear();
       if (pan){ pan = null; cv.style.cursor = "grab"; return; }
       if (moving){
@@ -1582,7 +1585,7 @@ window.Board = (() => {
       if (d.p.length) addItem(d);
     }
     cv.addEventListener("pointerup", end);
-    cv.addEventListener("pointercancel", e => { scrollGuard = null; pan = null; moving = null; textTap = null; drawing = null; try { cv.style.cursor = tool === "hand" ? "grab" : cv.style.cursor; } catch (_) {} placeEraseCur(e); });
+    cv.addEventListener("pointercancel", e => { scrollGuard = null; lastDrawAt = Date.now(); pan = null; moving = null; textTap = null; drawing = null; try { cv.style.cursor = tool === "hand" ? "grab" : cv.style.cursor; } catch (_) {} placeEraseCur(e); });
     cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse"){ placeEraseCur(); end(e); } });
 
     /* снимок листа: всё, что на нём – задания, ответы, пометки ручкой */
@@ -1666,7 +1669,29 @@ window.Board = (() => {
     const onDocDown = e => { if (menu && !menu.hidden && !menu.contains(e.target)) closeMenu(); };
     document.addEventListener("pointerdown", onDocDown, true);
 
-    root.addEventListener("click", async e => {
+    /* защита от случайного перелистывания ладонью: сразу после штриха и при втором пальце кнопки листов не срабатывают */
+    const touchSync = () => {};
+    document.addEventListener("touchstart", e => { touchCount = e.touches ? e.touches.length : 0; }, {passive:true});
+    document.addEventListener("touchend", e => { touchCount = e.touches ? e.touches.length : 0; }, {passive:true});
+    document.addEventListener("touchcancel", () => { touchCount = 0; }, {passive:true});
+    const pageTapBlocked = e => {
+      if (drawing || Date.now() - lastDrawAt < 1200) return true;
+      if (e.pointerType === "touch" && Date.now() - penSeen < 10000) return true;
+      if (e.pointerType === "touch" && touchCount > 1) return true;
+      return false;
+    };
+    const blockPageTap = e => {
+      const b = e.target.closest("[data-bpage],[data-bstep],[data-pstep]"); if (!b) return;
+      if (pageTapBlocked(e)){ e.preventDefault(); e.stopPropagation(); }
+    };
+    root.addEventListener("pointerdown", blockPageTap, true);
+    root.addEventListener("touchstart", blockPageTap, {capture:true, passive:false});
+    root.addEventListener("click", blockPageTap, true);
+    root.addEventListener("click", e => {
+      const b = e.target.closest("[data-bpage],[data-bstep],[data-pstep]");
+      if (!b) return;
+      if (drawing || Date.now() - lastDrawAt < 1200){ e.preventDefault(); e.stopPropagation(); }
+    }, true);    root.addEventListener("click", async e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
       if (b.dataset.pstep){ stepPage(+b.dataset.pstep); return; }
       if (b.dataset.bpage){ openPage(b.dataset.bpage); if (o.role === "teacher") send("page", {page:b.dataset.bpage}); }

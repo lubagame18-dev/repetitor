@@ -1788,6 +1788,61 @@ test("X3", "Ученик: панель рисования доступна в к
   await student.eval(`document.querySelector('.ink-overlay [data-ink-close]').click(); true`);
   await student.waitFor(`document.querySelector('.ink-overlay') ? 0 : 1`, { timeout: 5000, label: "X3: оверлей закрылся" });
 });
+test("X4", "Ученик: письмо на доске в комнате не сбрасывает страницу/холст вверх", async ({ teacher, student }) => {
+  const L = W.lessons.rus[0];
+  await clickStudentRow(teacher, ROW_A, "X4: ученик");
+  await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${L.id}"]') ? 1 : 0`, { timeout: 12000, label: "X4: урок в плане" });
+  await clickStartLesson(teacher, L.id, "X4: урок");
+  await student.waitFor(`(() => { const S = window.__app.S; return S && S.view === "room" && document.querySelector("#board .bd-cv") ? 1 : 0; })()`, { timeout: 20000, label: "X4: ученик на доске урока" });
+  await sleep(500);
+  await student.eval(`(() => { window.__scrolls = []; addEventListener("scroll", () => window.__scrolls.push({y: Math.round(scrollY), t: Math.round(performance.now())})); const st = document.querySelector("#board .bd-stage"); if (st) st.addEventListener("scroll", () => window.__scrolls.push({stage: Math.round(st.scrollTop), t: Math.round(performance.now())})); scrollTo(0, Math.min(500, document.documentElement.scrollHeight - innerHeight - 5)); return true; })()`);
+  await sleep(200);
+  const before = await student.eval(`(() => { const st = document.querySelector("#board .bd-stage"); return {y: Math.round(scrollY), stage: st ? Math.round(st.scrollTop) : null, view: window.__app.S.view}; })()`);
+  const r = await student.eval(`(() => { const cv = document.querySelector("#board .bd-cv"); const b = cv.getBoundingClientRect(); return {x: b.left + b.width * 0.75, y: b.top + Math.min(b.height - 30, 420)}; })()`);
+  await student.cdp.send("Input.dispatchMouseEvent", {type:"mousePressed", x:r.x, y:r.y, button:"left", buttons:1, clickCount:1});
+  for (let i=1;i<=15;i++) await student.cdp.send("Input.dispatchMouseEvent", {type:"mouseMoved", x:r.x + i*6, y:r.y + i*2, button:"left", buttons:1});
+  await student.cdp.send("Input.dispatchMouseEvent", {type:"mouseReleased", x:r.x + 90, y:r.y + 30, button:"left", buttons:0, clickCount:1});
+  await sleep(500);
+  const after = await student.eval(`(() => { const st = document.querySelector("#board .bd-stage"); return {y: Math.round(scrollY), stage: st ? Math.round(st.scrollTop) : null, view: window.__app.S.view, scrolls: window.__scrolls.slice(-8)}; })()`);
+  if (Math.abs(after.y - before.y) > 40) throw new Error("прыжок страницы при письме: " + JSON.stringify({before, after}));
+  if (before.stage != null && Math.abs(after.stage - before.stage) > 40) throw new Error("прыжок холста при письме: " + JSON.stringify({before, after}));
+  if (after.view !== "room") throw new Error("ученика выбросило из комнаты: " + after.view);
+});
+test("X5", "Ученик: письмо пальцем на доске в комнате не сбрасывает страницу/холст вверх", async ({ teacher, student }) => {
+  const L = W.lessons.rus[0];
+  await clickStudentRow(teacher, ROW_A, "X4: ученик");
+  await teacher.waitFor(`document.querySelector('[data-act="start-lesson"][data-rl="${L.id}"]') ? 1 : 0`, { timeout: 12000, label: "X4: урок в плане" });
+  await clickStartLesson(teacher, L.id, "X4: урок");
+  await student.waitFor(`(() => { const S = window.__app.S; return S && S.view === "room" && document.querySelector("#board .bd-cv") ? 1 : 0; })()`, { timeout: 20000, label: "X4: ученик на доске урока" });
+  await sleep(500);
+  await student.eval(`(() => { window.__scrolls = []; addEventListener("scroll", () => window.__scrolls.push({y: Math.round(scrollY), t: Math.round(performance.now())})); const st = document.querySelector("#board .bd-stage"); if (st) st.addEventListener("scroll", () => window.__scrolls.push({stage: Math.round(st.scrollTop), t: Math.round(performance.now())})); scrollTo(0, Math.min(500, document.documentElement.scrollHeight - innerHeight - 5)); return true; })()`);
+  await sleep(200);
+  const before = await student.eval(`(() => { const st = document.querySelector("#board .bd-stage"); return {y: Math.round(scrollY), stage: st ? Math.round(st.scrollTop) : null, view: window.__app.S.view}; })()`);
+  const r = await student.eval(`(() => { const cv = document.querySelector("#board .bd-cv"); const b = cv.getBoundingClientRect(); return {x: b.left + b.width * 0.75, y: b.top + Math.min(b.height - 30, 420)}; })()`);
+  await student.cdp.send("Input.dispatchTouchEvent", {type:"touchStart", touchPoints:[{x:r.x, y:r.y, id:1}]});
+  for (let i=1;i<=15;i++) await student.cdp.send("Input.dispatchTouchEvent", {type:"touchMove", touchPoints:[{x:r.x + i*6, y:r.y + i*2, id:1}]});
+  await student.cdp.send("Input.dispatchTouchEvent", {type:"touchEnd", touchPoints:[]});
+  await sleep(500);
+  const after = await student.eval(`(() => { const st = document.querySelector("#board .bd-stage"); return {y: Math.round(scrollY), stage: st ? Math.round(st.scrollTop) : null, view: window.__app.S.view, scrolls: window.__scrolls.slice(-8)}; })()`);
+  if (Math.abs(after.y - before.y) > 40) throw new Error("прыжок страницы при письме: " + JSON.stringify({before, after}));
+  if (before.stage != null && Math.abs(after.stage - before.stage) > 40) throw new Error("прыжок холста при письме: " + JSON.stringify({before, after}));
+  if (after.view !== "room") throw new Error("ученика выбросило из комнаты: " + after.view);
+});
+test("X6", "Ученик: фоновая перерисовка не возвращает доску на первый лист", async ({ student }) => {
+  await student.eval(`(() => { const S = window.__app.S; if (!S.course || !S.course.lessons.length) return false; S.view = "folder"; S.open = S.course.lessons[0].id; S.sub = "board"; S.boardPage = null; window.__app.render(); return true; })()`);
+  await student.waitFor(`document.querySelector('#board .bd-cv') ? 1 : 0`, { timeout: 10000, label: "X6: доска" });
+  await sleep(400);
+  const pages = await student.eval(`(() => { const i = window.__app.S.board.info(); return i.pages.map(p => p.key); })()`);
+  if (pages.length < 2) return; // один лист – проверять нечего
+  const target = pages[pages.length - 1];
+  await student.eval(`(() => { const b = Array.from(document.querySelectorAll('#board [data-bpage]')).find(x => x.dataset.bpage === ${JSON.stringify(target)}); if (b) b.click(); return true; })()`);
+  await sleep(250);
+  const before = await student.eval(`window.__app.S.board.page()`);
+  await student.eval(`window.__app.render(); true`);
+  await sleep(350);
+  const after = await student.eval(`window.__app.S.board.page()`);
+  if (before !== after) throw new Error(`страница доски сбросилась при перерисовке: ${before} -> ${after}`);
+});
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 

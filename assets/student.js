@@ -1631,6 +1631,8 @@ function render(){
   const app = $("#app");
   const keepY = scrollY, keepV = S.view + "|" + S.open + "|" + S.sub;   // фоновая перерисовка не должна подбрасывать страницу вверх
   const keepBoard = (() => { const st = document.querySelector("#app .bd-stage"); return st ? {t: st.scrollTop, l: st.scrollLeft} : null; })();
+  /* запоминаем фактически открытый лист доски, чтобы фоновая перерисовка не возвращала первый лист */
+  try { const bp = S.board && typeof S.board.page === "function" ? S.board.page() : null; if (bp) S.boardPage = bp; } catch (_) {}
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   /* урок ещё не загрузился (после перезагрузки) – пока показываем главную, маршрут не теряем */
@@ -1693,7 +1695,6 @@ function render(){
     const {pages, live} = roomBoardPages(l);
     S.board = Board.keep($("#board"), "r:" + l.id, {api: Board.api("student", sb, {code:S.token, lesson:l.id}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null,
       page: S.boardPage, role: "student", name: S.profile.name, pages, live, onPage: p => S.boardPage = p});
-    if (S.boardPage) S.board?.open(S.boardPage);
     if (S.follow?.on) followView();
   }
   if (v === "myboard"){
