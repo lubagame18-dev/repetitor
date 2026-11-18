@@ -139,8 +139,7 @@ window.Board = (() => {
     let zoom = 1;                      // абсолютный масштаб, CSS px на логический px
     let lastViewScale = 0;
     let widthL = W;
-    let extraHeight = 0;               // кнопка «Расширить лист»
-    let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
+        let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
     let pan = null;                    // перетаскивание холста инструментом «рука»
     
     let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
@@ -195,7 +194,7 @@ window.Board = (() => {
           <button data-act="stick" data-l="Задание" title="Прикрепить задание урока на холст" ${o.role === "teacher" ? "" : "hidden"}>📌</button>
           <button data-act="snap" data-l="Снимок" title="Снимок листа со всеми пометками" ${o.role === "teacher" ? "" : "hidden"}>📸</button>
           ${o.role === "teacher" ? `<button data-act="clear" data-l="Очистить" title="Очистить лист">🧹</button>` : ""}
-          <button data-act="extend" hidden>↕</button><button data-act="insert-text" hidden>📝</button><button data-act="insert-image" hidden>🖼</button>
+          <button data-act="insert-text" hidden>📝</button><button data-act="insert-image" hidden>🖼</button>
         </div></div>
       <div class="bd-stage"><div class="bd-wrap">
         <div class="bd-bg"></div>
@@ -320,7 +319,7 @@ window.Board = (() => {
       const bgH = bg.scrollHeight;
       if (boxesDirty || scale !== lastScale || bgH !== lastBgH){ measureAnchors(); boxesDirty = false; lastScale = scale; lastBgH = bgH; }
       /* фиксированная высота: запас для рисования вниз, но она не меняется от каждого штриха */
-      height = Math.max(4000, bgH + 400) + extraHeight;
+      height = Math.max(4000, bgH + 400);
       widthL = W;
       const cssW = Math.max(1, Math.round(widthL * scale));
       const cssH = Math.max(1, Math.round(height * scale));
@@ -346,7 +345,6 @@ window.Board = (() => {
     function setZoom(){ fitMode = true; layout(); return scale; }
     function zoomBy(){ return scale; }
     function fitWidth(){ fitMode = true; layout(); stage.scrollLeft = 0; stage.scrollTop = 0; return scale; }
-    function extendHeight(px){ extraHeight += Math.max(100, Math.round(+px || 800)); layout(); return height; }
     /* вид относительно «по ширине»: ведущий и ведомый экраны разного размера видят одно и то же место */
     function getRelView(){ return {fit:true, z:1, x: Math.round(stage.scrollLeft / scale), y: Math.round(stage.scrollTop / scale)}; }
     function setRelView(v){
@@ -2010,7 +2008,7 @@ window.Board = (() => {
     root.addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
       if (b.dataset.esz){ ER = ER_SIZES[b.dataset.esz] || ER; try { localStorage.setItem("bd-er", b.dataset.esz); } catch (_) {} syncEraseSize(); placeEraseCur(); return; }
-      if (b.dataset.act === "extend"){ extendHeight(800); return; }
+
       if (b.dataset.act === "insert-text"){ openEditor({x:lastPoint.x, y:lastPoint.y}); return; }
       if (b.dataset.act === "insert-image"){
         if (root.querySelector(".bd-insertform")) return;
@@ -2319,7 +2317,6 @@ window.Board = (() => {
       setZoom: (z, cx, cy) => setZoom(z, cx, cy),
       zoomBy: d => zoomBy(d),
       fitWidth: () => fitWidth(),
-      extendHeight: px => extendHeight(px),
       openPage,
       pages: () => pagesArr.map(p => ({key:p.key, label:p.label, saved:!!p.saved})),
       debug(){
