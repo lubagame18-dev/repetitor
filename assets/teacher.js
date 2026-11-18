@@ -2048,6 +2048,18 @@ function liveChan(id){
       bar.hidden = false;
     }
     T.feed.unshift({...m, at: Date.now()}); T.feed = T.feed.slice(0, 30);
+    /* действие ученика – сразу показываем его «в сети», не дожидаясь опроса */
+    try {
+      if (m.id){
+        T.online = T.online || {};
+        const p = {role:"student", id:m.id, name:m.name, where:m.where || "на сайте", viaAct:true};
+        T.online[m.id] = p;
+        const me = T.students.find(x => x.id === m.id);
+        const person = x => x.person_id || x.id;
+        if (me) T.students.filter(x => person(x) === person(me)).forEach(x => { if (!T.online[x.id]) T.online[x.id] = {...p, id:x.id}; });
+        paintOnline();
+      }
+    } catch (_) {}
     toast(`${m.name.split(" ")[0]}: ${m.text}`); refreshSoon();
   }).subscribe(st => {
     if (T.live.chans.get(id) !== ch) return;
@@ -2082,7 +2094,7 @@ function liveGuardT(){
     if (ev === "visibilitychange" && document.hidden) return;
     liveEnsureT(); pollSeen();
   }));
-  seenTm = setInterval(pollSeen, 10000); pollSeen();
+  seenTm = setInterval(pollSeen, 7000); pollSeen();
 }
 /* запасной признак «в сети»: ученик подаёт сигнал в базу, даже если живой канал оборвался */
 async function pollSeen(){
@@ -2101,8 +2113,15 @@ function onlineNow(){
   Object.values(T.live.presenceState()).flat().forEach(p => { if (p.role !== "student") return;
     T.online[p.id] = p; const me = T.students.find(x => x.id === p.id);
     if (me) T.students.filter(x => person(x) === person(me)).forEach(x => { if (!T.online[x.id]) T.online[x.id] = p; }); });
-  /* запасной признак: ученик недавно подал сигнал через базу (живой канал мог оборваться) */
-  Object.entries(T.seen || {}).forEach(([sid, wh]) => { if (!T.online[sid]) T.online[sid] = {role: "student", id: sid, where: wh, viaDb: true}; });
+  /* запасной признак: ученик недавно подал сигнал через базу (живой канал мог оборваться);
+     один человек может быть в разных предметах – отмечаем все его записи */
+  Object.entries(T.seen || {}).forEach(([sid, wh]) => {
+    if (T.online[sid]) return;
+    const s = T.students.find(x => x.id === sid);
+    const p = {role: "student", id: sid, where: wh, viaDb: true};
+    T.online[sid] = p;
+    if (s) T.students.filter(x => person(x) === person(s)).forEach(x => { if (!T.online[x.id]) T.online[x.id] = {...p, id: x.id}; });
+  });
   /* «Показать ученику», нажатое пока ученик был не в сети: досылаем, как только он зашёл */
   const now = new Set(Object.keys(T.online).filter(k => !k.startsWith("p:")));
   if (T.lastShow && Date.now() - T.lastShow.at < 15 * 60e3){
@@ -2119,24 +2138,28 @@ function paintOnline(){
   document.querySelectorAll("[data-online]").forEach(el => { const p = T.online[el.dataset.online]; el.innerHTML = p ? `<span class="live">онлайн${p.where ? " · " + esc(p.where) : ""}</span>` : ""; });
   const n = Object.keys(T.online).length, el = document.getElementById("online-count"); if (el) el.innerHTML = n ? `<span class="live">сейчас онлайн: ${n}</span>` : "";
 }
-let refT = 0;
+let refT = 0, refBusy = false;
 function refreshSoon(){
   clearTimeout(refT);
   refT = setTimeout(async () => {
-    const [rs, hw, wr, ac, st, qz, qr] = await Promise.all([
-      withTimeout(sb.from("results").select("*").order("created_at"), LOAD_MS.bg, "результаты"),
-      withTimeout(sb.from("homework").select("*"), LOAD_MS.bg, "домашние задания"),
-      withTimeout(sb.from("writings").select("*"), LOAD_MS.bg, "письменные работы"),
-      withTimeout(sb.from("activity").select("*"), LOAD_MS.bg, "активность"),
-      withTimeout(sb.from("students").select(ST_COLS).order("created_at"), LOAD_MS.bg, "ученики"),
-      withTimeout(sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}), LOAD_MS.bg, "тесты по темам"),
-      withTimeout(sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false}), LOAD_MS.bg, "результаты тестов")
-    ]);
-    if (!st.error) T.students = st.data || [];
-    if (!rs.error) T.rows = rs.data || []; if (!hw.error) T.hw = hw.data || []; if (!wr.error) T.writings = wr.data || []; if (!ac.error) T.act = ac.data || [];
-    if (!qz.error) T.qzQuizzes = qz.data || []; if (!qr.error) T.qzResults = qr.data || [];
-    if (!typing()) render(); else T.stale = true;
-  }, 500);
+    if (refBusy){ refreshSoon(); return; }      // не наслаиваем тяжёлые запросы друг на друга
+    refBusy = true;
+    try {
+      const [rs, hw, wr, ac, st, qz, qr] = await Promise.all([
+        withTimeout(sb.from("results").select("*").order("created_at"), LOAD_MS.bg, "результаты"),
+        withTimeout(sb.from("homework").select("*"), LOAD_MS.bg, "домашние задания"),
+        withTimeout(sb.from("writings").select("*"), LOAD_MS.bg, "письменные работы"),
+        withTimeout(sb.from("activity").select("*"), LOAD_MS.bg, "активность"),
+        withTimeout(sb.from("students").select(ST_COLS).order("created_at"), LOAD_MS.bg, "ученики"),
+        withTimeout(sb.from("topic_quizzes").select("*").order("created_at", {ascending: false}), LOAD_MS.bg, "тесты по темам"),
+        withTimeout(sb.from("topic_quiz_results").select("*").order("created_at", {ascending: false}), LOAD_MS.bg, "результаты тестов")
+      ]);
+      if (!st.error) T.students = st.data || [];
+      if (!rs.error) T.rows = rs.data || []; if (!hw.error) T.hw = hw.data || []; if (!wr.error) T.writings = wr.data || []; if (!ac.error) T.act = ac.data || [];
+      if (!qz.error) T.qzQuizzes = qz.data || []; if (!qr.error) T.qzResults = qr.data || [];
+      if (!typing()) render(); else T.stale = true;
+    } finally { refBusy = false; }
+  }, 1000);
 }
 /* команда ученику: обновить данные или открыть урок */
 function cmd(to, type, extra){ if (T.live) T.live.send({type:"broadcast", event:"cmd", payload:{cmd:true, to, type, ...extra}}).catch(() => {}); }
