@@ -47,10 +47,16 @@ async function load(){
   if (sb){
     /* мобильная сеть: до 3 попыток; при сбое показываем сохранённое и кнопку «Повторить» */
     let data = null, error = null;
+    const cached0 = LS.get("cache", null);
+    const pc0 = S.profile?.course;
+    const bi0 = window.BUILTIN_INDEX || {};
+    const cachedBase0 = (cached0?.base || []).filter(b => b && b.key === pc0);
+    /* «лёгкий» ответ без курса – только когда уроки уже в памяти/кэше.
+       Иначе просим курс с сервера: так ученика не выбросит на титульный лист из-за пустой базы. */
+    const packReady = !!(pc0 && (window.BUILTIN_COURSES?.[pc0] || cachedBase0.length || window.BuiltinLoader?.has?.(pc0)));
+    const lite = !!(pc0 && packReady && (bi0[pc0] || window.BuiltinLoader?.has?.(pc0)));
     for (let k = 0; k < 3 && !data; k++){
       try {
-        /* курс из встроенной базы грузится с сайта и кэшируется браузером – с сервера его не тянем (быстро на планшете) */
-        const bi = window.BUILTIN_INDEX || {}, pc = S.profile?.course, lite = !!(pc && (bi[pc] || window.BuiltinLoader?.has?.(pc)));
         let r = await sb.rpc("student_state", lite ? {p_code: S.token, p_base: false} : {p_code: S.token});
         if (r.error && lite && /p_base|PGRST202|schema cache|Could not find/i.test((r.error.message || "") + (r.error.code || ""))) r = await sb.rpc("student_state", {p_code: S.token});
         data = r.data; error = r.error;
@@ -61,10 +67,9 @@ async function load(){
       S.loadError = error.message || "нет связи";
       const cache = LS.get("cache", null);
       if (cache){ S.rows = cache.rows || []; S.hw = cache.hw || {}; S.sheets = cache.sheets || {}; S.writings = cache.writings || {}; S.mats = cache.mats || []; S.base = cache.base || []; U.loadBase(S.base); }
-      if (S.profile?.course && window.BuiltinLoader){
-        try { await BuiltinLoader.ensure(S.profile.course); if (window.BUILTIN_COURSES?.[S.profile.course] && !(S.base || []).length){ S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); } } catch (_) {}
-      }
-      toast("Нет связи с сервером. Показываю сохранённые уроки.");
+      await ensureBaseFor(S.profile?.course, S.base);
+      if (!S.base.length && S.profile?.course){ S.loadError = "Не удалось загрузить уроки. Нажмите «Повторить»."; }
+      toast(S.base.length ? "Нет связи с сервером. Показываю сохранённые уроки." : "Нет связи. Проверьте интернет и нажмите «Повторить».");
       recompute();
       if (!S.retryT) S.retryT = setTimeout(async () => { S.retryT = null; try { await load(); render(); } catch (_) {} }, 7000);
       return;
@@ -79,10 +84,19 @@ async function load(){
     S.writings = Object.fromEntries((data.writings || []).map(h => [h.lesson_id, h]));
     S.mats = data.materials || [];
     S.works = {}; (data.works || []).forEach(w => (S.works[w.lesson_id] = S.works[w.lesson_id] || {})[w.task] = w.data);
-    S.base = data.course_data ? [{key: S.profile.course, data: data.course_data}] : [];
-    if ((!S.base.length || U.builtinNewer(S.profile?.course, data.course_data)) && window.BuiltinLoader && S.profile?.course) BuiltinLoader.ensure(S.profile.course).then(ok => { if (ok && window.BUILTIN_COURSES?.[S.profile.course]) { S.base = [{key: S.profile.course, data: window.BUILTIN_COURSES[S.profile.course]}]; U.loadBase(S.base); recompute(); render(); } });
+    const pc = S.profile?.course;
+    const cachedBase = (LS.get("cache", null)?.base || []).filter(b => b && b.key === pc);
+    S.base = data.course_data ? [{key: pc, data: data.course_data}] : cachedBase;
+    /* лёгкий ответ не содержит курс – обязательно дожидаемся уроков, иначе при перерисовке
+       ученик оказывается на титульном листе/пустом плане */
+    if (!S.base.length) await ensureBaseFor(pc, S.base);
+    if (!S.base.length && lite && sb){
+      try { const full = await sb.rpc("student_state", {p_code: S.token}); if (full.data?.course_data){ data = full.data; S.profile = data.profile; S.mats = data.materials || S.mats; S.base = [{key: S.profile.course, data: data.course_data}]; } } catch (_) {}
+    }
+    if (!S.base.length && pc){ S.loadError = "Не удалось загрузить уроки курса. Нажмите «Повторить»."; }
+    if (S.base.length && U.builtinNewer(pc, data.course_data) && window.BuiltinLoader && pc) BuiltinLoader.ensure(pc).then(ok => { if (ok && window.BUILTIN_COURSES?.[pc]) { S.base = [{key: pc, data: window.BUILTIN_COURSES[pc]}]; U.loadBase(S.base); recompute(); render(); } }).catch(() => {});
     U.loadBase(S.base);
-    LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats});
+    LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
     /* результаты тестов по темам нужны для «усвоено N%» в списке уроков – подгружаем фоном */
     if (!S.quizzes && !S.qzBusy) setTimeout(() => loadQuizzes().then(ok => { if (ok && !typing()) { try { render(); } catch (_) {} } }).catch(() => {}), 300);
   } else {
@@ -91,6 +105,22 @@ async function load(){
   recompute();
 }
 function logout(msg){ LS.set("session", null); S.token = null; S.profile = null; S.view = "home"; S.room = null; S.away = false; render(); if (msg) toast(msg); }
+/* гарантированно получить уроки курса: встроенный файл с несколькими попытками и таймаутом */
+async function ensureBaseFor(course, target){
+  if (!course || !window.BuiltinLoader) return false;
+  for (let attempt = 0; attempt < 3; attempt++){
+    let ok = false;
+    try { ok = await Promise.race([BuiltinLoader.ensure(course), new Promise(r => setTimeout(() => r(false), 12000))]); } catch (_) { ok = false; }
+    if (ok && window.BUILTIN_COURSES?.[course]){
+      target.length = 0;
+      target.push({key: course, data: window.BUILTIN_COURSES[course]});
+      U.loadBase(target);
+      return true;
+    }
+    await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+  }
+  return false;
+}
 async function sendResult(lesson_id, kind, score, total, wrong, dur, answers){
   S.rows.push({lesson_id, kind, score, total, wrong, duration_sec:dur, created_at: new Date().toISOString()}); recompute();
   if (sb){
@@ -1547,7 +1577,11 @@ function render(){
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   /* урок ещё не загрузился (после перезагрузки) – пока показываем главную, маршрут не теряем */
   const wait = S.view === "folder" && !(S.course?.lessons || []).some(l => l.id === S.open);
+  /* если страница уже открыта (ученик пишет/рисует), не выбрасываем его на титульный лист
+     из-за временно не подгрузившегося урока – дождёмся данных и перерисуемся */
+  if (wait && S.renderReady){ return; }
   const v = wait ? "home" : S.view;
+  if (!wait) S.renderReady = true;
   if (!wait) try { sessionStorage.setItem("s-route", JSON.stringify({view: v, open: S.open, sub: S.sub, y: v === S.routeV ? scrollY : 0})); S.routeV = v; } catch(_) {}
   if (S.routeY){ const y = S.routeY; S.routeY = 0; requestAnimationFrame(() => scrollTo(0, y)); }
   const body = v==="home"?viewHome():v==="lessons"?viewLessons():v==="folder"?viewFolder():v==="test"?viewTest():v==="stats"?viewStats():v==="plan"?viewPlan():v==="entry"?viewEntry():v==="look"?viewLook():v==="myboard"?viewMyBoard():v==="room"?viewRoom():v==="self"?viewSelf():v==="oge"?viewOge():v==="profile"?viewProfile():v==="quiz"?viewQuiz():v==="quizzes"?viewQuizzes():viewInstall();
