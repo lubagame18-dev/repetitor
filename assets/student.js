@@ -846,6 +846,64 @@ function lessonPane(l, sub){
       <div class="row" style="margin-top:12px"><button class="btn" data-test="${l.id}" data-kind="lesson">${r ? "Пройти ещё раз" : "Начать тест"}</button></div>`;
   return pane;
 }
+/* ---------- рисование поверх любого раздела урока ----------
+   Панель инструментов доступна в каждой вкладке: открывает доску с содержимым
+   текущего раздела как фоном; пометки сохраняются в той же доске урока. */
+function inkRailHTML(l){
+  if (!l || S.sub === "board") return "";
+  const b = (t, ico, n) => `<button type="button" data-ink="${t}" title="${n}" aria-label="${n}"><span>${ico}</span><small>${n}</small></button>`;
+  return `<div class="ink-rail" role="toolbar" aria-label="Рисовать поверх урока">
+    ${b("pen","✎","Ручка")}${b("hl","🖍","Маркер")}${b("text","T","Текст")}${b("move","✥","Двигать")}${b("erase","⌫","Ластик")}${b("hand","✋","Рука")}
+  </div>`;
+}
+function closeInk(){
+  const k = S.ink; if (!k) return;
+  S.ink = null;
+  let done = false;
+  const finish = () => {
+    if (done) return; done = true;
+    try { k.inst.destroy(); } catch (_) {}
+    try { k.ov.remove(); } catch (_) {}
+    document.documentElement.style.overflow = k.prevOverflow || "";
+  };
+  try { Promise.resolve(k.inst.whenIdle && k.inst.whenIdle()).then(finish, finish); } catch (_) { finish(); }
+  setTimeout(finish, 300);   // даже если сохранение зависло – закрываем
+}
+function openInk(l, tool){
+  if (!l || !sb) return;
+  closeInk();
+  const saveSub = S.sub;
+  const tabs = lessonTabs(l).filter(([k]) => k !== "board" && k !== "test");
+  const pages = [], live = {};
+  tabs.forEach(([k, n]) => {
+    let html = "";
+    try { html = `<div class="bd-sheet">${lessonPane(l, k)}</div>`; } catch (_) { html = ""; }
+    if (!html) return;
+    pages.push({key:k, label:n, html});
+    live[k] = el => { el.innerHTML = html; };
+  });
+  S.sub = saveSub;
+  if (!pages.length) return;
+  const pageKey = pages.some(p => p.key === saveSub) ? saveSub : pages[0].key;
+  const ov = document.createElement("div");
+  ov.className = "ink-overlay";
+  ov.innerHTML = `<div class="ink-head"><b>Рисуем поверх урока · ${esc(l.title)}</b><span class="small muted">выберите раздел сверху и пишите</span><button class="iconbtn" data-ink-close aria-label="Закрыть" title="Закрыть">✕</button></div><div class="ink-board" id="ink-board"></div>`;
+  document.body.appendChild(ov);
+  const prevOverflow = document.documentElement.style.overflow;
+  document.documentElement.style.overflow = "hidden";
+  let inst = null;
+  try {
+    inst = Board.mount(ov.querySelector("#ink-board"), {
+      api: Board.api("student", sb, {code:S.token, lesson:l.id}),
+      sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null,
+      role:"student", name:S.profile.name, pages, live, page: pageKey
+    });
+  } catch (_) { closeInk(); return; }
+  S.ink = {ov, inst, prevOverflow};
+  ov.querySelector("[data-ink-close]").addEventListener("click", closeInk);
+  document.addEventListener("keydown", function esc(e){ if (e.key === "Escape"){ document.removeEventListener("keydown", esc); closeInk(); } });
+  try { ov.querySelector(`[data-tool="${tool || "pen"}"]`)?.click(); } catch (_) {}
+}
 function viewFolder(){
   const L = S.course.lessons, l = L.find(x => x.id === S.open), b = blockOf(l), i = L.indexOf(l);
   const r = S.results[l.id], hr = S.hwres[l.id];
@@ -853,7 +911,7 @@ function viewFolder(){
   if (!tabs.some(t => t[0] === S.sub)) S.sub = "theory";
   const miniDone = l.theory.filter((t, k) => t.mini?.length && S.minis[`${l.id}:${k}`]).length, miniAll = l.theory.filter(t => t.mini?.length).length;
   const pane = lessonPane(l, S.sub);
-  return `<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-go="lessons">← Все уроки</button>
+  return `${inkRailHTML(l)}<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-go="lessons">← Все уроки</button>
     <div class="row">${i>0 && isOpen(L[i-1])?`<button class="btn ghost sm" data-open="${L[i-1].id}">‹ № ${i}</button>`:""}${i<L.length-1 && isOpen(L[i+1])?`<button class="btn ghost sm" data-open="${L[i+1].id}">№ ${i+2} ›</button>`:""}
       <button class="btn sm" data-act="start-room" title="Доска с заданиями и звонок с учителем">▶ Начать урок</button>
       <button class="btn ghost sm" data-act="download" title="Скачать урок как документ Word">⤓ Скачать</button></div></div>
@@ -1771,7 +1829,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer){ S.drawer = false; render(); } });
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-lab],[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-quiz],[data-qopt],[data-qretry],[data-qnext],[data-qagain],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
+  const t = e.target.closest("[data-ink],[data-lab],[data-oge-rate],[data-oge-drill],[data-oge-mock],[data-play-game],[data-play-theme],[data-quiz],[data-qopt],[data-qretry],[data-qnext],[data-qagain],[data-go],[data-open],[data-test],[data-pick],[data-act],[data-sub],[data-etype],[data-theme-pick],[data-mascot-pick],[data-role],[data-switch],[data-authmode]"); if (!t) return;
   if (t?.dataset.lab){ e.preventDefault(); S.labPick = t.dataset.lab; LS.set("labPick", S.labPick); render(); return; }
   if (t.dataset.ogeRate || t.dataset.ogeDrill != null || t.dataset.ogeMock != null){ e.preventDefault(); ogeAct(t); return; }
   if (t.dataset.role){ S.role = t.dataset.role; S.mode = "in"; S.authMsg = null; S.signupDone = null; render(); return; }
@@ -1824,6 +1882,11 @@ document.addEventListener("click", async e => {
     if (!isOpen(l)){ toast(`Папка откроется в день урока – ${fmt(l.date,{day:"numeric",month:"long"})}.`); return; }
     if (S.room){ S.away = true; closeJoin(); }
     S.open = l.id; S.sub = t.dataset.sub || "theory"; S.view = "folder"; S.drawer = false; render(); scrollTo(0,0); return;
+  }
+  if (t.dataset.ink){
+    const l = S.course?.lessons.find(x => x.id === S.open);
+    if (l) openInk(l, t.dataset.ink);
+    return;
   }
   if (t.dataset.sub){ if (S.view === "room" && S.test && S.testInRoom){ if (S.test.i < S.test.qs.length) testLive({quit: true}); S.test = null; S.testInRoom = false; }
     S.sub = t.dataset.sub; try { LS.set("seen:" + S.open + ":" + S.sub, 1); } catch (e) { } if (S.view === "room") liveTrack(); if (t.dataset.bpage) S.boardPage = t.dataset.bpage; render(); if (t.dataset.bpage) document.querySelector(".window .tabs")?.scrollIntoView({behavior:"smooth"}); return; }

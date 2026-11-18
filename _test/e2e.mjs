@@ -1778,6 +1778,16 @@ test("X1", "Ученик: фоновая перерисовка во время 
   const y1 = await student.eval(`Math.round(scrollY)`);
   if (y0 > 100 && Math.abs(y1 - y0) > 30) throw new Error(`прокрутка сбросилась при перерисовке: ${y0} -> ${y1}`);
 });
+test("X3", "Ученик: панель рисования доступна в каждом разделе урока и открывает доску поверх", async ({ student }) => {
+  await student.eval(`(() => { const S = window.__app.S; if (!S.course || !S.course.lessons.length) return false; S.view = "folder"; S.open = S.course.lessons[0].id; S.sub = "theory"; window.__app.render(); return true; })()`);
+  await student.waitFor(`document.querySelector('[data-ink="pen"]') ? 1 : 0`, { timeout: 8000, label: "X3: панель рисования в теории" });
+  await student.eval(`document.querySelector('[data-ink="pen"]').click(); true`);
+  await student.waitFor(`document.querySelector('.ink-overlay .bd-bar') ? 1 : 0`, { timeout: 10000, label: "X3: открылась доска поверх урока" });
+  const ok = await student.eval(`(() => ({ tools: document.querySelectorAll('.ink-overlay .bd-tools [data-tool]').length, pages: document.querySelectorAll('.ink-overlay [data-bpage]').length }))()`);
+  if (!ok.tools) throw new Error("X3: в оверлее нет панели инструментов");
+  await student.eval(`document.querySelector('.ink-overlay [data-ink-close]').click(); true`);
+  await student.waitFor(`document.querySelector('.ink-overlay') ? 0 : 1`, { timeout: 5000, label: "X3: оверлей закрылся" });
+});
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 
