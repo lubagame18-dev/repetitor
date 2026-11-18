@@ -1126,6 +1126,9 @@ window.Board = (() => {
       if (selectedId != null) select(null);
       const startX = opts.x != null ? +opts.x : 40;
       const startY = opts.y != null ? +opts.y : 40;
+      /* у самого края не даём окошку/тексту уехать за пределы листа */
+      const safeX = opts.blank ? startX : Math.min(startX, W - TEXT_MIN_W - 8);
+      const safeY = Math.max(8, Math.min(startY, height - textLineH(+opts.sz || TEXT_SZ_DEFAULT) - 8));
       const startSz = Math.min(TEXT_SZ_MAX, Math.max(TEXT_SZ_MIN, +opts.sz || TEXT_SZ_DEFAULT));
       const el = document.createElement("div");
       el.className = "bd-editor bd-inline";
@@ -1138,7 +1141,7 @@ window.Board = (() => {
       ta.value = opts.s || "";
       const ed = {
         el, ta, id: opts.id || null, c: opts.c || color,
-        x: Math.round(startX), y: Math.round(startY),
+        x: Math.round(safeX), y: Math.round(safeY),
         w: opts.w ? +opts.w : TEXT_MIN_W, h: opts.h ? +opts.h : textLineH(startSz),
         manual: !!(opts.w || opts.h), note: !!opts.note, blank: opts.blank || null,
         sz: startSz,
@@ -1281,9 +1284,13 @@ window.Board = (() => {
     function placeEditor(){
       if (!editor) return;
       const ed = editor;
-      ed.el.style.left = Math.round(ed.x * scale) + "px";
-      ed.el.style.top = Math.round(ed.y * scale) + "px";
       autoSizeInline(ed);
+      /* не выпускаем окошко за правый край экрана, даже если тапнули у самого края */
+      const left = Math.round(ed.x * scale);
+      const ew = ed.el.offsetWidth || 180;
+      const maxLeft = Math.max(4, stage.clientWidth - ew - 8);
+      ed.el.style.left = Math.min(Math.max(4, left), maxLeft) + "px";
+      ed.el.style.top = Math.round(ed.y * scale) + "px";
     }
 
     /* ---------- перемещение объектов ---------- */

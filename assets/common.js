@@ -415,3 +415,11 @@ window.U = (() => {
   return {lessonTime, pnParse, pnSel, pnOk, pnText, pnHTML, findLesson, subjectNow, progressHTML, grade5, lessonGrades, gradeChip, hasMnemo, mnemoTabHTML, builtinVer, builtinNewer, goalsFor, goalsHTML, goalLabel, pass, authErr, tempMail, siteURL, loadBase, SUBJECTS, subj, gradeName, subjectOf, getCourse, coursesOf, miniCheck, miniHTML, GOALS, planFor, packOf, PACKS, iso, emptyLesson, lessonTests, downloadDoc, lessonDocHTML, courseFor, randHex, KIND_NAME, wordCount, stepHTML, writingSource, critFor, writingResultHTML, writingStats, sparkHTML, esc, d, today, fmt, fmtShort, daysTo, pct, lvl, lvlColor, mark, aggregate, recText, hwState, blockStats, weakTags, avgAll, theoryHTML, practiceHTML, shuffle, toast, genCode, supa};
 })();
 
+
+/* Никакого случайного масштабирования страницы: щипок двумя пальцами не должен «разъезжать» урок и доску.
+   На iOS Safari это событие gesture*, в Chrome/Android дополнительно запрещено через viewport. */
+(() => {
+  const stop = e => { try { e.preventDefault(); } catch (_) {} };
+  ["gesturestart", "gesturechange", "gestureend"].forEach(ev => document.addEventListener(ev, stop, {passive:false}));
+  document.addEventListener("touchmove", e => { if (e.touches && e.touches.length > 1) stop(e); }, {passive:false});
+})();

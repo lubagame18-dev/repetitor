@@ -22,7 +22,7 @@
 
 *{box-sizing:border-box}
 html{background:var(--base)}
-body{margin:0;min-height:100dvh;color:var(--ink);font-family:var(--f-ui);font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%;background:transparent}
+body{margin:0;min-height:100dvh;color:var(--ink);font-family:var(--f-ui);font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%;background:transparent;overflow-x:hidden;touch-action:manipulation}
 body::before{content:"";position:fixed;inset:-10%;z-index:-1;pointer-events:none;
   background:
     radial-gradient(38% 34% at 12% 8%, color-mix(in srgb,var(--violet) 55%,transparent), transparent 70%),

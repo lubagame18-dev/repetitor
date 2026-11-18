@@ -1565,7 +1565,18 @@ function render(){
       </div></header>
       <main class="main">${S.loadError ? `<div class="card" data-t-student-load-error role="status" style="margin:10px 0;gap:8px"><b>Не удалось обновить уроки</b><p class="small muted">${esc(S.loadError)}. Показываю сохранённые материалы.</p><div class="row" style="gap:8px"><button class="btn sm" data-act="reload-data">Повторить</button></div></div>` : ""}${backbar}${body}</main>
     </div></div>`;
+  const sameRoute = S.lastRV === keepV;
   S.lastRV = keepV;
+  /* фоновая перерисовка (обновление материалов, доска во время письма) не должна выбрасывать страницу вверх.
+     Восстанавливаем позицию только на «рабочих» экранах с доской, чтобы не мешать переходам и тестам. */
+  const keepScroll = sameRoute && keepY > 0 && !S.routeY && (v === "room" || v === "myboard" || v === "folder");
+  if (keepScroll){
+    const restore = () => { try { if (!S.routeY && Math.abs(scrollY - keepY) > 2) scrollTo(0, keepY); } catch (_) {} };
+    restore();
+    requestAnimationFrame(restore);
+    setTimeout(restore, 80);
+    setTimeout(restore, 220);
+  }
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
     S.board = Board.keep($("#board"), "s:" + l.id, {
