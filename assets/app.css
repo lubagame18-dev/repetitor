@@ -830,3 +830,6 @@ body.play-open{overflow:hidden}
 .bd-esz i{display:block;border-radius:50%;background:currentColor}
 .bd-side .bd-esz button[aria-pressed="true"]{background:var(--ink);color:var(--base)}
 .bd-bar [data-zoom]{display:none!important}
+
+/* доска: касание пальцем у края не должно прокручивать/дёргать страницу во время письма */
+.bd-stage, .bd-wrap { touch-action: none; overscroll-behavior: contain; }

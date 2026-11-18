@@ -1766,6 +1766,18 @@ test("W1", "Кабинет учителя: медленный необязате
     await teacher.eval(`window.__MOCK.clearControls(); true`).catch(() => {});
   }
 });
+test("X1", "Ученик: фоновая перерисовка во время письма не выбрасывает страницу вверх", async ({ student }) => {
+  await student.eval(`(() => { const b = document.querySelector('[data-go="myboard"]'); if (b) b.click(); return true; })()`);
+  await student.waitFor(`(() => window.__app && window.__app.S.view === "myboard" ? 1 : 0)()`, { timeout: 8000, label: "X1: открылась личная доска" });
+  await sleep(300);
+  await student.eval(`windows = 0; scrollTo(0, Math.min(600, document.documentElement.scrollHeight - innerHeight - 10)); true`);
+  await sleep(150);
+  const y0 = await student.eval(`Math.round(scrollY)`);
+  await student.eval(`window.__app.render(); true`);
+  await sleep(350);
+  const y1 = await student.eval(`Math.round(scrollY)`);
+  if (y0 > 100 && Math.abs(y1 - y0) > 30) throw new Error(`прокрутка сбросилась при перерисовке: ${y0} -> ${y1}`);
+});
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 

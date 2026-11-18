@@ -141,6 +141,7 @@ window.Board = (() => {
     let widthL = W;
         let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
     let pan = null;                    // перетаскивание холста инструментом «рука»
+    let scrollGuard = null;            // пока пишем – не даём странице/листу прыгнуть вверх
     
     let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
     let selectedId = null;                       // выделенный объект (картинка/надпись)
@@ -1402,7 +1403,18 @@ window.Board = (() => {
     } 
 
     /* прокрутка только сообщает о смене вида; размеры листа при рисовании не меняются */
-    stage.addEventListener("scroll", () => { viewChanged(); }, {passive: true});
+    const onStageScrollGuard = () => {
+      viewChanged();
+      const g = scrollGuard; if (!g) return;
+      /* пока идёт штрих, холст не должен сам «улетать» вверх */
+      if (g.st > 40 && stage.scrollTop < g.st - 120){ try { stage.scrollTop = g.st; } catch (_) {} }
+    };
+    stage.addEventListener("scroll", onStageScrollGuard, {passive: true});
+    const onPageScrollGuard = () => {
+      const g = scrollGuard; if (!g) return;
+      if (g.y > 60 && Date.now() - g.at < 8000 && scrollY < g.y - 60){ try { scrollTo(0, g.y); } catch (_) {} }
+    };
+    window.addEventListener("scroll", onPageScrollGuard, {passive: true});
     /* жест двумя пальцами и автоматическое расширение отключены: случайное касание не двигает и не растягивает лист */
     /* ---------- указатели ---------- */
     /* рисует только один указатель: второй палец, ладонь при стилусе и правая кнопка мыши не дают «зигзагов» */
@@ -1423,6 +1435,8 @@ window.Board = (() => {
         cv.style.cursor = "grabbing";
         return;
       }
+      /* защита от «прыжка» страницы/холста вверх во время письма */
+      scrollGuard = {y: scrollY, st: stage.scrollTop, sl: stage.scrollLeft, at: Date.now()};
       const p = pos(e);
       lastPoint = {x:p[0], y:p[1]};
       placeEraseCur(e);
@@ -1531,6 +1545,7 @@ window.Board = (() => {
     function cancelStroke(){ if (drawing && !drawing.erase) send("draft", {sid:drawing.sid, p:[], end:true, drop:true}); drawing = null; redraw(); }
     function end(e){
       if (e && drawing && drawing.pid !== e.pointerId) return;
+      scrollGuard = null;
       lpClear();
       if (pan){ pan = null; cv.style.cursor = "grab"; return; }
       if (moving){
@@ -1567,7 +1582,7 @@ window.Board = (() => {
       if (d.p.length) addItem(d);
     }
     cv.addEventListener("pointerup", end);
-    cv.addEventListener("pointercancel", e => { pan = null; moving = null; textTap = null; drawing = null; try { cv.style.cursor = tool === "hand" ? "grab" : cv.style.cursor; } catch (_) {} placeEraseCur(e); });
+    cv.addEventListener("pointercancel", e => { scrollGuard = null; pan = null; moving = null; textTap = null; drawing = null; try { cv.style.cursor = tool === "hand" ? "grab" : cv.style.cursor; } catch (_) {} placeEraseCur(e); });
     cv.addEventListener("pointerleave", e => { if (e.pointerType === "mouse"){ placeEraseCur(); end(e); } });
 
     /* снимок листа: всё, что на нём – задания, ответы, пометки ручкой */
@@ -2270,6 +2285,9 @@ window.Board = (() => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onDocDown, true);
       document.removeEventListener("paste", onPaste);
+      try { stage.removeEventListener("scroll", onStageScrollGuard); } catch (_) {}
+      try { window.removeEventListener("scroll", onPageScrollGuard); } catch (_) {}
+      scrollGuard = null;
       lpClear();
       pan = null;
       selectedId = null; selResize = null;

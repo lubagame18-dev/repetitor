@@ -1542,6 +1542,7 @@ function render(){
   S.syncPending = false;
   const app = $("#app");
   const keepY = scrollY, keepV = S.view + "|" + S.open + "|" + S.sub;   // фоновая перерисовка не должна подбрасывать страницу вверх
+  const keepBoard = (() => { const st = document.querySelector("#app .bd-stage"); return st ? {t: st.scrollTop, l: st.scrollLeft} : null; })();
   if (S.invite){ app.innerHTML = `<main class="main">${viewRegister()}</main>`; return; }
   if (!S.profile){ app.innerHTML = `<main class="main">${viewLogin()}</main>`; return; }
   /* урок ещё не загрузился (после перезагрузки) – пока показываем главную, маршрут не теряем */
@@ -1572,10 +1573,16 @@ function render(){
   const keepScroll = sameRoute && keepY > 0 && !S.routeY && (v === "room" || v === "myboard" || v === "folder");
   if (keepScroll){
     const restore = () => { try { if (!S.routeY && Math.abs(scrollY - keepY) > 2) scrollTo(0, keepY); } catch (_) {} };
-    restore();
-    requestAnimationFrame(restore);
-    setTimeout(restore, 80);
-    setTimeout(restore, 220);
+    const restoreBoard = () => {
+      if (!keepBoard) return;
+      const st = document.querySelector("#app .bd-stage");
+      if (!st) return;
+      try { if (Math.abs(st.scrollTop - keepBoard.t) > 2) st.scrollTop = keepBoard.t; if (Math.abs(st.scrollLeft - keepBoard.l) > 2) st.scrollLeft = keepBoard.l; } catch (_) {}
+    };
+    restore(); restoreBoard();
+    requestAnimationFrame(() => { restore(); restoreBoard(); });
+    setTimeout(() => { restore(); restoreBoard(); }, 80);
+    setTimeout(() => { restore(); restoreBoard(); }, 220);
   }
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
