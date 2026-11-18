@@ -973,17 +973,19 @@ test("H8", "Мгновенно: объект виден второй сторо�
   await waitSideItems(page, "student", a => itemsOfType(a, "t").filter(r => r.item.s === "H8 мгновенно").length === 1, "после записи в базу – ровно один экземпляр у ученика");
 });
 
-test("H9", "Холст бесконечен вправо: штрих у правого края расширяет лист, ученик видит тот же штрих", async ({ page }) => {
+test("H9", "Холст НЕ расширяется при письме у края: размер листа и масштаб не меняются, штрих виден ученику", async ({ page }) => {
   await fresh(page);
   await page.eval(`${B}.setTool("teacher","pen")`);
   const w0 = await page.eval(`${B}.info("teacher").width`);
+  const sc0 = await page.eval(`${B}.info("teacher").scale`);
   await drawStroke(page, "teacher", [[700, 300], [760, 300], [790, 300], [840, 300], [900, 300]]);
   await page.eval(`${B}.whenIdle("teacher")`);
-  const w1 = await page.eval(`${B}.info("teacher").width`);
-  if (!(w1 > w0)) throw new Error("лист не расширился вправо: " + w0 + " -> " + w1);
+  const info = await page.eval(`${B}.info("teacher")`);
+  if (info.width !== w0) throw new Error("лист сам расширился при письме у края: " + w0 + " -> " + info.width);
+  if (Math.abs(info.scale - sc0) > 0.001) throw new Error("масштаб изменился при письме у края: " + sc0 + " -> " + info.scale);
   await waitSideItems(page, "student", a => itemsOfType(a, "s").length >= 1, "штрих доходит до ученика");
   const ws = await page.eval(`${B}.info("student").width`);
-  if (!(ws > 800)) throw new Error("у ученика лист не расширился: " + ws);
+  if (ws !== 800) throw new Error("у ученика ширина листа должна остаться 800, а не " + ws);
 });
 
 

@@ -138,11 +138,11 @@ window.Board = (() => {
     let fitMode = true;                // «По ширине»: scale = stage.clientWidth / W
     let zoom = 1;                      // абсолютный масштаб, CSS px на логический px
     let lastViewScale = 0;
-    let extraWidth = 0, widthL = W;      // «бесконечный» холст вправо: логическая ширина растёт при рисовании у правого края
+    let widthL = W;
     let extraHeight = 0;               // кнопка «Расширить лист»
     let lastPoint = {x: 140, y: 160};  // последняя точка клика по листу (логические)
     let pan = null;                    // перетаскивание холста инструментом «рука»
-    let lastGrow = 0;                  // авто-расширение высоты при рисовании у нижнего края
+    
     let lastClipText = "", lastClipFiles = [];   // последнее содержимое буфера (для «Вставить»/pasteAtPoint)
     let selectedId = null;                       // выделенный объект (картинка/надпись)
     let selResize = null;                        // текущий жест ресайза рамкой выделения
@@ -306,7 +306,9 @@ window.Board = (() => {
       return {i, dx:+(p[0] - best.x).toFixed(2), dy:+(p[1] - best.y).toFixed(2), ox:+best.x.toFixed(2), oy:+best.y.toFixed(2), tag:best.el.tagName};
     }
 
-    /* ---------- размеры, масштаб и перерисовка ---------- */
+    /* ---------- размеры и перерисовка ----------
+       ВАЖНО: никакого автоматического расширения/масштабирования листа во время рисования.
+       Лист всегда ровно по ширине экрана; запись у края просто уходит под обрезку, а не «растягивает» экран. */
     function fitScale(){ const w = Math.max(0, stage.clientWidth || root.clientWidth || 0); return w > 0 ? w / W : 1; }
     function layout(){
       const bar = root.querySelector(".bd-bar"), side = root.querySelector(".bd-side .bd-tools");
@@ -317,14 +319,9 @@ window.Board = (() => {
       if (anchorsDirty) markAnchors();
       const bgH = bg.scrollHeight;
       if (boxesDirty || scale !== lastScale || bgH !== lastBgH){ measureAnchors(); boxesDirty = false; lastScale = scale; lastBgH = bgH; }
-      let maxY = 0, maxX = 0;
-      items.forEach(it => {
-        if (it.t === "s"){ for (const q of shiftedPoints(it)){ if (q[1] > maxY) maxY = q[1]; if (q[0] > maxX) maxX = q[0]; } }
-        else if (it.t === "i"){ const [w2, h2] = imageSize(it); maxY = Math.max(maxY, it.y + h2); if (it.x + w2 > W + 4) maxX = Math.max(maxX, it.x + w2); }
-        else { maxY = Math.max(maxY, it.y + (it.h || textHeight(it))); if (it.x > W - 200) maxX = Math.max(maxX, it.x + (it.w || 300)); }
-      });
-      height = Math.max(1400, bgH + 200, maxY + 300) + extraHeight;
-      widthL = Math.max(W, maxX > W - 40 ? maxX + 400 : 0, W + extraWidth);
+      /* фиксированная высота: запас для рисования вниз, но она не меняется от каждого штриха */
+      height = Math.max(4000, bgH + 400) + extraHeight;
+      widthL = W;
       const cssW = Math.max(1, Math.round(widthL * scale));
       const cssH = Math.max(1, Math.round(height * scale));
       wrap.style.width = cssW + "px";
@@ -368,24 +365,7 @@ window.Board = (() => {
       viewT = setTimeout(() => { const v = getRelView(), sig = JSON.stringify(v); if (sig === lastViewSig) return; lastViewSig = sig; try { o.onView(v); } catch (_) {} }, 160);
     }
     function getView(){ return {zoom:scale, scale, scrollX:stage.scrollLeft, scrollY:stage.scrollTop, x:Math.round(stage.scrollLeft / scale), y:Math.round(stage.scrollTop / scale)}; }
-    function maybeGrowWidth(p){
-      if (!p || p[0] < widthL - 100) return;
-      const now = performance.now();
-      if (now - lastGrowW < 400) return;
-      lastGrowW = now;
-      extraWidth = Math.max(extraWidth, widthL - W) + Math.max(300, Math.round(W * 0.4));
-      layout();
-    }
-    let lastGrowW = 0;
-    function maybeGrowHeight(p){
-      if (p) maybeGrowWidth(p);
-      if (!p || p[1] < height - 120) return;
-      const now = performance.now();
-      if (now - lastGrow < 500) return;
-      lastGrow = now;
-      extraHeight += Math.max(300, Math.round(height * 0.25));
-      layout();
-    }
+    /* Автоматическое расширение листа убрано полностью: оно меняло размеры и координаты прямо во время штриха. */
     /* после КАЖДОЙ установки innerHTML листа: разметить/перемерить якоря, дождаться картинок и шрифтов */
     function afterSheet(){
       markAnchors();
@@ -1413,40 +1393,9 @@ window.Board = (() => {
       return null;
     } 
 
-    /* «бесконечный» холст: у нижнего края лист сам удлиняется */
-    stage.addEventListener("scroll", () => { if (stage.scrollLeft + stage.clientWidth > widthL * scale - 120 && widthL > W) maybeGrowWidth([widthL, 0]); if (stage.scrollTop + stage.clientHeight > height * scale - 160) maybeGrowHeight([0, height]); viewChanged(); }, {passive: true});
-    /* ---------- жест двумя пальцами: щипок – масштаб, сдвиг – перемещение холста (любым инструментом) ---------- */
-        /* жест двумя пальцами: только прокрутка холста (без масштабирования) */
-    const tps = new Map(); let gp = null;
-    const tmid = () => { const a = [...tps.values()]; return {x:(a[0].x + a[1].x)/2, y:(a[0].y + a[1].y)/2}; };
-    stage.addEventListener("pointerdown", e => {
-      if (e.pointerType !== "touch") return;
-      tps.set(e.pointerId, {x: e.clientX, y: e.clientY});
-      if (tps.size === 2){
-        try { cancelStroke(); } catch (_) {}
-        pan = null; moving = null; textTap = null; lpClear();
-        const m = tmid(); gp = {mx:m.x, my:m.y};
-      }
-      if (gp){ e.stopPropagation(); e.preventDefault(); }
-    }, true);
-    stage.addEventListener("pointermove", e => {
-      if (e.pointerType !== "touch" || !tps.has(e.pointerId)) return;
-      tps.set(e.pointerId, {x: e.clientX, y: e.clientY});
-      if (!gp || tps.size < 2) return;
-      e.stopPropagation(); e.preventDefault();
-      const m = tmid();
-      stage.scrollLeft -= m.x - gp.mx;
-      stage.scrollTop  -= m.y - gp.my;
-      gp.mx = m.x; gp.my = m.y;
-    }, true);
-    const tpEnd = e => {
-      if (e.pointerType !== "touch") return;
-      const was = !!gp; tps.delete(e.pointerId);
-      if (tps.size < 2) gp = null;
-      if (was){ e.stopPropagation(); }
-    };
-    stage.addEventListener("pointerup", tpEnd, true);
-    stage.addEventListener("pointercancel", tpEnd, true);
+    /* прокрутка только сообщает о смене вида; размеры листа при рисовании не меняются */
+    stage.addEventListener("scroll", () => { viewChanged(); }, {passive: true});
+    /* жест двумя пальцами и автоматическое расширение отключены: случайное касание не двигает и не растягивает лист */
     /* ---------- указатели ---------- */
     /* рисует только один указатель: второй палец, ладонь при стилусе и правая кнопка мыши не дают «зигзагов» */
     let penSeen = 0, lp = null;
@@ -1468,7 +1417,6 @@ window.Board = (() => {
       }
       const p = pos(e);
       lastPoint = {x:p[0], y:p[1]};
-      maybeGrowHeight(p);
       placeEraseCur(e);
       lpClear();
       if (e.pointerType !== "mouse"){ const x = e.clientX, y = e.clientY; lp = {x, y, timer: setTimeout(() => { lp = null; cancelStroke(); openMenu(x, y); }, 550)}; }
@@ -1519,7 +1467,6 @@ window.Board = (() => {
         if (Math.hypot(q[0] - last[0], q[1] - last[1]) > 260) continue;      // случайный скачок указателя – пропускаем
         drawing.p.push(q); draftBuf.push(q); drawSeg(last, q, drawing);
       }
-      maybeGrowHeight(p);
       if (drawing.p.length > 1500) drawing.p = drawing.p.filter((_, i2) => i2 % 2 === 0 || i2 === drawing.p.length - 1);
       if (now - lastDraft > 50 && draftBuf.length > 1){ lastDraft = now; send("draft", {sid:drawing.sid, c:drawing.c, w:drawing.w, h:drawing.h, p:draftBuf, a:drawing.a}); draftBuf = [draftBuf[draftBuf.length - 1]]; }
     });
@@ -2270,7 +2217,7 @@ window.Board = (() => {
     }
     renderWho();
     /* ---------- запуск ---------- */
-    let roT = 0; const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(layout, 30); }); ro.observe(stage); ro.observe(bg);
+    let roT = 0; const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(layout, 30); }); ro.observe(stage);
     setTool("pen"); setColor(COLORS[0]);
 
     /* ---------- хуки для тестов ---------- */
