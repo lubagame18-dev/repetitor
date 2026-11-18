@@ -319,13 +319,16 @@ window.Board = (() => {
       const bgH = bg.scrollHeight;
       if (boxesDirty || scale !== lastScale || bgH !== lastBgH){ measureAnchors(); boxesDirty = false; lastScale = scale; lastBgH = bgH; }
       /* фиксированная высота: запас для рисования вниз, но она не меняется от каждого штриха */
-      height = Math.max(4000, bgH + 400);
+      height = Math.max(2400, bgH + 400);
       widthL = W;
       const cssW = Math.max(1, Math.round(widthL * scale));
       const cssH = Math.max(1, Math.round(height * scale));
       wrap.style.width = cssW + "px";
       wrap.style.height = cssH + "px";
-      const dpr = window.devicePixelRatio || 1;
+      /* ограничиваем разрешение канваса: иначе на планшетах с DPR 2–3 большой холст тормозит */
+      let dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const MAX_PIX = 8000000;
+      if (cssW * cssH * dpr * dpr > MAX_PIX) dpr = Math.max(1, Math.sqrt(MAX_PIX / Math.max(1, cssW * cssH)));
       cv.width = Math.max(1, Math.round(cssW * dpr));
       cv.height = Math.max(1, Math.round(cssH * dpr));
       cv.style.width = cssW + "px";
