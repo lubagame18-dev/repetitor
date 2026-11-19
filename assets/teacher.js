@@ -1057,7 +1057,7 @@ async function gameAct(a, t){
 }
 
 function materialsTab(cid, l){
-  const own = T.mats.filter(m => m.course === cid && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && !m.student_id && m.data?.kind !== "test-edit" && m.data?.kind !== "content-edit");
+  const own = T.mats.filter(m => m.course === cid && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && !m.student_id && m.data?.kind !== "test-edit" && m.data?.kind !== "content-edit" && m.data?.kind !== "doc-edit");
   const g = T.gen && T.gen.lesson === l.id ? T.gen : null;
   return `${own.length ? own.map(m => m.data?.kind === "game" ? `<div class="mat"><span class="ic">🎮</span><div style="flex:1;min-width:0"><b>${esc(m.title || "Игра")}</b>
       <p class="small muted">Игры: ${Play.gamesFor(m.data.theme || {}).map(k => Play.GAMES[k].n).join(", ")}</p><div class="row" style="gap:6px;margin-top:4px"><button class="btn ghost sm" data-act="game-play" data-mid="${m.id}">▶ Посмотреть</button></div></div>
@@ -1097,7 +1097,18 @@ function docFormPageHTML(d, i){
     <div class="row between el-doc-head"><input class="el-doc-name" type="text" value="${esc(d.label || ("Документ " + (i + 1)))}" aria-label="Название вкладки документа" maxlength="40"><button type="button" class="btn ghost sm" data-doc-del title="Убрать документ из урока">Удалить</button></div>
     <div class="el-doc-page" contenteditable="true" spellcheck="false">${d.html || ""}</div></div>`;
 }
-function docFormHTML(m){
+function docEditRow(cid, lid){
+  return (T.mats || []).find(m => m.kind === "tasks" && m.data?.kind === "doc-edit" && m.course === cid && m.lesson_id === lid && m.teacher_id === T.session?.user.id && !m.student_id);
+}
+async function saveLessonDocs(cid, l, docs){
+  const own = docEditRow(cid, l.id);
+  const data = {...(own?.data || {kind:"doc-edit"}), kind:"doc-edit", docs};
+  const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
+                  : await sb.from("materials").insert({teacher_id: T.session.user.id, course: cid, lesson_id: l.id, kind: "tasks", title: "Документы урока", shared: T.me?.role === "developer", data}).select().single();
+  if (res.error) throw new Error(res.error.message);
+  if (own) Object.assign(own, res.data); else T.mats.push(res.data);
+  return true;
+}function docFormHTML(m){
   const ds = lessonDocs(m);
   return `<div class="el-docs-wrap" data-doc-drop>
     <div class="row between" style="gap:8px"><label class="el-docs-title">Документы урока: Word / PDF</label><span class="small muted" id="el-doc-status">${ds.length ? "Страниц: " + ds.length : "Можно писать и подчёркивать поверх"}</span></div>
@@ -1142,7 +1153,7 @@ function bindDocFormEvents(){
       .finally(() => { if (zone) zone.classList.remove("busy"); });
   };
   document.addEventListener("dragover", e => {
-    if (!$("#edit-lesson")) return;
+    if (!$("#edit-lesson") && !$("#docs-lesson")) return;
     const files = filesFrom(e.dataTransfer); if (!files.length) return;
     e.preventDefault(); e.dataTransfer.dropEffect = "copy";
     const z = $("[data-doc-dropzone]"); if (z) z.classList.add("over");
@@ -1151,14 +1162,14 @@ function bindDocFormEvents(){
     const z = $("[data-doc-dropzone]"); if (z) z.classList.remove("over");
   }, true);
   document.addEventListener("drop", e => {
-    if (!$("#edit-lesson")) return;
+    if (!$("#edit-lesson") && !$("#docs-lesson")) return;
     const files = filesFrom(e.dataTransfer); if (!files.length) return;
     e.preventDefault(); e.stopPropagation();
     const z = $("[data-doc-dropzone]"); if (z) z.classList.remove("over", "busy");
     addFiles(files);
   }, true);
   document.addEventListener("paste", e => {
-    if (!$("#edit-lesson")) return;
+    if (!$("#edit-lesson") && !$("#docs-lesson")) return;
     const files = filesFrom(e.clipboardData); if (files.length){ e.preventDefault(); addFiles(files); return; }
     if (e.target.closest && e.target.closest(".el-doc-page")) return;      // обычная правка текста документа
     if (e.target.closest && e.target.closest("input,textarea,[contenteditable=true]")) return;
@@ -1186,7 +1197,7 @@ function viewLesson(){
   const keys = keysFor(cid, l);
   const lk = {...l, practice: l.practice.map((p,k) => ({...p, key: keys[k]}))};
   const sh = sheetFor(cid, l.id), Tt = U.lessonTests(l);
-  const tabs = [["method","Методика"],["theory","Теория"], U.hasMnemo(l) && ["mnemo","Запоминалки"], l.practice.length && ["practice","Практика"], l.writing && ["writing","Письмо"], ["test","Тест"], ["hwtest","ДЗ-тест"], ["mats","Свои материалы"], ["sheet","Лист и ДЗ"], l.custom && ["edit","Изменить урок"]].filter(Boolean);
+  const tabs = [["method","Методика"],["theory","Теория"], U.hasMnemo(l) && ["mnemo","Запоминалки"], l.practice.length && ["practice","Практика"], l.writing && ["writing","Письмо"], ["test","Тест"], ["hwtest","ДЗ-тест"], ["mats","Свои материалы"], ["docs","Документы"], ["sheet","Лист и ДЗ"], l.custom && ["edit","Изменить урок"]].filter(Boolean);
   if (!tabs.some(t => t[0] === T.sub)) T.sub = "method";
   const testList = qs => `<ol style="padding-left:20px">${qs.map(q => `<li style="margin-bottom:12px"><b>${esc(q.q)}</b>${q.pn ? U.pnHTML(q.pn, q.pn.a, {ro: true}) : !q.o ? `<div class="small">Ответ: ${esc(String(q.a).split("|")[0])}</div>` : ""}<ul>${(q.o || []).map((o,k) => `<li ${k===q.a?'style="color:var(--good);font-weight:800"':""}>${esc(o)}${k===q.a?" ✓":""}</li>`).join("")}</ul><p class="small muted">${q.tag ? "Правило: " + esc(q.tag) + ". " : ""}${esc(q.e || "")}</p></li>`).join("")}</ol>`;
   let body = "";
@@ -1215,7 +1226,10 @@ function viewLesson(){
   if (T.sub === "mnemo") body = U.mnemoTabHTML(l);
   if (T.sub === "test") body = testEditor(cid, l, "test");
   if (T.sub === "hwtest") body = testEditor(cid, l, "hwtest");
-  if (T.sub === "mats") body = materialsTab(cid, l);
+  if (T.sub === "docs"){
+    const dm = {data:{docs: l.docs || []}};
+    body = `<div id="docs-lesson" class="stack" style="gap:8px">${docFormHTML(dm)}<div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm" data-act="docs-save">Сохранить документы урока</button><span class="small muted">Документы появятся на доске урока у ученика и учителя.</span></div></div>`;
+  }  if (T.sub === "mats") body = materialsTab(cid, l);
   if (T.sub === "edit"){
     const m = T.mats.find(x => x.id === l.mid);
     body = `<form class="stack" id="edit-lesson" style="gap:8px"><label for="el-title">Тема</label><input type="text" id="el-title" value="${esc(l.title)}">
@@ -1583,7 +1597,7 @@ function render(){
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
       <main class="main">${roomBanner()}${["students","course","student"].includes(T.view) && T.session ? subBanner() : ""}${html}</main></div></div>`;
   if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
-  if (T.view === "lesson" && T.sub === "edit" && $("#edit-lesson")) bindDocFormEvents();
+  if (T.view === "lesson" && ["edit","docs"].includes(T.sub) && ($("#edit-lesson") || $("#docs-lesson"))) bindDocFormEvents();
   if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
     const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
     const s = T.view === "room" && T.room ? (T.students.find(x => x.id === T.room.sid) || T.students.find(x => x.id === T.sel)) : T.students.find(x => x.id === T.sel);
@@ -1691,7 +1705,7 @@ function toolSearchUrl(kind, q, s){
 }
 function roomToolsHTML(s, c, l){
   const free = !l || l === FREE || l.free;
-  const mats = (T.mats || []).filter(m => m.course === s.course && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && m.data?.kind !== "content-edit" && m.data?.kind !== "test-edit").slice(0, 12);
+  const mats = (T.mats || []).filter(m => m.course === s.course && m.lesson_id === l.id && m.kind !== "lesson" && m.kind !== "keys" && m.data?.kind !== "content-edit" && m.data?.kind !== "test-edit" && m.data?.kind !== "doc-edit").slice(0, 12);
   const res = [["sdamgia","Решу ОГЭ/ЕГЭ"],["fipi","ФИПИ"],["wordwall","Wordwall"],["resh","РЭШ"],["google","Google"],["yandex","Яндекс"]];
   const matRows = mats.map(m => `<div class="mat"><span class="ic">${{link:"🔗",file:"📎",text:"📝",tasks:"✏️"}[m.kind] || "•"}</span><div style="min-width:0;flex:1"><b>${esc(m.title || "Материал")}</b><div class="small muted">${m.kind === "tasks" ? "задания" : m.kind === "file" ? "файл" : m.kind === "link" ? "ссылка" : "текст"}</div></div><button class="btn ghost sm" data-act="tool-insert-mat" data-mid="${esc(m.id)}">на доску</button></div>`).join("");
   return `<div class="tools-pane" data-tools-pane>
@@ -1699,7 +1713,7 @@ function roomToolsHTML(s, c, l){
       <p class="small muted">Нейросеть составит блок теории или задания по предмету и классу ученика; после сохранения материал появится у ученика и его можно вставить на лист доски.</p>
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm" data-act="tool-gen-theory" ${free ? "disabled" : ""}>✨ Тему / объяснение</button><button class="btn ghost sm" data-act="tool-gen-practice" ${free ? "disabled" : ""}>✨ Задания</button></div>
       <p class="small muted">${free ? "Выберите урок вверху комнаты, чтобы генерировать материал." : "Черновик ученик не видит – только после «Сохранить»."}</p>
-      <button class="btn ghost sm" data-act="tool-quick-test" ${free ? "disabled" : ""} title="Собрать тест по материалам урока по запросу">⚡ Тест по материалам урока</button><button class="btn ghost sm" data-act="tool-insert-board" ${free ? "disabled" : ""}>📄 Вставить урок на доску</button></div>
+      <button class="btn ghost sm" data-act="tool-quick-test" ${free ? "disabled" : ""} title="Собрать тест по материалам урока по запросу">⚡ Тест по материалам урока</button><div class="card stack" style="gap:8px;box-shadow:none"><div class="kicker">📄 Документ в урок</div><p class="small muted">Word/PDF станет листами-документами этого урока — можно писать и подчёркивать поверх.</p><button class="btn sm" data-act="tool-doc" ${free ? "disabled" : ""}>📄 Вставить Word / PDF</button><input type="file" id="tool-doc-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden><div class="small muted" id="tool-doc-status"></div></div><button class="btn ghost sm" data-act="tool-insert-board" ${free ? "disabled" : ""}>📄 Вставить урок на доску</button></div>
     <div class="card stack" style="gap:8px;box-shadow:none"><div class="kicker">📝 Заметка на доску</div>
       <textarea id="tool-note-text" rows="2" placeholder="Короткая заметка, правило или схема словами"></textarea>
       <div><button class="btn sm" data-act="tool-note">Вставить на доску</button></div></div>
@@ -2406,6 +2420,13 @@ document.addEventListener("submit", async e => {
     if (error){ toast("Не сохранилось: " + error.message); return; }
     T.mats.push(data); T.open = lid; T.view = "lesson"; T.sub = "edit"; render(); scrollTo(0,0); toast("Папка создана – заполните урок");
   }
+  if (id === "docs-save"){
+    const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open);
+    if (!l) return;
+    try { await saveLessonDocs(cid, l, docPagesFromForm()); }
+    catch (e){ toast("Документы не сохранились: " + (e && e.message || "нет связи")); return; }
+    render(); cmd("all", "refresh", {msg:"Учитель встроил документы в урок"}); toast("Документы сохранены — они уже на доске урока."); return;
+  }
   if (id === "edit-lesson"){
     const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open), m = T.mats.find(x => x.id === l.mid);
     const theory = $("#el-theory").value.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean).map(b => { const [h, ...rest] = b.split("\n"); return {h: h.trim(), t: rest.join("\n").trim()}; });
@@ -2557,6 +2578,13 @@ document.addEventListener("click", async e => {
     const l = c && (T.room.lesson === "free" ? FREE : c.lessons.find(x => x.id === T.room.lesson));
     if (!s || !l || l === FREE || l.free){ toast("Сначала выберите урок в верхней строке комнаты – тогда сгенерирую материал"); return; }
     await ceModal(s, l, a === "tool-gen-theory" ? "theory" : "practice"); return;
+  }
+  if (a === "tool-doc"){
+    const s = T.room && T.students.find(x => x.id === T.room.sid);
+    const c = s && U.courseFor(s, T.mats);
+    const l = c && (T.room.lesson === "free" ? FREE : c.lessons.find(x => x.id === T.room.lesson));
+    if (!s || !l || l === FREE || l.free){ toast("Сначала выберите урок в комнате — тогда вставлю документ."); return; }
+    document.getElementById("tool-doc-file")?.click(); return;
   }
   if (a === "tool-quick-test"){
     const s = T.room && T.students.find(x => x.id === T.room.sid);
@@ -2937,6 +2965,27 @@ document.addEventListener("click", e => {
   if (!sid){ toast("Откройте карточку ученика, чтобы отправить тренировку."); return; }
   try { cmd(sid, "trainer", {topic: dot.dataset.topic || "", quizIds: dot.dataset.quizIds || ""}); toast("Тренажёр по теме отправлен ученику"); }
   catch (_) { toast("Не удалось отправить тренировку — проверьте связь."); }
+});/* Word/PDF в текущий урок прямо из комнаты */
+document.addEventListener("change", async e => {
+  if (!e.target || e.target.id !== "tool-doc-file") return;
+  const files = [...(e.target.files || [])]; e.target.value = "";
+  if (!files.length) return;
+  const s = T.room && T.students.find(x => x.id === T.room.sid);
+  const c = s && U.courseFor(s, T.mats);
+  const l = c && (T.room.lesson === "free" ? FREE : c.lessons.find(x => x.id === T.room.lesson));
+  if (!s || !l || l === FREE || l.free) return;
+  const st = document.getElementById("tool-doc-status"); if (st) st.textContent = "Разбираю документ…";
+  try {
+    const pages = await Board.parseDocs(files);
+    const existing = (docEditRow(s.course, l.id)?.data?.docs) || l.docs || [];
+    await saveLessonDocs(s.course, l, [...existing, ...pages]);
+    if (st) st.textContent = "Готово: листов " + pages.length;
+    render(); cmd(s.id, "refresh", {msg:"Учитель встроил документ в урок"});
+    toast("Документ встроен в урок — листы уже на доске.");
+  } catch (err) {
+    if (st) st.textContent = "Не получилось: " + (err && err.message || "проверьте файл");
+    toast("Документ не встроился: " + (err && err.message || "проверьте файл"));
+  }
 });window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards, trendPoints,
   ssSets: () => { const s = T.students.find(x => x.id === T.sel); try { return (s && window.SELF_DATA?.customSets) ? SELF_DATA.customSets(T.mats, s.course, s.id) : {blocks: [], decks: []}; } catch(_){ return {blocks: [], decks: []}; } }};
 })();

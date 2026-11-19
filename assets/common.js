@@ -330,9 +330,12 @@ window.U = (() => {
     /* правка теории и практики: data.kind = "content-edit" (общая → своя → для конкретного ученика) */
     const cedits = mats.filter(m => m.kind === "tasks" && m.data?.kind === "content-edit").sort((a, b) => (a.shared ? 0 : 1) - (b.shared ? 0 : 1) || (a.student_id ? 1 : 0) - (b.student_id ? 1 : 0) || a.id - b.id);
     const cOf = (id, k) => cedits.length ? cedits.filter(m => m.lesson_id === id && m.data?.[k]).pop() : null;
-    const SYS = m => m.kind === "tasks" && ["test-edit", "content-edit", "izl-text"].includes(m.data?.kind);
-    lessons = [...lessons, ...own].map(l => { const ed = editOf(l.id), th = cOf(l.id, "theory"), pr = cOf(l.id, "practice");
-      return {...l, ...(ed?.data?.test ? {test: ed.data.test} : {}), ...(ed?.data?.hwtest ? {hwtest: ed.data.hwtest} : {}), ...(th ? {theory: th.data.theory} : {}), ...(pr ? {practice: pr.data.practice, pEdited: true} : {}),
+    /* документы урока: data.kind = "doc-edit" — можно встроить Word/PDF в любой урок, не только свой */
+    const dedits = mats.filter(m => m.kind === "tasks" && m.data?.kind === "doc-edit").sort((a, b) => (a.shared ? 0 : 1) - (b.shared ? 0 : 1) || (a.student_id ? 1 : 0) - (b.student_id ? 1 : 0) || a.id - b.id);
+    const dOf = id => dedits.length ? dedits.filter(m => m.lesson_id === id).pop() : null;
+    const SYS = m => m.kind === "tasks" && ["test-edit", "content-edit", "doc-edit", "izl-text"].includes(m.data?.kind);
+    lessons = [...lessons, ...own].map(l => { const ed = editOf(l.id), th = cOf(l.id, "theory"), pr = cOf(l.id, "practice"), de = dOf(l.id);
+      return {...l, ...(ed?.data?.test ? {test: ed.data.test} : {}), ...(ed?.data?.hwtest ? {hwtest: ed.data.hwtest} : {}), ...(th ? {theory: th.data.theory} : {}), ...(pr ? {practice: pr.data.practice, pEdited: true} : {}), docs: (de?.data?.docs || l.docs || []),
         edited: !!ed, cEdited: !!(th || pr), date: ov[l.id] || l.date, materials: (by.get(l.id) || []).filter(m => m.kind !== "lesson" && !SYS(m))}; })
       .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
     /* тренажёр изложений: каждый текст (встроенный или с записью от учителя) – отдельная «папка» со своим письмом */
