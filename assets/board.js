@@ -2150,8 +2150,8 @@ window.Board = (() => {
           return;
         }
         if (m.type === "page" && o.role === "student"){
-          if (isWritingNow()) return;              // не переключаем лист, пока ученик пишет
-          if (m.page !== page){ openPage(m.page); toast("Учитель открыл другой лист"); }
+          /* лист ученика не переключаем автоматически по синхронизации: только сам ученик
+             или явная команда «Перенести ученика» (room-goto) могут сменить лист */
           return;
         }
         if (m.page !== page) return;

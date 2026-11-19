@@ -216,6 +216,7 @@ async function roomGoto(m, quiet){
   if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
   S.room.lesson = m.lesson; S.open = m.lesson; S.test = null; S.testInRoom = false; if (m.tab){ S.sub = m.tab; S.boardPage = m.tab; } if (m.page) S.boardPage = m.page;
   closeJoin(); S.view = "room"; S.drawer = false; S.away = false; render(); scrollTo(0, 0);
+  if (S.board && typeof S.board.open === "function" && S.boardPage) S.board.open(S.boardPage);
   const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
   if (!quiet) toast(`Учитель перенёс тебя: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`);
   liveTrack(); return true;
@@ -1686,10 +1687,12 @@ function render(){
   }
   if (v === "folder" && S.sub === "board"){
     const l = S.course.lessons.find(x => x.id === S.open);
+    const pages = Board.pages(S.course, l);
+    const bp = pages.some(p => p.key === S.boardPage) ? S.boardPage : (pages.find(p => p.key === S.sub)?.key || pages[0]?.key);
     S.board = Board.keep($("#board"), "s:" + l.id, {
       api: Board.api("student", sb, {code:S.token, lesson:l.id}),
-      sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null, page: S.boardPage,
-      role: "student", name: S.profile.name, pages: Board.pages(S.course, l), onPage: p => S.boardPage = p
+      sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null, page: bp,
+      role: "student", name: S.profile.name, pages, onPage: p => S.boardPage = p
     });
   }
   if (v === "folder" && S.sub === "practice" && $("#wk-root")){
@@ -1699,13 +1702,16 @@ function render(){
   if (v === "room"){
     const l = roomLesson();
     const {pages, live} = roomBoardPages(l);
+    const bp = pages.some(p => p.key === S.boardPage) ? S.boardPage : (pages.find(p => p.key === S.sub)?.key || pages[0]?.key);
     S.board = Board.keep($("#board"), "r:" + l.id, {api: Board.api("student", sb, {code:S.token, lesson:l.id}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-${l.id}` : null,
-      page: S.boardPage, role: "student", name: S.profile.name, pages, live, onPage: p => S.boardPage = p});
+      page: bp, role: "student", name: S.profile.name, pages, live, onPage: p => S.boardPage = p});
     if (S.follow?.on) followView();
   }
   if (v === "myboard"){
+    const pages = Board.pages(S.course || {}, FREE);
+    const bp = pages.some(p => p.key === S.boardPage) ? S.boardPage : pages[0]?.key;
     S.board = Board.keep($("#board"), "s:free", {api: Board.api("student", sb, {code:S.token, lesson:"free"}), sb, channelName: sb ? `board-${S.profile.board_owner || S.profile.id}-free` : null,
-      page: S.boardPage, role: "student", name: S.profile.name, pages: Board.pages(S.course || {}, FREE), onPage: p => S.boardPage = p});
+      page: bp, role: "student", name: S.profile.name, pages, onPage: p => S.boardPage = p});
   }
   if (!$("#board")){ Board.release(); S.board = null; }
   if (S.profile && sb){ liveStart(); liveTrack(); }
