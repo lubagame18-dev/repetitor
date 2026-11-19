@@ -208,6 +208,7 @@ const boardWrites = () => !!(S.board && typeof S.board.writing === "function" &&
 async function roomGoto(m, quiet){
   /* пока ученик пишет, синхронизация/перенос не должны выдёргивать его на другой лист */
   if (boardWrites()) return false;
+  const alreadyRoom = S.view === "room" && S.room?.lesson === m.lesson;
   const changed = !S.room || S.room.lesson !== m.lesson;
   const ok = await ensureLesson(m);
   if (!ok){ if (!quiet) toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return false; }
@@ -216,7 +217,7 @@ async function roomGoto(m, quiet){
   if (S.joinHow === "call") S.joinHow = "both";   // учитель явно показывает урок – доска нужна, звонок остаётся
   if (m.lesson && m.lesson !== "free") S.forced.add(m.lesson);
   S.room.lesson = m.lesson; S.open = m.lesson; S.test = null; S.testInRoom = false; if (m.tab){ S.sub = m.tab; S.boardPage = m.tab; } if (m.page) S.boardPage = m.page;
-  closeJoin(); S.view = "room"; S.drawer = false; S.away = false; render(); scrollTo(0, 0);
+  closeJoin(); S.view = "room"; S.drawer = false; S.away = false; render(); if (!alreadyRoom) scrollTo(0, 0);
   if (S.board && typeof S.board.open === "function" && S.boardPage) S.board.open(S.boardPage);
   const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
   if (!quiet) toast(`Учитель открыл урок: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`);
@@ -244,7 +245,7 @@ async function applyFollow(f, afterGoto){
     const here = S.view === "room" && S.room?.lesson === f.lesson;
     /* «Ведение» синхронизирует урок/раздел, но НЕ перелистывает лист и не сдвигает вид:
        иначе ученика при письме выбрасывает на первый лист/вверх, если учитель смотрит начало. */
-    if (!here || (f.tab && S.sub !== f.tab && S.boardPage !== f.tab)) await roomGoto({lesson: f.lesson, tab: f.tab}, !first);
+    if (!here) await roomGoto({lesson: f.lesson}, !first);
     else if (S.away){ S.away = false; S.view = "room"; render(); }
     if (first) toast("Учитель ведёт тебя по уроку");
   }
@@ -410,7 +411,9 @@ async function syncQuiet(){
     await load();
     if (S.dataChanged){
       const focused = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
-      if (!typing() || (S.view === "room" && !focused) || (S.view === "folder" && S.sub !== "board" && !focused)) render(); else S.syncPending = true;
+      /* во время письма на доске фоновая перерисовка не должна дёргать страницу */
+      if (boardWrites() || focused){ S.syncPending = true; }
+      else render();
     }
   } catch (_) {} finally { S.syncBusy = false; }
 }
