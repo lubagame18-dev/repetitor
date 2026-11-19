@@ -840,6 +840,7 @@ function trendTopicsHTML(s){
     const oa = order.has(a.title) ? order.get(a.title) : 9999, ob = order.has(b.title) ? order.get(b.title) : 9999;
     return oa - ob || a.title.localeCompare(b.title);
   });
+  stats.forEach(x => { const m = masteryPct(x.title); if (m != null){ x.lastPct = Math.round(m); x.lastNeeds = m < 60; } });
   if (!stats.length) return "";
   return `<div class="card stack" style="gap:8px;margin:10px 0" data-t-student-quiz-topics>
     <div class="kicker">Темы из тестов по темам · в порядке изучения</div>
