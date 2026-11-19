@@ -1,11 +1,11 @@
 # Последнее обновление Supabase
 
-Время: 2026-11-19 09:11 UTC · коммит cac1d12
+Время: 2026-11-19 09:12 UTC · коммит 1466f9a
 
 ## База (schema.sql)
 ```
-{"message":"Failed to run sql query: ERROR:  42P01: missing FROM-clause entry for table \"s\"\nLINE 837:   where m.student_id in (select x.id from public.students x where coalesce(x.person_id, x.id) = coalesce(s.person_id, s.id));\n                                                                                                                   ^\n"}
-ОШИБКА 400 (изменения отменены)
+[]
+ok (201)
 ```
 
 ## Функция ai
