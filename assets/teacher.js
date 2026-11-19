@@ -797,7 +797,23 @@ function trendTitleOf(c){
     return "";
   };
 }
-function trendPoints(s){
+/* освоение тем после повторной практики ученика: подтягиваем для графика/карточки */
+function loadTopicMasteryFor(s){
+  if (!sb || !s || !T.session) return;
+  const ids = [s.id, ...((T.students || []).filter(x => (x.person_id || x.id) === (s.person_id || s.id)).map(x => x.id))];
+  if (T.masteryBusy) return;
+  T.masteryBusy = true;
+  sb.from("topic_mastery").select("student_id,topic_key,topic_title,pct,solved,updated_at").in("student_id", ids)
+    .then(({data, error}) => {
+      T.masteryBusy = false;
+      if (error || !Array.isArray(data)) return;
+      const map = {};
+      data.forEach(x => { if (x && x.topic_title) map[String(x.topic_title)] = {pct:+x.pct || 0, solved:+x.solved || 0}; });
+      T.mastery = map;
+      if (T.view === "student" && T.sel === s.id) render();
+    }).catch(() => { T.masteryBusy = false; });
+}
+function masteryPct(title){ const m = T.mastery && T.mastery[String(title)]; return m ? m.pct : null; }function trendPoints(s){
   if (!window.Trend || !Trend.pointsFromRows) return [];
   const c = U.courseFor(s, T.mats);
   const rows = (T.rows || []).filter(r => r.student_id === s.id);
@@ -806,6 +822,7 @@ function trendPoints(s){
   const qCourse = id => (T.qzQuizzes || []).find(q => q.id === id)?.course;
   const rs = (T.qzResults || []).filter(r => r.student_id === s.id || (sibs.has(r.student_id) && qCourse(r.quiz_id) === s.course));
   const topicPoints = Trend.pointsFromQuizTopics ? Trend.pointsFromQuizTopics(rs, {order: Trend.topicOrder(c), limit: 30}) : [];
+  topicPoints.forEach(p => { const m = masteryPct(p.label); if (m != null){ p.p = Math.max(0, Math.min(100, Math.round(m))); p.sub = "повторная практика"; } });
   const titleOf = trendTitleOf(c);
   if (topicPoints.length) return [...Trend.pointsFromRows(rows, {titleOf, limit: 30}), ...topicPoints];
   const quizzes = rs.map(r => ({created_at: r.created_at, kind: "quiz", score: r.score, total: r.total, lesson_id: r.quiz_id}));
@@ -841,7 +858,7 @@ function trendSectionHTML(s){
 }
 
 function viewStudent(){
-  const s = T.students.find(x => x.id === T.sel); if (!s) return viewStudents();
+  const s = T.students.find(x => x.id === T.sel); if (!s) return viewStudents(); if (s && T.masteryFor !== s.id){ T.masteryFor = s.id; loadTopicMasteryFor(s); }
   const x = sData(s), c = x.c, et = window.ENTRY_TESTS?.[String(s.grade)];
   /* встроенный курс ещё догружается? тогда карточка показывает «Загружаю материалы», а не пустые уроки */
   const courseNeedsBase = !!(c && s.course && T.me?.base && window.CATALOG?.[s.course]);

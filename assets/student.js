@@ -1203,6 +1203,21 @@ async function loadQuizzes(force){
   } catch(e){ if (force) toast("Не удалось загрузить тесты: проверь интернет."); return false; }
   finally { S.qzBusy = false; }
 }
+/* освоение тем после повторной практики (10 вопросов): сохраняется на сервере, влияет на точки/средний балл */
+async function loadTopicMastery(force){
+  if (!sb || !S.profile) return false;
+  if (S.tmBusy) return false;
+  if (S.topicPractice && !force) return true;
+  S.tmBusy = true;
+  try {
+    const {data, error} = await sb.rpc("student_topic_mastery", {p_code:S.token});
+    if (error) return false;
+    const map = {};
+    (Array.isArray(data) ? data : []).forEach(x => { if (x && x.title) map[String(x.title)] = {pct:+x.pct || 0, solved:+x.solved || 0, at:x.updated_at || ""}; });
+    S.topicPractice = map; return true;
+  } catch(_) { return false; }
+  finally { S.tmBusy = false; }
+}
 async function openQuizzes(){
   if (S.regDone){ S.invite = null; S.regDone = null; }
   S.view = "quizzes"; S.drawer = false; S.qzBusy = true;
@@ -1521,9 +1536,10 @@ function progressList(){
   return S.prog.map(x => x.id === S.profile.id ? cur : {subject: x.subject, ...U.subjectNow(x.results, x.writings)});
 }
 /* ---------- тренажёр по теме из диагностики: мини-теория и повторная практика ---------- */
-function closeTopicTrainer(){
+function closeTopicTrainer(redraw){
   try { document.getElementById("tr-back")?.remove(); } catch (_) {}
   S.trainer = null;
+  if (redraw !== false && S.view === "stats") { try { render(); } catch (_) {} }
 }
 function topicTheoryText(topic, questions){
   const out = [];
@@ -1552,7 +1568,7 @@ function trainerHTML(){
   if (tr.phase === "done"){
     const pct = tr.questions.length ? Math.round(tr.score / tr.questions.length * 100) : 0;
     return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Практика по теме · ${esc(tr.topic)}</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body">
-      <div class="tr-result"><b>${tr.score} из ${tr.questions.length} · ${pct}%</b><p class="small muted">${pct >= 80 ? "Тема закреплена." : "Можно пройти ещё раз — вопросы те же."}</p></div>
+      <div class="tr-result"><b>${tr.score} из ${tr.questions.length} · ${pct}%</b><p class="small muted">${pct >= 80 ? "Тема закреплена." : "Можно пройти ещё раз — вопросы те же."}</p><p class="small ${tr.saveError ? "bad" : "muted"}">${tr.saving ? "Сохраняю результат…" : tr.saved ? "Результат сохранён — средний балл по теме обновлён." : tr.saveError ? "Результат не сохранился: " + esc(tr.saveError) : ""}</p></div>
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-tr-again>Пройти ещё раз</button><button class="btn ghost" data-tr-close>Закрыть</button></div></div></div></div>`;
   }
   const q = tr.questions[tr.i]; if (!q) return "";
@@ -1605,17 +1621,40 @@ async function openTopicTrainer(topic, quizIds){
     }
     const seen = new Set(); const uniq = all.filter(x => { const k = x.q.trim(); if (seen.has(k)) return false; seen.add(k); return true; });
     const difficult = uniq.filter(x => x.wrong);
-    const questions = difficult.length ? difficult : uniq;
-    if (!questions.length) throw new Error("По теме не нашлись вопросы — попросите учителя собрать тест заново.");
+    const pool = difficult.length ? [...difficult, ...uniq.filter(x => !x.wrong)] : uniq.slice();
+    if (!pool.length) throw new Error("По теме не нашлись вопросы — попросите учителя собрать тест заново.");
+    /* ровно 10 вопросов: так тема реально закрепляется; сложные идут первыми */
+    const questions = [];
+    for (let i = 0; i < 10; i++){ const q = pool[i % pool.length]; questions.push({...q, e: q.e || ("Правильный ответ: " + q.o[q.a]), practiceNo: i + 1}); }
     const tr = S.trainer;
     tr.questions = questions; tr.wrongCount = difficult.length;
-    tr.theory = topicTheoryText(topic, difficult.length ? difficult : questions);
+    tr.theory = topicTheoryText(topic, difficult.length ? difficult : uniq);
     tr.phase = "theory";
     paintTrainer();
   } catch (e) {
     if (!S.trainer) return;
     S.trainer.phase = "error"; S.trainer.error = e && e.message || "Нет связи";
     paintTrainer();
+  }
+}
+async function submitTopicPractice(tr){
+  if (!tr || !sb || tr.submitted) return;
+  tr.submitted = true; tr.saving = true; paintTrainer();
+  try {
+    const total = tr.questions.length, score = tr.score;
+    const {error} = await sb.rpc("topic_practice_submit", {p_code:S.token, p_topic:tr.topic, p_title:tr.topic, p_score:score, p_total:total});
+    if (error) throw error;
+    const pct = Math.max(0, Math.min(100, Math.round(score / Math.max(1, total) * 100)));
+    S.topicPractice = S.topicPractice || {};
+    const old = S.topicPractice[tr.topic];
+    S.topicPractice[tr.topic] = {pct: Math.max(pct, old?.pct || 0), solved: (old?.solved || 0) + total, at: new Date().toISOString()};
+    tr.saved = true; tr.saving = false; tr.submitted = false;
+    if (S.trainer === tr) paintTrainer();
+    toast("Результат сохранён — процент по теме обновлён.");
+  } catch (e){
+    tr.saving = false; tr.submitted = false; tr.saveError = e && e.message || "нет связи";
+    if (S.trainer === tr) paintTrainer();
+    toast("Результат не сохранился: " + (tr.saveError || "нет связи"));
   }
 }
 function viewStats(){
@@ -1625,10 +1664,17 @@ function viewStats(){
     S.qzAt = Date.now();
     loadQuizzes(true).then(ok => { if (ok && S.view === "stats") render(); });
   }
+  if (sb && !S.tmBusy && (!S.tmAt || Date.now() - S.tmAt > 5000)){
+    S.tmAt = Date.now();
+    loadTopicMastery(true).then(ok => { if (ok && S.view === "stats") render(); });
+  }
+  const masteryOf = title => (S.topicPractice && S.topicPractice[String(title)]) || null;
   let trend = "";
   if (window.Trend){
     const qOrder = window.Trend.topicOrder ? window.Trend.topicOrder(S.course) : new Map();
     const topicPoints = window.Trend.pointsFromQuizTopics ? window.Trend.pointsFromQuizTopics(S.qzResults || [], {order:qOrder, limit:30}) : [];
+    /* повторная практика по теме (10 вопросов) заменяет процент темы на графике */
+    topicPoints.forEach(p => { const m = masteryOf(p.label); if (m){ p.p = Math.max(0, Math.min(100, Math.round(m.pct))); p.sub = `повторная практика · ${m.solved} вопросов`; p.practice = true; } });
     const baseRows = S.rows || [];
     const titleOf = r => r.kind === "quiz"
       ? ((S.quizzes || []).find(q => q.id === (r.lesson_id || r.quiz_id))?.title || "тест по темам")
@@ -1650,6 +1696,7 @@ function viewStats(){
     const oa = qOrder2.has(a.title) ? qOrder2.get(a.title) : 9999, ob = qOrder2.has(b.title) ? qOrder2.get(b.title) : 9999;
     return oa - ob || a.title.localeCompare(b.title);
   });
+  qstats.forEach(s => { const m = masteryOf(s.title); if (m){ s.lastPct = Math.round(m.pct); s.lastNeeds = m.pct < 60; s.practice = true; } });
   const topicsHTML = qstats.length ? `<div class="card stack" style="gap:8px;margin:10px 0" data-t-quiz-topics>
     <div class="row between" style="gap:8px"><div class="kicker">Темы из тестов по темам · ${(S.qzResults || []).length} попыт.</div><button class="btn ghost sm" data-go="quizzes">Все тесты</button></div>
     <div class="quiz-topics">${qstats.map(s => {
@@ -2214,7 +2261,7 @@ document.addEventListener("click", e => {
   if (e.target.closest && e.target.closest("[data-tr-next]")){
     const tr = S.trainer;
     if (tr.i + 1 < tr.questions.length){ tr.i++; tr.picked = null; tr.revealed = false; }
-    else { tr.phase = "done"; }
+    else { tr.phase = "done"; paintTrainer(); submitTopicPractice(tr); return; }
     paintTrainer(); return;
   }
   if (e.target.closest && e.target.closest("[data-tr-again]")){

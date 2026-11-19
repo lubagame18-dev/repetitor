@@ -112,12 +112,16 @@ window.Trend = (() => {
       return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${topic ? "5.2" : "4.2"}"${attrs} data-p="${p.p}" tabindex="${clickable ? "0" : "-1"}" role="${clickable ? "button" : "img"}"><title>${esc(tip)}</title></circle>`;
     }).join("");
     const last = pts[n - 1], first = pts[0];
+    const topicPts = pts.filter(p => p.kind === "quiz-topic");
+    /* «сейчас» для диагностики — средний балл по темам, а не последняя тема */
+    const topicAvg = topicPts.length ? Math.round(topicPts.reduce((s, p) => s + p.p, 0) / topicPts.length) : null;
+    const current = topicAvg != null ? topicAvg : last.p;
     const delta = n > 1 ? last.p - first.p : 0;
-    const trendWord = n < 2 ? "" : delta > 5 ? `рост +${delta}%` : delta < -5 ? `снижение ${delta}%` : "стабильно";
-    return `<div class="trend" data-trend data-points="${n}" data-last="${last.p}" data-first="${first.p}">
+    const trendWord = topicAvg != null ? "средний балл по темам" : n < 2 ? "" : delta > 5 ? `рост +${delta}%` : delta < -5 ? `снижение ${delta}%` : "стабильно";
+    return `<div class="trend" data-trend data-points="${n}" data-last="${current}" data-first="${first.p}" data-average="${topicAvg != null ? topicAvg : ""}">
       <div class="row between" style="gap:8px;flex-wrap:wrap;align-items:flex-start"><div><div class="kicker">${esc(opts.title || "Динамика успеваемости")}</div>
         <div class="small muted">${esc(opts.note || "по темам и занятиям от начала до текущего")} · ${n} ${n === 1 ? "точка" : n < 5 ? "точки" : "точек"}${trendWord ? " · " + trendWord : ""}</div></div>
-        <span class="chip ${delta < -5 ? "bad" : delta > 5 ? "good" : ""}">сейчас ${last.p}%</span></div>
+        <span class="chip ${delta < -5 ? "bad" : delta > 5 ? "good" : ""}" title="${topicAvg != null ? "Средний балл по всем темам диагностики" : "Текущий результат"}">${topicAvg != null ? "средний балл" : "сейчас"} ${current}%</span></div>
       <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.title || "Динамика успеваемости")}: линия результатов занятий">
         ${grid}
         <path d="${area}" class="trend-area"/>

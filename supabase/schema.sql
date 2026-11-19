@@ -765,6 +765,23 @@ create policy "teacher_quiz_results" on public.topic_quiz_results for all to aut
   using (exists (select 1 from public.topic_quizzes q where q.id = quiz_id and public.my_team(q.teacher_id)))
   with check (exists (select 1 from public.topic_quizzes q where q.id = quiz_id and public.my_team(q.teacher_id)));
 
+-- освоение темы после повторной практики (10 вопросов): процент берётся для точки диагностики
+create table if not exists public.topic_mastery (
+  id          bigint generated always as identity primary key,
+  student_id  uuid not null references public.students(id) on delete cascade,
+  topic_key   text not null,
+  topic_title text,
+  pct         int not null default 0 check (pct between 0 and 100),
+  solved      int not null default 0,
+  updated_at  timestamptz not null default now(),
+  unique(student_id, topic_key)
+);
+create index if not exists topic_mastery_student_idx on public.topic_mastery(student_id, updated_at desc);
+alter table public.topic_mastery enable row level security;
+drop policy if exists "teacher_topic_mastery" on public.topic_mastery;
+create policy "teacher_topic_mastery" on public.topic_mastery for all to authenticated
+  using (exists (select 1 from public.students s where s.id = student_id and public.my_team(s.teacher_id)))
+  with check (exists (select 1 from public.students s where s.id = student_id and public.my_team(s.teacher_id)));
 -- тест по ссылке: ученик получает вопросы и объяснения
 create or replace function public.quiz_get(p_token text)
 returns json language sql security definer set search_path = public stable as $$
@@ -793,6 +810,31 @@ begin
   values (p_token, sid, p_score, p_total, coalesce(p_details, '{}'::jsonb), coalesce(p_needs_work, '{}'));
 end $$;
 
+-- освоение темы: ученик прошёл 10 вопросов повторно, процент сохраняется для графика
+create or replace function public.topic_practice_submit(p_code text, p_topic text, p_title text default '', p_score int default 0, p_total int default 0)
+returns void language plpgsql security definer set search_path = public as $$
+declare sid uuid := student_id_by_code(p_code); k text;
+begin
+  if sid is null then raise exception 'unknown code'; end if;
+  if p_total < 10 or p_total > 200 or p_score < 0 or p_score > p_total then raise exception 'need 10 questions'; end if;
+  k := left(lower(regexp_replace(trim(p_topic), '\s+', ' ', 'g')), 160);
+  if k = '' then raise exception 'empty topic'; end if;
+  insert into public.topic_mastery(student_id, topic_key, topic_title, pct, solved, updated_at)
+  values (sid, k, left(coalesce(nullif(trim(p_title), ''), p_topic), 240), round(p_score::numeric * 100 / p_total)::int, p_total, now())
+  on conflict (student_id, topic_key) do update
+    set pct = greatest(public.topic_mastery.pct, excluded.pct),
+        solved = public.topic_mastery.solved + excluded.solved,
+        topic_title = excluded.topic_title,
+        updated_at = now();
+end $$;
+
+create or replace function public.student_topic_mastery(p_code text)
+returns json language sql security definer set search_path = public stable as $$
+  with s as (select * from public.students where id = student_id_by_code(p_code))
+  select coalesce(json_agg(json_build_object('topic_key', m.topic_key, 'title', m.topic_title, 'pct', m.pct, 'solved', m.solved, 'updated_at', m.updated_at) order by m.updated_at desc), '[]'::json)
+  from public.topic_mastery m
+  where m.student_id in (select x.id from public.students x where coalesce(x.person_id, x.id) = coalesce(s.person_id, s.id));
+$$;
 -- список тестов от учителя + история попыток (для визуальной карты тем у ученика)
 create or replace function public.student_quizzes(p_code text)
 returns json language sql security definer set search_path = public stable as $$
@@ -862,7 +904,7 @@ do $$ declare f text; begin
     'public.student_set_theme(text, text)', 'public.student_set_profile(text, text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
     'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])', 'public.board_update(text, text, bigint, jsonb)',
-    'public.quiz_get(text)', 'public.quiz_submit(text, text, int, int, jsonb, text[])', 'public.student_quizzes(text)'] loop
+    'public.quiz_get(text)', 'public.quiz_submit(text, text, int, int, jsonb, text[])', 'public.student_quizzes(text)', 'public.topic_practice_submit(text, text, text, int, int)', 'public.student_topic_mastery(text)'] loop
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';
   end loop;
