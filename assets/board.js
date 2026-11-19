@@ -1911,22 +1911,49 @@ window.Board = (() => {
       return pages.map((h, i) => ({label: "Документ " + (i + 1), html: h, doc: true, docType: "docx"}));
     }
     /* PDF → HTML-документ: каждая страница как расположенный текст (чёткий, без растра) */
+    async function pdfPageToImageDoc(pg, label){
+      const base = pg.getViewport({scale: 1});
+      const sc = Math.max(1.8, Math.min(3.4, 1900 / Math.max(1, base.width)));
+      const vp = pg.getViewport({scale: sc});
+      const c2 = document.createElement("canvas");
+      c2.width = Math.max(1, Math.round(vp.width)); c2.height = Math.max(1, Math.round(vp.height));
+      const cx = c2.getContext("2d");
+      cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, c2.width, c2.height);
+      await pg.render({canvasContext:cx, viewport:vp, background:"#ffffff"}).promise;
+      const src = fitPdfDataUrl(c2, PAGE_HTML_MAX - 1400, 2200);
+      return {label, html: `<div class="bd-sheet bd-doc-sheet"><div class="bd-doc bd-pdf-image"><img src="${src}" style="width:100%;height:auto;border-radius:4px"></div></div>`, doc: true, docType: "pdf-scan"};
+    }
     async function pdfToDocPages(file){
       if (!(await loadPdfJs())) throw new Error("PDF-модуль не загрузился");
       const doc = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
       const out = [];
-      const targetW = 744;                         // ширина рабочего листа доски без полей
+      const targetW = 736;                         // ширина рабочего листа доски без полей
       const n = Math.min(doc.numPages, 60);
+      const OPS = (window.pdfjsLib && window.pdfjsLib.OPS) || {};
       for (let p = 1; p <= n; p++){
         const pg = await doc.getPage(p);
         const vp = pg.getViewport({scale: 1});
         const k = targetW / Math.max(1, vp.width);
+        let hasImg = false, opsCount = 0;
+        try {
+          const ops = await pg.getOperatorList();
+          ops.fnArray.forEach(fn => {
+            if (fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintInlineImageXObject) hasImg = true;
+            if (fn === OPS.constructPath || fn === OPS.fill || fn === OPS.stroke) opsCount++;
+          });
+        } catch (_) {}
+        /* страница с картинками/схемами: сохраняем в высоком качестве, чтобы ничего не потерять */
+        if (hasImg || opsCount > 260){
+          out.push(await pdfPageToImageDoc(pg, "Документ " + p));
+          await delay(0);
+          continue;
+        }
         const tc = await pg.getTextContent({normalizeWhitespace: true, disableCombineTextItems: false});
         const items = (tc.items || []).filter(it => it && String(it.str || "").trim());
         if (!items.length){
-          /* скан без текстового слоя: сохраняем страницу картинкой в высоком качестве, но помечаем как документ */
-          const base = await pdfToImages(file, PAGE_HTML_MAX - 1200, n);
-          return base.map((it, i) => ({label: "Документ " + (i + 1), html: `<div class="bd-sheet bd-doc-sheet"><div class="bd-doc bd-pdf-image"><img src="${it.src}" style="width:100%;height:auto;border-radius:4px"></div></div>`, doc: true, docType: "pdf"}));
+          out.push(await pdfPageToImageDoc(pg, "Документ " + p));
+          await delay(0);
+          continue;
         }
         const lines = new Map();
         items.forEach(it => {
