@@ -717,7 +717,7 @@ window.Board = (() => {
     function renderPageButtons(){
       const box = root.querySelector(".bd-pages"); if (!box) return;
       box.innerHTML = `<button data-pstep="-1" title="Предыдущий лист" aria-label="Предыдущий лист">‹</button>` +
-        pagesArr.map(p => `<button data-bpage="${esc(p.key)}" aria-pressed="${p.key === page}">${esc(p.label)}</button>`).join("") +
+        pagesArr.map(p => `<span class="bd-pagetab${p.key === page ? " on" : ""}" data-pkey="${esc(p.key)}"><button data-bpage="${esc(p.key)}" aria-pressed="${p.key === page}">${esc(p.label)}</button>${o.role === "teacher" ? `<button class="bd-pagetab-tool" data-prenamekey="${esc(p.key)}" title="Переименовать вкладку" aria-label="Переименовать вкладку">✎</button><button class="bd-pagetab-tool bd-pagetab-del" data-pdelkey="${esc(p.key)}" title="Удалить вкладку" aria-label="Удалить вкладку">×</button>` : ""}</span>`).join("") +
         `<button data-pstep="1" title="Следующий лист" aria-label="Следующий лист">›</button>`;
       updateDocEditButton();
     }
@@ -986,9 +986,9 @@ window.Board = (() => {
       openPage(key);
       send("page", {page:key});
     }
-    async function pageRename(){
+    async function pageRename(key){
       if (o.role !== "teacher") return;
-      const p = pagesArr.find(x => x.key === page); if (!p) return;
+      const p = pagesArr.find(x => x.key === String(key || page)); if (!p) return;
       if (!p.dbId){ toast("Название этого листа задаётся в «Изменить урок»."); return; }
       const name = (window.prompt("Название вкладки", p.label) || "").trim().slice(0, 24);
       if (!name || name === p.label) return;
@@ -997,9 +997,9 @@ window.Board = (() => {
       catch (e) { toast("Не удалось переименовать: " + oneLine(e && e.message || "нет связи")); return; }
       send("page-rename", {key:p.key, label:name});
     }
-    async function pageDelete(){
+    async function pageDelete(key){
       if (o.role !== "teacher") return;
-      const p = pagesArr.find(x => x.key === page); if (!p) return;
+      const p = pagesArr.find(x => x.key === String(key || page)); if (!p) return;
       if (!p.dbId){ toast("Этот лист создаётся из урока или встроен — уберите его в «Изменить урок»."); return; }
       if (!window.confirm("Удалить вкладку «" + p.label + "»? Пометки на ней тоже исчезнут.")) return;
       const old = p.key;
@@ -1787,6 +1787,8 @@ window.Board = (() => {
       if (drawing || Date.now() - lastDrawAt < 1200){ e.preventDefault(); e.stopPropagation(); }
     }, true);    root.addEventListener("click", async e => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
+      if (b.dataset.prenamekey){ pageRename(b.dataset.prenamekey); return; }
+      if (b.dataset.pdelkey){ pageDelete(b.dataset.pdelkey); return; }
       if (b.dataset.pstep){ stepPage(+b.dataset.pstep); return; }
       if (b.dataset.bpage){ openPage(b.dataset.bpage); if (o.role === "teacher") send("page", {page:b.dataset.bpage}); }
       if (b.dataset.tool) setTool(b.dataset.tool);
@@ -2241,6 +2243,22 @@ window.Board = (() => {
       if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || "") || ae.isContentEditable)) return;
       const cd = e.clipboardData; if (!cd) return;
       const files = [...(cd.files || [])];
+      /* документ, скопированный файлом (Word/PDF), вставляем отдельной вкладкой-документом */
+      const docs = files.filter(f => /pdf|vnd.openxmlformats-officedocument.wordprocessingml/i.test(f.type || "") || /\.(pdf|docx)$/i.test(f.name || ""));
+      if (docs.length){
+        e.preventDefault(); lastClipFiles = docs;
+        toast("Вставляю документ как лист…");
+        attachPages(docs); return;
+      }
+      /* HTML, скопированный из Word, тоже сохраняем как документ, а не как голый текст */
+      let html = ""; try { html = cd.getData("text/html") || ""; } catch (_) {}
+      if (html && /urn:schemas-microsoft-com|class=["']?Mso|<meta[^>]+Word/i.test(html)){
+        e.preventDefault();
+        const clean = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "");
+        const key = addPageP("Документ " + (pagesArr.length + 1), `<div class="bd-sheet bd-doc-sheet"><div class="bd-doc">${clean}</div></div>`, true, {doc:true, docType:"docx"});
+        openPage(key); if (o.role === "teacher") send("page", {page:key});
+        return;
+      }
       const imgs = files.filter(f => /^image\//i.test(f.type || ""));
       let text = "";
       try { text = cd.getData("text/plain") || ""; } catch (_) {}

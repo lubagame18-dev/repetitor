@@ -932,3 +932,10 @@ body.play-open{overflow:hidden}
 .tr-body .progress{height:6px;border-radius:999px}
 .tr-modal{border:1px solid var(--line)}
 .tr-result b{color:var(--violet,#7b4cf5);font-size:22px}
+/* вкладки листов: управление появляется при наведении */
+.bd-pagetab{display:inline-flex;align-items:center;gap:2px;position:relative;border-radius:10px}
+.bd-pagetab .bd-pagetab-tool{display:none;min-width:24px!important;padding:4px 5px!important;font-size:12px!important;line-height:1;background:var(--chip);color:var(--ink);border-radius:8px!important}
+.bd-pagetab:hover .bd-pagetab-tool,.bd-pagetab.on .bd-pagetab-tool,.bd-pagetab:focus-within .bd-pagetab-tool{display:inline-block}
+.bd-pagetab-tool.bd-pagetab-del:hover{background:#ffe9ee!important;color:#c0392b!important}
+.bd-pagetab.on > button[data-bpage]{background:var(--ink);color:var(--base)}
+@media (hover:none){.bd-pagetab .bd-pagetab-tool{display:inline-block}}
