@@ -99,6 +99,7 @@ async function load(){
     LS.set("cache", {rows:S.rows, hw:S.hw, sheets:S.sheets, writings:S.writings, mats:S.mats, base:S.base});
     /* результаты тестов по темам нужны для «усвоено N%» в списке уроков – подгружаем фоном */
     if (!S.quizzes && !S.qzBusy) setTimeout(() => loadQuizzes().then(ok => { if (ok && !typing()) { try { render(); } catch (_) {} } }).catch(() => {}), 300);
+    setTimeout(() => { retryQuizPending().then(ok => { if (ok && S.view === "stats") { try { render(); } catch (_) {} } }).catch(() => {}); }, 600);
   } else {
     S.rows = LS.get("rows", []); S.hw = LS.get("hw", {}); S.writings = LS.get("writings", {}); S.sheets = {}; S.works = LS.get("works", {});
   }
@@ -1064,6 +1065,27 @@ function quizRestart(){
   S.quizToken = null; S.view = "quiz"; S.drawer = false;
   render(); scrollTo(0, 0); liveTrack();
 }
+/* отправка результата теста с повтором и сохранением на устройстве, если связь пропала */
+const QP_KEY = "quiz-pending";
+async function pushQuizResult(token, payload){
+  if (!sb || !token) return false;
+  try { LS.set(QP_KEY, {token, payload, at: Date.now()}); } catch (_) {}
+  try {
+    const {error} = await sb.rpc("quiz_submit", {p_code: payload.p_code, p_token: token, p_score: payload.p_score, p_total: payload.p_total, p_details: payload.p_details, p_needs_work: payload.p_needs_work});
+    if (error) throw error;
+    try { LS.set(QP_KEY, null); } catch (_) {}
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+async function retryQuizPending(){
+  if (!sb) return false;
+  const p = LS.get(QP_KEY, null);
+  if (!p || !p.token || !p.payload) return false;
+  if (Date.now() - (+p.at || 0) > 7 * 864e5){ try { LS.set(QP_KEY, null); } catch (_) {} return false; }
+  return await pushQuizResult(p.token, p.payload);
+}
 async function finishQuiz(){
   const Q = S.quiz, A = S.qz; if (!Q || !A || A.done) return;
   const n = Q.questions.length, topics = Quiz.summarize(Q.questions, A.log);
@@ -1080,10 +1102,15 @@ async function finishQuiz(){
   render(); scrollTo(0, 0); liveTrack();
   liveAct(`прошёл тест по темам: ${score}/${n}`);
   if (!sb) return;
-  try {
-    const {error} = await sb.rpc("quiz_submit", {p_code:S.token, p_token:Q.id, p_score:score, p_total:n, p_details:{questions:A.log, topics}, p_needs_work:needsWork});
-    if (error) toast("Результат не отправлен учителю: нет связи. Покажи этот экран учителю.");
-  } catch(e){ toast("Результат не отправлен учителю: нет связи. Покажи этот экран учителю."); }
+  const payload = {p_code:S.token, p_score:score, p_total:n, p_details:{questions:A.log, topics}, p_needs_work:needsWork};
+  const sent = await pushQuizResult(Q.id, payload);
+  if (!sent){
+    toast("Результат сохранён на устройстве и отправится учителю, когда появится связь.");
+    [6000, 15000, 30000].forEach(ms => setTimeout(async () => {
+      if (!(await retryQuizPending())) return;
+      try { if (S.view === "stats") render(); } catch (_) {}
+    }, ms));
+  }
 }
 function viewQuizResult(){
   const Q = S.quiz, A = S.qz, R = A?.result;
@@ -1159,8 +1186,13 @@ async function loadQuizzes(force){
   try {
     const {data, error} = await sb.rpc("student_quizzes", {p_code: S.token});
     if (error || !data){ if (force) toast("Не удалось загрузить тесты: проверь интернет."); return false; }
+    const server = data.results || [];
+    /* не теряем только что пройденный тест, пока сервер ещё не записал результат */
+    const map = new Map();
+    server.forEach(r => { if (r) map.set(String(r.quiz_id) + "|" + String(r.created_at || ""), r); });
+    (S.qzResults || []).forEach(r => { if (r && !map.has(String(r.quiz_id) + "|" + String(r.created_at || ""))) map.set(String(r.quiz_id) + "|" + String(r.created_at || ""), r); });
+    S.qzResults = [...map.values()].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).slice(0, 100);
     S.quizzes = data.quizzes || [];
-    S.qzResults = data.results || [];
     return true;
   } catch(e){ if (force) toast("Не удалось загрузить тесты: проверь интернет."); return false; }
   finally { S.qzBusy = false; }
@@ -1484,10 +1516,10 @@ function progressList(){
 }
 function viewStats(){
   const et = entryTest(), er = entryRes();
-  /* динамика: если тесты по темам ещё не загружены, подтягиваем результаты и перерисовываем график */
-  if (sb && !S.qzLoadTried && S.quizzes == null){
-    S.qzLoadTried = true;
-    loadQuizzes().then(ok => { if (!ok) S.qzLoadTried = false; else if (S.view === "stats") render(); });
+  /* всегда подтягиваем свежие результаты тестов по темам (они могут быть пройдены на другом устройстве) */
+  if (sb && !S.qzBusy && (!S.qzAt || Date.now() - S.qzAt > 3000)){
+    S.qzAt = Date.now();
+    loadQuizzes(true).then(ok => { if (ok && S.view === "stats") render(); });
   }
   let trend = "";
   if (window.Trend){
@@ -1498,9 +1530,20 @@ function viewStats(){
     const points = window.Trend.pointsFromRows(rows, {titleOf, limit:30});
     trend = `<div data-t-trend style="margin:12px 0">${window.Trend.chart(points, {title:"Динамика успеваемости", empty:"График появится после первого занятия."})}</div>`;
   }
+  /* темы, которые проверялись в тестах: показываем под графиком, чтобы было видно, что именно влияет на линию */
+  const qstats = window.Quiz && typeof Quiz.topicStats === "function" ? Quiz.topicStats(S.qzResults || []) : [];
+  const topicsHTML = qstats.length ? `<div class="card stack" style="gap:8px;margin:10px 0" data-t-quiz-topics>
+    <div class="row between" style="gap:8px"><div class="kicker">Темы из тестов по темам · ${(S.qzResults || []).length} попыт.</div><button class="btn ghost sm" data-go="quizzes">Все тесты</button></div>
+    <div class="quiz-topics">${qstats.map(s => {
+      const lv = s.lastNeeds || s.lastPct < 60 ? "bad" : s.lastPct < 80 ? "mid" : "good";
+      return `<span class="chip ${lv}" title="Последняя попытка: ${s.lastPct}% · всего ${s.first} из ${s.total} с первой попытки">${esc(s.title)} · ${s.lastPct}%</span>`;
+    }).join("")}</div>
+    <p class="small muted" style="margin:0">Процент — по ответам с первой попытки. Красные темы надо доработать, их же видно в карте тем ниже.</p>
+  </div>` : "";
   return `<div class="section-title" style="margin-top:6px"><h2>Статистика</h2></div>
     ${U.progressHTML(progressList())}
     ${trend}
+    ${topicsHTML}
     ${S.course ? window.mapHTML(S.course, S.results, S.hwres, S.writings, S.hw) : ""}
     ${et && er ? `<div class="section-title"><h2>Входной тест</h2></div>${window.entryHTML(et, er)}` : ""}
     ${!S.course && !er ? noCourse() : ""}`;

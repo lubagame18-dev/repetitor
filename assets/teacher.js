@@ -801,16 +801,35 @@ function trendPoints(s){
   if (!window.Trend || !Trend.pointsFromRows) return [];
   const c = U.courseFor(s, T.mats);
   const rows = (T.rows || []).filter(r => r.student_id === s.id);
-  const quizzes = (T.qzResults || []).filter(r => r.student_id === s.id)
+  const person = x => x.person_id || x.id;
+  const sibs = new Set((T.students || []).filter(x => person(x) === person(s)).map(x => x.id));
+  const qCourse = id => (T.qzQuizzes || []).find(q => q.id === id)?.course;
+  const quizzes = (T.qzResults || [])
+    .filter(r => r.student_id === s.id || (sibs.has(r.student_id) && qCourse(r.quiz_id) === s.course))
     .map(r => ({created_at: r.created_at, kind: "quiz", score: r.score, total: r.total, lesson_id: r.quiz_id}));
   return Trend.pointsFromRows([...rows, ...quizzes], {titleOf: trendTitleOf(c), limit: 30});
+}
+function trendTopicsHTML(s){
+  if (!window.Quiz || !Quiz.topicStats) return "";
+  const person = x => x.person_id || x.id;
+  const sibs = new Set((T.students || []).filter(x => person(x) === person(s)).map(x => x.id));
+  const qCourse = id => (T.qzQuizzes || []).find(q => q.id === id)?.course;
+  const rs = (T.qzResults || []).filter(r => r.student_id === s.id || (sibs.has(r.student_id) && qCourse(r.quiz_id) === s.course));
+  const stats = Quiz.topicStats(rs);
+  if (!stats.length) return "";
+  return `<div class="card stack" style="gap:8px;margin:10px 0" data-t-student-quiz-topics>
+    <div class="kicker">Темы из тестов по темам</div>
+    <div class="quiz-topics">${stats.map(x => {
+      const lv = x.lastNeeds || x.lastPct < 60 ? "bad" : x.lastPct < 80 ? "mid" : "good";
+      return `<span class="chip ${lv}" title="Последняя попытка: ${x.lastPct}%">${esc(x.title)} · ${x.lastPct}%</span>`;
+    }).join("")}</div></div>`;
 }
 function trendSectionHTML(s){
   if (!window.Trend || !Trend.chart) return "";
   const points = trendPoints(s);
   const last = points.length ? points[points.length - 1].p : 0, first = points.length ? points[0].p : 0;
   return `<div class="section-title"><h2>Динамика успеваемости</h2><span class="small muted">результаты занятий и тестов по темам – от начала до текущего</span></div>
-    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", empty: "График появится после первого занятия или теста по темам."})}</div>`;
+    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
 }
 
 function viewStudent(){
