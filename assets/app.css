@@ -945,3 +945,13 @@ body.play-open{overflow:hidden}
 .bd-page-action:hover{filter:brightness(1.07)}
 .bd-page-action[hidden]{display:none}
 @media (max-width:640px){.bd-page-action{top:8px;right:8px;padding:10px 14px;font-size:14px}}
+/* «Объясни подробнее»: панель с озвучкой и обучающим тестом */
+.explain-panel{position:fixed;right:14px;bottom:14px;z-index:1800;width:min(430px,calc(100vw - 28px));max-height:min(70vh,620px);overflow:auto;background:var(--glass-2,#fff);border:1px solid var(--line);border-radius:18px;padding:12px 14px;box-shadow:0 20px 48px -18px rgba(36,24,61,.5);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur)}
+.explain-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.explain-head b{display:block;font-size:16px;line-height:1.3;margin-top:2px}
+.explain-controls{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.explain-text{max-height:40vh;overflow:auto;margin-top:8px;font-size:14px;line-height:1.5}
+.explain-text .bd-sheet{width:auto;min-height:0;padding:0;background:transparent;font:inherit}
+.explain-text .bd-doc{max-width:100%;font-size:14px;line-height:1.5}
+.explain-doc h2{font-size:22px;margin:0 0 10px}.explain-doc h3{font-size:18px;margin:14px 0 5px}.explain-doc p{margin:0 0 7px}.explain-doc ul{margin:0 0 8px 20px}
+@media (max-width:640px){.explain-panel{right:8px;bottom:8px;width:calc(100vw - 16px);max-height:64vh}}

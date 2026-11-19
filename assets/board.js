@@ -720,7 +720,7 @@ window.Board = (() => {
       box.innerHTML = `<button data-pstep="-1" title="Предыдущий лист" aria-label="Предыдущий лист">‹</button>` +
         pagesArr.map(p => `<span class="bd-pagetab${p.key === page ? " on" : ""}" data-pkey="${esc(p.key)}"><button data-bpage="${esc(p.key)}" aria-pressed="${p.key === page}">${esc(p.label)}</button>${o.role === "teacher" ? `<button class="bd-pagetab-tool" data-prenamekey="${esc(p.key)}" title="Переименовать вкладку" aria-label="Переименовать вкладку">✎</button><button class="bd-pagetab-tool bd-pagetab-del" data-pdelkey="${esc(p.key)}" title="Удалить вкладку" aria-label="Удалить вкладку">×</button>` : ""}</span>`).join("") +
         `<button data-pstep="1" title="Следующий лист" aria-label="Следующий лист">›</button>`;
-      updateDocEditButton();
+      updateDocEditButton(); updatePageAction();
     }
     function updatePageAction(){
       const el = root.querySelector("[data-page-action]"); if (!el) return;

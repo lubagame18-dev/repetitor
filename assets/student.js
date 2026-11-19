@@ -927,7 +927,7 @@ function viewFolder(){
   const pane = lessonPane(l, S.sub);
   return `${inkRailHTML(l)}<div class="row between" style="margin-bottom:12px"><button class="btn ghost sm" data-go="lessons">← Все уроки</button>
     <div class="row">${i>0 && isOpen(L[i-1])?`<button class="btn ghost sm" data-open="${L[i-1].id}">‹ № ${i}</button>`:""}${i<L.length-1 && isOpen(L[i+1])?`<button class="btn ghost sm" data-open="${L[i+1].id}">№ ${i+2} ›</button>`:""}
-      <button class="btn sm" data-act="start-room" title="Доска с заданиями и звонок с учителем">▶ Начать урок</button>
+      <button class="btn ghost sm" data-act="explain-topic" title="Подробное объяснение: прочитать, послушать и пройти обучающий тест">🧠 Объясни подробнее</button><button class="btn sm" data-act="start-room" title="Доска с заданиями и звонок с учителем">▶ Начать урок</button>
       <button class="btn ghost sm" data-act="download" title="Скачать урок как документ Word">⤓ Скачать</button></div></div>
   <article class="window glass" style="--c:${b.color}">
     <div class="head">
@@ -1569,6 +1569,85 @@ function showTopicTip(dot){
   const hideOnce = () => { hideTopicTip(160); window.removeEventListener("scroll", hideOnce, true); };
   window.addEventListener("scroll", hideOnce, true);
 }
+/* ---------- «Объясни подробнее»: разбор на доске, озвучка и обучающий тест ---------- */
+function explainContent(l){
+  const html = [], text = [];
+  const add = (tag, s) => { if (!s) return; const v = String(s).trim(); if (!v) return; html.push(`<${tag}>${esc(v)}</${tag}>`); text.push(v); };
+  (l.theory || []).forEach(b => {
+    add("h3", b.h || "Правило");
+    add("p", b.t);
+    (b.list || []).forEach(x => { if (x) { html.push(`<li>${esc(x)}</li>`); text.push(String(x)); } });
+    if (b.list?.length){ html.splice(html.length - (b.list.length), 0, "<ul>"); html.push("</ul>"); }
+    (b.ex || []).forEach(x => add("p", "Пример: " + x));
+  });
+  (l.practice || []).forEach(p => {
+    add("h3", "Разбор задания");
+    add("p", p.t);
+    if (p.key) add("p", "Как решать: " + p.key);
+    (p.items || []).forEach(x => add("p", x));
+  });
+  (tests(l).test || []).forEach(q => {
+    add("h3", q.q);
+    if (q.e) add("p", q.e);
+    if (q.o && q.a != null) add("p", "Правильный ответ: " + q.o[q.a]);
+  });
+  (l.materials || []).forEach(m => { if (m.kind === "text" && m.body) add("p", m.body); });
+  if (!html.length) add("p", "Подробного разбора к этому уроку пока нет. Можно открыть теорию урока или попросить учителя добавить объяснение.");
+  return { html: `<div class="bd-sheet bd-doc-sheet"><div class="bd-doc explain-doc"><h2>${esc(l.title)}</h2>${html.join("")}</div></div>`, text: text.join("\n") };
+}
+function stopExplainAudio(){
+  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+  if (S.explain) S.explain.speaking = false;
+  const b = document.getElementById("explain-speak"); if (b) b.textContent = "🔊 Озвучить";
+}
+function closeExplain(){
+  stopExplainAudio();
+  try { document.getElementById("explain-panel")?.remove(); } catch (_) {}
+  S.explain = null;
+}
+function openExplain(l){
+  if (!l) return;
+  closeExplain(); closeTopicTrainer(false);
+  const content = explainContent(l);
+  let pageKey = null;
+  try {
+    if (S.board && typeof S.board.addPage === "function"){
+      pageKey = S.board.addPage("Объяснение", content.html, true, {doc:true, docType:"html"});
+      if (S.board.openPage) S.board.openPage(pageKey);
+    }
+  } catch (_) {}
+  S.explain = {l, pageKey, text: content.text, speaking: false};
+  const panel = document.createElement("div");
+  panel.id = "explain-panel"; panel.className = "explain-panel";
+  panel.innerHTML = `<div class="explain-head"><div><div class="kicker">Разбор по уроку</div><b>${esc(l.title)}</b></div><button class="iconbtn" data-act="explain-close" aria-label="Закрыть">✕</button></div>
+    <div class="explain-controls"><button class="btn sm" id="explain-speak" data-act="explain-speak" ${window.speechSynthesis ? "" : "disabled"}>🔊 Озвучить</button><button class="btn ghost sm" data-act="explain-stop">Стоп</button><button class="btn ghost sm" data-act="explain-test">🎯 Обучающий тест</button></div>
+    <p class="small muted" style="margin:8px 0 0">${pageKey ? "Подробное объяснение добавлено на доску отдельной вкладкой «Объяснение»." : "Подробное объяснение открыто ниже."}</p>
+    ${pageKey ? "" : `<div class="explain-text">${content.html}</div>`}`;
+  document.body.appendChild(panel);
+}
+function speakExplain(){
+  const ex = S.explain; if (!ex) return;
+  if (!window.speechSynthesis){ toast("Озвучка не поддерживается этим браузером."); return; }
+  if (ex.speaking){ stopExplainAudio(); return; }
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(ex.text || "").slice(0, 6000));
+    u.lang = "ru-RU"; u.rate = 0.95;
+    const ru = (speechSynthesis.getVoices() || []).find(v => /^ru/i.test(v.lang));
+    if (ru) u.voice = ru;
+    u.onend = () => { if (S.explain) S.explain.speaking = false; const b = document.getElementById("explain-speak"); if (b) b.textContent = "🔊 Озвучить"; };
+    u.onerror = () => { if (S.explain) S.explain.speaking = false; const b = document.getElementById("explain-speak"); if (b) b.textContent = "🔊 Озвучить"; };
+    ex.speaking = true; const b = document.getElementById("explain-speak"); if (b) b.textContent = "⏸ Пауза";
+    speechSynthesis.speak(u); toast("Читаю объяснение вслух");
+  } catch (_) { toast("Не удалось включить озвучку."); }
+}
+function openStudyTest(l){
+  const qs = (tests(l).test || []).filter(q => q && q.q && Array.isArray(q.o) && q.o.length >= 2 && Number.isInteger(+q.a) && +q.a >= 0 && +q.a < q.o.length).slice(0, 10);
+  if (!qs.length){ toast("По этому уроку пока нет вопросов для обучающего теста."); return; }
+  closeExplain();
+  S.trainer = {topic: (l.learn || [])[0] || l.title, phase:"practice", questions: qs.map(q => ({...q, e: q.e || ("Правильный ответ: " + q.o[q.a])})), theory: [], wrongCount: 0, i:0, picked:null, revealed:false, score:0, study:true};
+  paintTrainer();
+}
 function closeTopicTrainer(redraw){
   try { document.getElementById("tr-back")?.remove(); } catch (_) {}
   S.trainer = null;
@@ -1671,7 +1750,7 @@ async function openTopicTrainer(topic, quizIds){
   }
 }
 async function submitTopicPractice(tr){
-  if (!tr || !sb || tr.submitted) return;
+  if (!tr || tr.study || !sb || tr.submitted) return;
   tr.submitted = true; tr.saving = true; paintTrainer();
   try {
     const total = tr.questions.length, score = tr.score;
@@ -1841,7 +1920,8 @@ function viewRoom(){
   const sub = tabs.some(t => t[0] === S.sub) ? S.sub : tabs[0]?.[0];
   const pane = S.test && S.testInRoom ? viewTest() : sub ? lessonPane(l, sub) : "";
   return `<div class="roombar glass"><div class="row" style="gap:8px;min-width:0"><span class="live-dot" aria-hidden="true"></span><b>Урок с учителем</b><span class="small muted">${esc(l.title)}</span></div>
-      <div class="row" style="gap:8px">${window.Call && !Call.active() ? `<button class="btn sm" data-act="call-start">🎥 Видеозвонок</button>` : ""}
+      <div class="row" style="gap:8px">${window.Call && !Call.active() ? `<button class="btn ghost sm" data-act="explain-topic" title="Подробное объяснение: прочитать, послушать и пройти обучающий тест">🧠 Объясни подробнее</button>
+<button class="btn sm" data-act="call-start">🎥 Видеозвонок</button>` : ""}
       ${url ? `<a class="btn ghost sm" href="${esc(url)}" target="_blank" rel="noopener" title="Если видеозвонок не соединяется">Звонок по ссылке</a>` : ""}
       ${how ? `<button class="btn ghost sm" data-act="join-reset" title="Сейчас: ${esc(JOIN[how] || "")}">Выбор устройства</button>` : ""}
       <button class="btn ghost sm" data-act="room-leave">Выйти</button></div></div>
@@ -2158,6 +2238,14 @@ document.addEventListener("click", async e => {
   }
   const a = t.dataset.act;
   if (a === "install"){ install(); return; }
+  if (a === "explain-topic"){
+    const el = S.view === "room" ? roomLesson() : S.course?.lessons?.find(x => x.id === S.open);
+    openExplain(el); return;
+  }
+  if (a === "explain-close"){ closeExplain(); return; }
+  if (a === "explain-speak"){ speakExplain(); return; }
+  if (a === "explain-stop"){ stopExplainAudio(); return; }
+  if (a === "explain-test"){ const el = S.explain?.l; if (el) openStudyTest(el); return; }
   if (a === "avatar-pick"){ pickAvatar(); return; }
   if (a === "avatar-del"){ if (await saveProfile(undefined, "")) render(); return; }
   if (a === "profile-save"){ if (await saveProfile($("#pf-school").value.trim())){ toast("Профиль сохранён"); render(); } return; }
