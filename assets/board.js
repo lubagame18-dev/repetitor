@@ -77,6 +77,7 @@ window.Board = (() => {
       : [{key:"p1", label:"Лист 1", html:`<div class="bd-sheet"></div>`}];
     const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}));
     let page = (o.page && pagesArr.some(p => p.key === String(o.page))) ? String(o.page) : pagesArr[0].key;
+    const hiddenKeys = new Set();        // скрытые вкладки-листы (можно убрать любой лист)
 
     let items = new Map();             // id -> item
     const isTemp = id => /^(tmp|er|rtmp:|rtxt:)/.test(String(id));
@@ -970,14 +971,18 @@ window.Board = (() => {
     async function syncPages(){
       let rows = [];
       try { rows = await o.api.load(PAGE_KEY) || []; } catch (_) { return; }
+      const hiddenRows = [];
       rows.forEach(r => {
         if (!r) return;
         const it = r.item || r;
+        if (it && it.t === "pgprefs" && Array.isArray(it.hidden)){ hiddenRows.push(it.hidden); return; }
         if (!it || (it.t !== "pg" && it.t !== "page") || !it.key) return;
         const ex = pagesArr.find(p => p.key === String(it.key));
         if (ex){ ex.saved = true; ex.dbId = r.id || ex.dbId; ex.doc = !!it.doc; ex.docType = it.docType || ""; ex.editable = it.editable !== false; if (!ex.html && it.html) ex.html = String(it.html); return; }
         pagesArr.push({key:String(it.key), label:it.label || "Лист", html:String(it.html || ""), saved:true, dbId:r.id, doc:!!it.doc, docType:it.docType || "", editable:it.editable !== false});
       });
+      hiddenRows.forEach(h => h.forEach(k => hiddenKeys.add(String(k))));
+      for (let i = pagesArr.length - 1; i >= 0; i--){ if (hiddenKeys.has(pagesArr[i].key)) pagesArr.splice(i, 1); }
       renderPageButtons();
     }
     function pageAdd(){
@@ -1000,11 +1005,16 @@ window.Board = (() => {
     async function pageDelete(key){
       if (o.role !== "teacher") return;
       const p = pagesArr.find(x => x.key === String(key || page)); if (!p) return;
-      if (!p.dbId){ toast("Этот лист создаётся из урока или встроен — уберите его в «Изменить урок»."); return; }
       if (!window.confirm("Удалить вкладку «" + p.label + "»? Пометки на ней тоже исчезнут.")) return;
       const old = p.key;
-      try { await o.api.remove(PAGE_KEY, [p.dbId]); try { await o.api.clear(old); } catch (_) {} }
-      catch (e) { toast("Не удалось удалить лист: " + oneLine(e && e.message)); return; }
+      if (!p.dbId){
+        /* встроенный/статический лист: запоминаем скрытие, чтобы не вернулся после перезагрузки */
+        hiddenKeys.add(String(old));
+        try { await o.api.add(PAGE_KEY, {t:"pgprefs", hidden:[...hiddenKeys]}); } catch (_) {}
+      } else {
+        try { await o.api.remove(PAGE_KEY, [p.dbId]); try { await o.api.clear(old); } catch (_) {} }
+        catch (e) { toast("Не удалось удалить лист: " + oneLine(e && e.message)); return; }
+      }
       const i = pagesArr.findIndex(x => x.key === old); if (i >= 0) pagesArr.splice(i, 1);
       if (page === old) page = pagesArr[0]?.key || "";
       renderPageButtons(); if (page) openPage(page);
