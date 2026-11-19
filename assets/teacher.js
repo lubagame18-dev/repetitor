@@ -1094,7 +1094,7 @@ function materialsTab(cid, l){
 function lessonDocs(m){ return m && m.data && Array.isArray(m.data.docs) ? m.data.docs : []; }
 function docFormPageHTML(d, i){
   return `<div class="el-doc" data-doc-i="${i}" data-doc-label="${esc(d.label || ("Документ " + (i + 1)))}" data-doc-type="${esc(d.docType || "doc")}">
-    <div class="row between el-doc-head"><b>${esc(d.label || ("Документ " + (i + 1)))}</b><button type="button" class="btn ghost sm" data-doc-del title="Убрать документ из урока">Удалить</button></div>
+    <div class="row between el-doc-head"><input class="el-doc-name" type="text" value="${esc(d.label || ("Документ " + (i + 1)))}" aria-label="Название вкладки документа" maxlength="40"><button type="button" class="btn ghost sm" data-doc-del title="Убрать документ из урока">Удалить</button></div>
     <div class="el-doc-page" contenteditable="true" spellcheck="false">${d.html || ""}</div></div>`;
 }
 function docFormHTML(m){
@@ -1121,7 +1121,7 @@ function addDocPagesToForm(descs){
 }
 function docPagesFromForm(){
   return [...document.querySelectorAll("#el-doc-list .el-doc")].map((el, i) => ({
-    label: el.getAttribute("data-doc-label") || ("Документ " + (i + 1)),
+    label: (((el.querySelector(".el-doc-name") || {}).value || "").trim()) || el.getAttribute("data-doc-label") || ("Документ " + (i + 1)),
     docType: el.getAttribute("data-doc-type") || "doc",
     doc: true,
     html: (el.querySelector(".el-doc-page") || {}).innerHTML || ""
@@ -1699,7 +1699,7 @@ function roomToolsHTML(s, c, l){
       <p class="small muted">Нейросеть составит блок теории или задания по предмету и классу ученика; после сохранения материал появится у ученика и его можно вставить на лист доски.</p>
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm" data-act="tool-gen-theory" ${free ? "disabled" : ""}>✨ Тему / объяснение</button><button class="btn ghost sm" data-act="tool-gen-practice" ${free ? "disabled" : ""}>✨ Задания</button></div>
       <p class="small muted">${free ? "Выберите урок вверху комнаты, чтобы генерировать материал." : "Черновик ученик не видит – только после «Сохранить»."}</p>
-      <button class="btn ghost sm" data-act="tool-insert-board" ${free ? "disabled" : ""}>📄 Вставить урок на доску</button></div>
+      <button class="btn ghost sm" data-act="tool-quick-test" ${free ? "disabled" : ""} title="Собрать тест по материалам урока по запросу">⚡ Тест по материалам урока</button><button class="btn ghost sm" data-act="tool-insert-board" ${free ? "disabled" : ""}>📄 Вставить урок на доску</button></div>
     <div class="card stack" style="gap:8px;box-shadow:none"><div class="kicker">📝 Заметка на доску</div>
       <textarea id="tool-note-text" rows="2" placeholder="Короткая заметка, правило или схема словами"></textarea>
       <div><button class="btn sm" data-act="tool-note">Вставить на доску</button></div></div>
@@ -1875,7 +1875,7 @@ function testEditor(cid, l, kind){
   const extra = kind === "test" ? U.lessonTests(l).test.slice((l.test || []).length) : [];
   return `<div class="te">
     <div class="row te-bar" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
-      <button class="btn ghost sm" data-act="te-add" data-qk="choice">+ Выбор ответа</button>
+      <button class="btn sm" data-act="te-auto" title="Собрать тест по материалам урока" ${T.busy === "te-auto" ? "disabled" : ""}>${T.busy === "te-auto" ? "Собираю…" : "✨ Собрать по материалам (10)"}</button><button class="btn ghost sm" data-act="te-add" data-qk="choice">+ Выбор ответа</button>
       <button class="btn ghost sm" data-act="te-add" data-qk="input">+ Ввод ответа</button>
       <button class="btn ghost sm" data-act="te-add" data-qk="tf">+ Верно / неверно</button>
       <button class="btn ghost sm" data-act="te-add" data-qk="pn">+ Расставить запятые</button>
@@ -1897,9 +1897,54 @@ function teReadForm(){
   else if (Array.isArray(q.o)){ q.o = [...document.querySelectorAll(".te-o")].map(x => x.value.trim()); const r = document.querySelector('input[name="te-a"]:checked'); q.a = r ? +r.value : -1; }
   else q.a = val("te-ans").trim();
 }
-async function teAct(a, t){
+/* собрать тест по материалам урока: сначала пытаемся нейросетью, иначе берём готовые вопросы из материалов */
+function autoTestPool(l){
+  const out = [], seen = new Set();
+  const add = q => {
+    if (!q || !q.q || !Array.isArray(q.o) || q.o.length < 2) return;
+    const a = +q.a; if (!Number.isInteger(a) || a < 0 || a >= q.o.length) return;
+    const key = String(q.q).trim(); if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({q:String(q.q).slice(0,500), o:q.o.map(x => String(x).slice(0,300)), a, e:String(q.e || ("Правильный ответ: " + q.o[a])).slice(0,600), tag:l.title});
+  };
+  (l.test || []).forEach(add);
+  (l.hwtest || []).forEach(add);
+  (l.theory || []).forEach(t => (t.mini || []).forEach(add));
+  try { const lt = U.lessonTests(l); lt.mini.forEach(add); lt.test.forEach(add); } catch (_) {}
+  (l.materials || []).forEach(m => { (m.data?.mini || []).forEach(add); (m.data?.test || []).forEach(add); });
+  return out;
+}
+async function buildAutoTest(l, cid, count){
+  const c = COURSES[cid] || {};
+  const notes = `Только вопросы теста по материалам урока «${l.title}». Темы: ${(l.learn || []).join("; ") || l.title}. Теория: ${(l.theory || []).map(t => t.h).join("; ").slice(0,1200)}. Практика: ${(l.practice || []).map(p => p.t).join("; ").slice(0,800)}. Формат: 4 варианта, один верный, короткое объяснение-правило.`;
+  let aiQs = [];
+  try {
+    const r = await ai({action:"generate_tasks", topic:l.title, count: count || 10, grade:c.grade, subject: U.subj(U.subjectOf(cid)).n,
+      exam: c.goal === "ОГЭ" || c.goal === "ЕГЭ" ? c.goal : "", notes});
+    aiQs = (r?.test || []).filter(q => q && q.q && Array.isArray(q.o) && q.o.length >= 2).map(q => ({q:String(q.q).slice(0,500), o:q.o.map(x => String(x).slice(0,300)), a:+q.a, e:String(q.e || ("Правильный ответ: " + q.o[q.a])).slice(0,600), tag:l.title})).filter(q => Number.isInteger(q.a) && q.a >= 0 && q.a < q.o.length);
+  } catch (_) {}
+  const pool = autoTestPool(l), out = [], seen = new Set();
+  aiQs.concat(pool).forEach(q => { const k = q.q.trim(); if (!seen.has(k)){ seen.add(k); out.push(q); } });
+  return out.slice(0, count || 10);
+}
+async function saveAutoTest(l, cid, kind, qs){
+  const own = teOwnRow(cid, l.id);
+  const data = {...(own?.data || {kind:"test-edit"}), kind:"test-edit", [kind]: qs};
+  const res = own ? await sb.from("materials").update({data}).eq("id", own.id).select().single()
+                  : await sb.from("materials").insert({teacher_id: T.session.user.id, course: cid, lesson_id: l.id, kind: "tasks", title: "Тест по материалам", shared: T.me?.role === "developer", data}).select().single();
+  if (res.error) throw new Error(res.error.message);
+  if (own) Object.assign(own, res.data); else T.mats.push(res.data);
+  return true;
+}async function teAct(a, t){
   const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open), kind = T.sub === "hwtest" ? "hwtest" : "test";
   if (!l) return;
+  if (a === "te-auto"){
+    T.busy = "te-auto"; render();
+    let qs = []; try { qs = await buildAutoTest(l, cid, 10); } catch (_) {}
+    if (!qs.length){ T.busy = false; render(); toast("По материалам урока не нашлось готовых вопросов — добавьте тест или задания."); return; }
+    try { await saveAutoTest(l, cid, kind, qs); } catch (e){ T.busy = false; render(); toast("Не сохранилось: " + (e && e.message || "нет связи")); return; }
+    T.busy = false; T.td = null; T.sub = kind; render(); cmd("all", "refresh", {msg: "Учитель создал " + (kind === "hwtest" ? "ДЗ-тест" : "тест") + " по материалам урока"}); toast("Готово: " + qs.length + " вопросов " + (kind === "hwtest" ? "в ДЗ-тесте" : "в тесте урока") + "."); return;
+  }
   if (a === "te-add"){ const d = teStart(l, kind); teReadForm(); const qk = t.dataset.qk;
     d.qs.push(qk === "pn" ? {q: "Расставьте запятые.", pn: {w: [], a: []}, a: "", e: ""} : qk === "input" ? {q: "", a: "", e: ""} : qk === "tf" ? {q: "", o: ["Верно", "Неверно"], a: 0, e: "", tf: true} : {q: "", o: ["", ""], a: 0, e: ""}); d.edit = d.qs.length - 1; d.isNew = true; render(); document.getElementById("te-q")?.focus(); return; }
   if (a === "te-edit"){ const d = teStart(l, kind); teReadForm(); d.edit = +t.dataset.i; d.isNew = false; render(); document.getElementById("te-q")?.focus(); return; }
@@ -2512,6 +2557,17 @@ document.addEventListener("click", async e => {
     const l = c && (T.room.lesson === "free" ? FREE : c.lessons.find(x => x.id === T.room.lesson));
     if (!s || !l || l === FREE || l.free){ toast("Сначала выберите урок в верхней строке комнаты – тогда сгенерирую материал"); return; }
     await ceModal(s, l, a === "tool-gen-theory" ? "theory" : "practice"); return;
+  }
+  if (a === "tool-quick-test"){
+    const s = T.room && T.students.find(x => x.id === T.room.sid);
+    const c = s && U.courseFor(s, T.mats);
+    const l = c && (T.room.lesson === "free" ? FREE : c.lessons.find(x => x.id === T.room.lesson));
+    if (!s || !l || l === FREE || l.free){ toast("Сначала выберите урок в верхней строке комнаты — тогда соберу тест."); return; }
+    if (T.busy === "quick-test") return; T.busy = "quick-test"; render();
+    let qs = []; try { qs = await buildAutoTest(l, s.course, 10); } catch (_) {}
+    if (!qs.length){ T.busy = false; render(); toast("По материалам урока пока нет готовых вопросов — добавьте тест или задания в урок."); return; }
+    try { await saveAutoTest(l, s.course, "test", qs); } catch (e){ T.busy = false; render(); toast("Не сохранилось: " + (e && e.message || "нет связи")); return; }
+    T.busy = false; render(); cmd(s.id, "refresh", {msg: "Учитель создал тест по материалам урока"}); toast("Тест на " + qs.length + " вопросов создан — у ученика вкладка «Тест»."); return;
   }
   if (a === "tool-insert-board"){
     const s = T.room && T.students.find(x => x.id === T.room.sid);

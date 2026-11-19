@@ -190,7 +190,7 @@ window.Board = (() => {
           <button data-act="undo" data-l="Отмена" title="Отменить (Ctrl+Z)">↶</button>
           <button data-act="redo" data-l="Вернуть" title="Вернуть (Ctrl+Shift+Z)">↷</button>
           <button data-tool="touch" data-l="Нажимать" title="Нажимать и вводить внутри листа, сайта или презентации">👆</button>
-          <button data-act="attach" data-l="Файл" title="Прикрепить фото, PDF или документ">📎</button>
+          <button data-act="page-add" data-l="Лист" title="Добавить лист" ${o.role === "teacher" ? "" : "hidden"}>＋</button><button data-act="page-rename" data-l="Имя" title="Переименовать лист" ${o.role === "teacher" ? "" : "hidden"}>✎</button><button data-act="page-del" data-l="Удалить" title="Удалить лист" ${o.role === "teacher" ? "" : "hidden"}>🗑</button><button data-act="attach" data-l="Файл" title="Прикрепить фото, PDF или документ">📎</button>
           <button data-act="doc-edit" data-l="Документ" title="Редактировать документ: текст и картинки" hidden>✎ Документ</button>
           <span class="bd-sep"></span>
           <button data-act="embed" data-l="Сайт" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…" ${o.role === "teacher" ? "" : "hidden"}>🌐</button>
@@ -980,7 +980,36 @@ window.Board = (() => {
       });
       renderPageButtons();
     }
-    /* сохранить изменённый документ: html листа обновляется, пометки/подчёркивания остаются отдельными объектами */
+    function pageAdd(){
+      if (o.role !== "teacher") return;
+      const key = addPageP("Лист " + (pagesArr.length + 1), `<div class="bd-sheet bd-lined"></div>`, true);
+      openPage(key);
+      send("page", {page:key});
+    }
+    async function pageRename(){
+      if (o.role !== "teacher") return;
+      const p = pagesArr.find(x => x.key === page); if (!p) return;
+      if (!p.dbId){ toast("Название этого листа задаётся в «Изменить урок»."); return; }
+      const name = (window.prompt("Название вкладки", p.label) || "").trim().slice(0, 24);
+      if (!name || name === p.label) return;
+      p.label = name; renderPageButtons();
+      try { await o.api.update(PAGE_KEY, p.dbId, {t:"pg", key:p.key, label:name, html:p.html, ...(p.doc ? {doc:true, docType:p.docType || "doc"} : {})}); }
+      catch (e) { toast("Не удалось переименовать: " + oneLine(e && e.message || "нет связи")); return; }
+      send("page-rename", {key:p.key, label:name});
+    }
+    async function pageDelete(){
+      if (o.role !== "teacher") return;
+      const p = pagesArr.find(x => x.key === page); if (!p) return;
+      if (!p.dbId){ toast("Этот лист создаётся из урока или встроен — уберите его в «Изменить урок»."); return; }
+      if (!window.confirm("Удалить вкладку «" + p.label + "»? Пометки на ней тоже исчезнут.")) return;
+      const old = p.key;
+      try { await o.api.remove(PAGE_KEY, [p.dbId]); try { await o.api.clear(old); } catch (_) {} }
+      catch (e) { toast("Не удалось удалить лист: " + oneLine(e && e.message)); return; }
+      const i = pagesArr.findIndex(x => x.key === old); if (i >= 0) pagesArr.splice(i, 1);
+      if (page === old) page = pagesArr[0]?.key || "";
+      renderPageButtons(); if (page) openPage(page);
+      send("page-del", {key:old});
+    }    /* сохранить изменённый документ: html листа обновляется, пометки/подчёркивания остаются отдельными объектами */
     async function updateDocPage(p, html){
       if (!p) return false;
       const clean = fitPageHtml(String(html || ""));
@@ -2245,6 +2274,9 @@ window.Board = (() => {
         f.querySelector("[data-x]").onclick = () => f.remove();
         return;
       }
+      if (b.dataset.act === "page-add"){ pageAdd(); return; }
+      if (b.dataset.act === "page-rename"){ pageRename(); return; }
+      if (b.dataset.act === "page-del"){ pageDelete(); return; }
       if (b.dataset.act === "attach") fileInput.click();
       if (b.dataset.act === "doc-edit"){ openDocEditor(); return; }
       if (b.dataset.act === "embed"){
@@ -2306,6 +2338,14 @@ window.Board = (() => {
         }
         if (m.type === "bgreq"){
           if (isStudent) answerBgReq(m.page);
+          return;
+        }
+        if (m.type === "page-rename"){
+          const rp = pagesArr.find(x => x.key === String(m.key)); if (rp){ rp.label = String(m.label || rp.label).slice(0, 24); renderPageButtons(); }
+          return;
+        }
+        if (m.type === "page-del"){
+          const di = pagesArr.findIndex(x => x.key === String(m.key)); if (di >= 0){ pagesArr.splice(di, 1); if (page === String(m.key)){ page = pagesArr[Math.max(0, Math.min(di, pagesArr.length - 1))]?.key || ""; if (page) openPage(page); } renderPageButtons(); }
           return;
         }
         if (m.type === "addpage"){
