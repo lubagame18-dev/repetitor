@@ -203,7 +203,10 @@ function showLessonView(l, m){
   }
 }
 /* учитель перенёс ученика на урок/вкладку/лист (quiet – без всплывающего сообщения: ведём по шагам) */
+const boardWrites = () => !!(S.board && typeof S.board.writing === "function" && S.board.writing());
 async function roomGoto(m, quiet){
+  /* пока ученик пишет, синхронизация/перенос не должны выдёргивать его на другой лист */
+  if (boardWrites()) return false;
   const changed = !S.room || S.room.lesson !== m.lesson;
   const ok = await ensureLesson(m);
   if (!ok){ if (!quiet) toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return false; }
@@ -232,15 +235,18 @@ async function applyFollow(f, afterGoto){
   }
   if ((f.rev || 0) && (f.rev < (S.followRev || 0))) return;     // устаревшее состояние
   S.followRev = f.rev || 0;
+  /* во время письма не перекидываем ученика на лист/вкладку учителя */
+  if (boardWrites()) return;
   const first = !S.follow; S.follow = f; document.body.classList.add("following");
   if (!afterGoto){
     const here = S.view === "room" && S.room?.lesson === f.lesson;
-    if (!here || (f.tab && S.sub !== f.tab && S.boardPage !== f.tab && !f.page)) await roomGoto({lesson: f.lesson, tab: f.tab, page: f.page}, !first);
-    else if (f.page && S.boardPage !== f.page && S.board?.open){ S.boardPage = f.page; try { S.board.open(f.page); } catch (_) {} S.away = false; }
+    /* «Ведение» синхронизирует урок/раздел, но НЕ перелистывает лист и не сдвигает вид:
+       иначе ученика при письме выбрасывает на первый лист/вверх, если учитель смотрит начало. */
+    if (!here || (f.tab && S.sub !== f.tab && S.boardPage !== f.tab)) await roomGoto({lesson: f.lesson, tab: f.tab}, !first);
     else if (S.away){ S.away = false; S.view = "room"; render(); }
     if (first) toast("Учитель ведёт тебя по уроку");
   }
-  followView(f.v);
+  /* вид/лист автоматически не навязываем – только явная команда «Перенести ученика» */
 }
 function liveStart(){
   if (!sb || !S.profile?.teacher || live) return;

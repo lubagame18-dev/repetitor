@@ -353,8 +353,11 @@ window.Board = (() => {
     function fitWidth(){ fitMode = true; layout(); stage.scrollLeft = 0; stage.scrollTop = 0; return scale; }
     /* вид относительно «по ширине»: ведущий и ведомый экраны разного размера видят одно и то же место */
     function getRelView(){ return {fit:true, z:1, x: Math.round(stage.scrollLeft / scale), y: Math.round(stage.scrollTop / scale)}; }
+    /* ученик сейчас пишет – в этот момент синхронизация «ведения» не должна дёргать лист/вид */
+    function isWritingNow(){ return !!(drawing || (lastDrawAt && Date.now() - lastDrawAt < 1800)); }
     function setRelView(v){
       if (!v || typeof v !== "object") return null;
+      if (isStudent && isWritingNow()) return scale;
       applyingView = true;
       try {
         fitMode = true; layout();
@@ -2146,7 +2149,11 @@ window.Board = (() => {
           }
           return;
         }
-        if (m.type === "page" && o.role === "student"){ if (m.page !== page){ openPage(m.page); toast("Учитель открыл другой лист"); } return; }
+        if (m.type === "page" && o.role === "student"){
+          if (isWritingNow()) return;              // не переключаем лист, пока ученик пишет
+          if (m.page !== page){ openPage(m.page); toast("Учитель открыл другой лист"); }
+          return;
+        }
         if (m.page !== page) return;
         if (m.type === "cursor"){
           const p = cursorFor(m.from); p.raw = {x:m.x, y:m.y, a:m.a || null}; placeCursor(p);
@@ -2367,6 +2374,7 @@ window.Board = (() => {
       pasteAtPoint: () => pasteAtPoint(),
       lastPoint: () => ({x:lastPoint.x, y:lastPoint.y}),
       getView: () => getView(),
+      writing: () => isWritingNow(),
       setZoom: (z, cx, cy) => setZoom(z, cx, cy),
       zoomBy: d => zoomBy(d),
       fitWidth: () => fitWidth(),
