@@ -837,7 +837,7 @@ function trendSectionHTML(s){
   const last = points.length ? points[points.length - 1].p : 0, first = points.length ? points[0].p : 0;
   const hasTopics = points.some(x => x.kind === "quiz-topic");
   return `<div class="section-title"><h2>Динамика успеваемости</h2><span class="small muted">результаты занятий и тестов по темам – от начала до текущего</span></div>
-    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", note: hasTopics ? "темы теста — в порядке изучения" : "", topicMode: hasTopics, topicClick: false, empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
+    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", note: hasTopics ? "темы теста — в порядке изучения" : "", topicMode: hasTopics, empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
 }
 
 function viewStudent(){
@@ -2855,6 +2855,14 @@ document.addEventListener("click", async e => {
   T.routeReady = true;
 })();
 /* аддитивный хук для e2e: состояние кабинета и хелперы прогресса/доски */
-window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards, trendPoints,
+/* клик по точке диагностики отправляет ученику тренажёр по теме */
+document.addEventListener("click", e => {
+  const dot = e.target.closest && e.target.closest(".trend-dot-topic");
+  if (!dot) return;
+  const sid = T.sel;
+  if (!sid){ toast("Откройте карточку ученика, чтобы отправить тренировку."); return; }
+  try { cmd(sid, "trainer", {topic: dot.dataset.topic || "", quizIds: dot.dataset.quizIds || ""}); toast("Тренажёр по теме отправлен ученику"); }
+  catch (_) { toast("Не удалось отправить тренировку — проверьте связь."); }
+});window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards, trendPoints,
   ssSets: () => { const s = T.students.find(x => x.id === T.sel); try { return (s && window.SELF_DATA?.customSets) ? SELF_DATA.customSets(T.mats, s.course, s.id) : {blocks: [], decks: []}; } catch(_){ return {blocks: [], decks: []}; } }};
 })();

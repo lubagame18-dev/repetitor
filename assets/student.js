@@ -276,6 +276,12 @@ function liveStart(){
       await openQuiz(m.token);
       return;
     }
+    if (m.type === "trainer"){
+      if (!m.topic) return;
+      toast("Учитель открыл тренировку по теме: " + m.topic);
+      await openTopicTrainer(m.topic, m.quizIds || "");
+      return;
+    }
     if (m.type === "lesson"){
       const ok = await ensureLesson(m);
       if (!ok){ toast("Урок не загрузился – попросите учителя открыть ещё раз или обновите страницу"); return; }
