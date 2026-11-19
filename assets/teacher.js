@@ -1072,6 +1072,96 @@ function materialsTab(cid, l){
         <div class="row"><button class="btn sm" data-act="ai-save">Сохранить в папку</button><button class="btn ghost sm" data-act="ai-gen">Составить заново</button></div></div>` : ""}</div>` : ""}`;
 }
 
+/* документы урока, встроенные прямо в «Изменить урок»: Word/PDF страницами вниз */
+function lessonDocs(m){ return m && m.data && Array.isArray(m.data.docs) ? m.data.docs : []; }
+function docFormPageHTML(d, i){
+  return `<div class="el-doc" data-doc-i="${i}" data-doc-label="${esc(d.label || ("Документ " + (i + 1)))}" data-doc-type="${esc(d.docType || "doc")}">
+    <div class="row between el-doc-head"><b>${esc(d.label || ("Документ " + (i + 1)))}</b><button type="button" class="btn ghost sm" data-doc-del title="Убрать документ из урока">Удалить</button></div>
+    <div class="el-doc-page" contenteditable="true" spellcheck="false">${d.html || ""}</div></div>`;
+}
+function docFormHTML(m){
+  const ds = lessonDocs(m);
+  return `<div class="el-docs-wrap" data-doc-drop>
+    <div class="row between" style="gap:8px"><label class="el-docs-title">Документы урока: Word / PDF</label><span class="small muted" id="el-doc-status">${ds.length ? "Страниц: " + ds.length : "Можно писать и подчёркивать поверх"}</span></div>
+    <div class="el-docs-drop" data-doc-dropzone>
+      <b>Перетащите Word или PDF сюда</b>
+      <span class="small muted">или вставьте файл (Ctrl+V), либо выберите на устройстве</span>
+      <label class="btn ghost sm" for="el-doc-file">Выбрать файл</label>
+      <input type="file" id="el-doc-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
+    </div>
+    <div id="el-doc-list" class="el-docs-list">${ds.map(docFormPageHTML).join("")}</div>
+  </div>`;
+}
+function addDocPagesToForm(descs){
+  const list = $("#el-doc-list"); if (!list) return;
+  const start = list.querySelectorAll(".el-doc").length;
+  (descs || []).forEach((d, k) => {
+    const i = start + k;
+    list.insertAdjacentHTML("beforeend", docFormPageHTML({...d, label:d.label || ("Документ " + (i + 1))}, i));
+  });
+  const status = $("#el-doc-status"); if (status) status.textContent = "Страниц: " + list.querySelectorAll(".el-doc").length + " · сохраните урок";
+}
+function docPagesFromForm(){
+  return [...document.querySelectorAll("#el-doc-list .el-doc")].map((el, i) => ({
+    label: el.getAttribute("data-doc-label") || ("Документ " + (i + 1)),
+    docType: el.getAttribute("data-doc-type") || "doc",
+    doc: true,
+    html: (el.querySelector(".el-doc-page") || {}).innerHTML || ""
+  })).filter(d => d.html && d.html.length > 10);
+}
+function bindDocFormEvents(){
+  if (window.__docFormBound) return;
+  window.__docFormBound = true;
+  const filesFrom = dt => [...((dt && dt.files) || [])].filter(f => /\.(pdf|docx)$/i.test(f.name || "") || /pdf|officedocument/i.test(f.type || ""));
+  const addFiles = files => {
+    if (!files.length){ toast("Поддерживаются Word (.docx) и PDF."); return; }
+    const status = $("#el-doc-status"); const zone = $("[data-doc-dropzone]");
+    if (status) status.textContent = "Разбираю документ…";
+    if (zone) zone.classList.add("busy");
+    (window.Board && Board.parseDocs ? Board.parseDocs(files) : Promise.reject(new Error("Модуль документов не загрузился")))
+      .then(descs => { addDocPagesToForm(descs); toast("Документ добавлен: страниц " + (descs || []).length); })
+      .catch(e => { toast("Документ не разобрался: " + (e && e.message || "проверьте файл")); if (status) status.textContent = "Не удалось разобрать документ"; })
+      .finally(() => { if (zone) zone.classList.remove("busy"); });
+  };
+  document.addEventListener("dragover", e => {
+    if (!$("#edit-lesson")) return;
+    const files = filesFrom(e.dataTransfer); if (!files.length) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+    const z = $("[data-doc-dropzone]"); if (z) z.classList.add("over");
+  }, true);
+  document.addEventListener("dragleave", e => {
+    const z = $("[data-doc-dropzone]"); if (z) z.classList.remove("over");
+  }, true);
+  document.addEventListener("drop", e => {
+    if (!$("#edit-lesson")) return;
+    const files = filesFrom(e.dataTransfer); if (!files.length) return;
+    e.preventDefault(); e.stopPropagation();
+    const z = $("[data-doc-dropzone]"); if (z) z.classList.remove("over", "busy");
+    addFiles(files);
+  }, true);
+  document.addEventListener("paste", e => {
+    if (!$("#edit-lesson")) return;
+    const files = filesFrom(e.clipboardData); if (files.length){ e.preventDefault(); addFiles(files); return; }
+    if (e.target.closest && e.target.closest(".el-doc-page")) return;      // обычная правка текста документа
+    if (e.target.closest && e.target.closest("input,textarea,[contenteditable=true]")) return;
+    const html = e.clipboardData && e.clipboardData.getData("text/html");
+    if (html && /<(p|h[1-6]|table|ul|ol|div)\b/i.test(html)){
+      e.preventDefault();
+      addDocPagesToForm([{label:"Вставленный документ", docType:"html", doc:true, html:`<div class="bd-sheet bd-doc-sheet"><div class="bd-doc">${html}</div></div>`}]);
+      toast("Вставлено как документ");
+    }
+  }, true);
+  document.addEventListener("change", e => {
+    if (e.target && e.target.id === "el-doc-file"){ addFiles([...(e.target.files || [])]); e.target.value = ""; }
+  }, true);
+  document.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest("[data-doc-del]");
+    if (!b) return;
+    const card = b.closest(".el-doc"); if (card) card.remove();
+    const status = $("#el-doc-status"); const n = document.querySelectorAll("#el-doc-list .el-doc").length;
+    if (status) status.textContent = "Страниц: " + n;
+  });
+}
 function viewLesson(){
   const cid = curCourse(), c = teacherCourse(cid), l = c.lessons.find(x => x.id === T.open); if (!l) { T.view = "course"; return viewCourse(); }
   const i = c.lessons.indexOf(l), b = blockOf(c, l), ok = access(cid) || l.custom;
@@ -1114,6 +1204,7 @@ function viewLesson(){
       <label for="el-date">Дата</label><input type="date" id="el-date" value="${esc(m?.data?.date || l.date)}">
       <label for="el-theory">Теория: блоки через пустую строку, первая строка блока – заголовок</label>
       <textarea id="el-theory" style="min-height:220px">${esc((l.theory || []).map(t => t.h + "\n" + (t.t || "") + (t.list ? "\n" + t.list.join("\n") : "")).join("\n\n"))}</textarea>
+      ${docFormHTML(m)}
       <label for="el-hw">Домашнее задание</label><textarea id="el-hw">${esc(l.hw || "")}</textarea>
       <div class="row"><button class="btn sm" type="submit">Сохранить</button><button class="btn ghost sm" type="button" data-act="del-lesson">Удалить урок</button></div></form>`;
   }
@@ -1474,6 +1565,7 @@ function render(){
       <header class="topnav"><div class="in glass"><button class="iconbtn menu-btn" data-act="open-drawer" aria-label="Открыть меню">${I.menu}</button><span class="ttl">Кабинет учителя</span><span class="avatar">${esc((T.me?.name || CFG.TEACHER_NAME || "У")[0])}</span></div></header>
       <main class="main">${roomBanner()}${["students","course","student"].includes(T.view) && T.session ? subBanner() : ""}${html}</main></div></div>`;
   if (sb && T.session){ liveStart(); paintOnline(); T.stale = false; }
+  if (T.view === "lesson" && T.sub === "edit" && $("#edit-lesson")) bindDocFormEvents();
   if (["board","room"].includes(T.view) && sb && T.session && $("#board")){
     const bl = T.view === "room" ? T.room.lesson : T.boardLesson;
     const s = T.view === "room" && T.room ? (T.students.find(x => x.id === T.room.sid) || T.students.find(x => x.id === T.sel)) : T.students.find(x => x.id === T.sel);
@@ -2254,7 +2346,7 @@ document.addEventListener("submit", async e => {
   if (id === "edit-lesson"){
     const cid = curCourse(), l = teacherCourse(cid).lessons.find(x => x.id === T.open), m = T.mats.find(x => x.id === l.mid);
     const theory = $("#el-theory").value.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean).map(b => { const [h, ...rest] = b.split("\n"); return {h: h.trim(), t: rest.join("\n").trim()}; });
-    const data = {...m.data, title: $("#el-title").value.trim(), date: $("#el-date").value, theory, hw: $("#el-hw").value.trim(), learn: [$("#el-title").value.trim()]};
+    const data = {...m.data, title: $("#el-title").value.trim(), date: $("#el-date").value, theory, hw: $("#el-hw").value.trim(), docs: docPagesFromForm(), learn: [$("#el-title").value.trim()]};
     const {error} = await sb.from("materials").update({data, title: data.title}).eq("id", m.id);
     if (error){ toast("Не сохранилось: " + error.message); return; }
     m.data = data; m.title = data.title; T.sub = "theory"; render(); cmd("all", "refresh", {msg:"Учитель обновил урок"}); toast("Урок сохранён");

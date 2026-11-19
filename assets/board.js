@@ -75,7 +75,7 @@ window.Board = (() => {
     const provided = (Array.isArray(o.pages) && o.pages.length)
       ? o.pages
       : [{key:"p1", label:"Лист 1", html:`<div class="bd-sheet"></div>`}];
-    const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || ""}));
+    const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}));
     let page = (o.page && pagesArr.some(p => p.key === String(o.page))) ? String(o.page) : pagesArr[0].key;
 
     let items = new Map();             // id -> item
@@ -724,7 +724,7 @@ window.Board = (() => {
     function updateDocEditButton(){
       const b = root.querySelector('[data-act="doc-edit"]'); if (!b) return;
       const p = pagesArr.find(x => x.key === page);
-      b.hidden = !(p && p.doc && o.role === "teacher");
+      b.hidden = !(p && p.doc && p.editable !== false && o.role === "teacher");
     }
     /* «живые» листы: урок прямо на доске (теория, задания, тест, письмо) – отвечать можно в самом листе, рисовать – поверх */
     let live = o.live || {};
@@ -950,7 +950,7 @@ window.Board = (() => {
       const clean = fitPageHtml(String(html || ""));
       opts = opts || {};
       const p = {key, label: String(label || "Лист").slice(0, 24), html: clean, saved: false, broadcast: !!broadcast,
-        doc: !!(opts.doc), docType: opts.docType || ""};
+        doc: !!(opts.doc), docType: opts.docType || "", editable: opts.editable !== false};
       pagesArr.push(p);
       renderPageButtons();
       persistPage(p);
@@ -975,8 +975,8 @@ window.Board = (() => {
         const it = r.item || r;
         if (!it || (it.t !== "pg" && it.t !== "page") || !it.key) return;
         const ex = pagesArr.find(p => p.key === String(it.key));
-        if (ex){ ex.saved = true; ex.dbId = r.id || ex.dbId; ex.doc = !!it.doc; ex.docType = it.docType || ""; if (!ex.html && it.html) ex.html = String(it.html); return; }
-        pagesArr.push({key:String(it.key), label:it.label || "Лист", html:String(it.html || ""), saved:true, dbId:r.id, doc:!!it.doc, docType:it.docType || ""});
+        if (ex){ ex.saved = true; ex.dbId = r.id || ex.dbId; ex.doc = !!it.doc; ex.docType = it.docType || ""; ex.editable = it.editable !== false; if (!ex.html && it.html) ex.html = String(it.html); return; }
+        pagesArr.push({key:String(it.key), label:it.label || "Лист", html:String(it.html || ""), saved:true, dbId:r.id, doc:!!it.doc, docType:it.docType || "", editable:it.editable !== false});
       });
       renderPageButtons();
     }
@@ -2521,7 +2521,7 @@ window.Board = (() => {
     return {
       /* прежний контракт keep()/приложения */
       setMenu(fn){ o.menu = fn; },
-      setLive(map, pagesNew){ live = map || {}; liveBgCache.clear(); if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.push(p); }); renderPageButtons(); } },
+      setLive(map, pagesNew){ live = map || {}; liveBgCache.clear(); if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.push(p); }); renderPageButtons(); const cur = pagesArr.find(p => p.key === page); if (cur && cur.doc){ bg.innerHTML = cur.html || ""; bgSource = "static"; afterSheet(); layout(); } } },
       refresh(){ liveBgCache.clear(); const painted = paintLive(false); if (painted || anchorsDirty){ afterSheet(); } boxesDirty = true; layout(); },
       open(key){ if (key && key !== page && pagesArr.some(p => p.key === key)) openPage(key); },
       destroy(){ destroy(); },
@@ -2627,6 +2627,11 @@ window.Board = (() => {
       if (m.kind === "file" && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(m.url || "")) out.push({key:"m" + m.id, label: m.title || "Картинка", html:`<div class="bd-sheet"><h2>${esc(m.title || "")}</h2><img src="${esc(m.url)}" alt="" style="width:100%"></div>`});
       if (m.kind === "tasks" && (m.data?.mini?.length || m.data?.test?.length)) out.push({key:"m" + m.id, label: m.title || "Задания", html:`<div class="bd-sheet"><h2>${esc(m.title || "Задания")}</h2><ol>${[...(m.data.mini || []).map(x => x.q), ...(m.data.test || []).map(x => x.q + " " + x.o.map((o, k) => `${k + 1}) ${o}`).join("; "))].map(q => `<li style="margin-bottom:14px">${esc(q)}<span class="blank"></span></li>`).join("")}</ol></div>`});
     });
+    /* документы, встроенные в урок через «Изменить урок»: видны всем ученикам, пометки у каждого свои */
+    (Array.isArray(l.docs) ? l.docs : []).forEach((d, i) => {
+      if (!d || !d.html) return;
+      out.push({key:"doc" + i, label:d.label || ("Документ " + (i + 1)), html:String(d.html), doc:true, docType:d.docType || "doc", editable:false});
+    });
     out.push({key:"blank", label:"Чистый лист", html:`<div class="bd-sheet bd-lined"></div>`});
     return out;
   }
@@ -2635,7 +2640,7 @@ window.Board = (() => {
   let kept = null;
   function keep(container, key, opts){
     if (!container) return null;
-    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); if (opts?.live) kept.inst.setLive(opts.live, opts.pages); const stg = kept.holder.querySelector(".bd-stage"), sT = stg ? stg.scrollTop : 0, sL = stg ? stg.scrollLeft : 0;
+    if (kept && kept.key === key){ if (opts && "menu" in opts) kept.inst.setMenu(opts.menu); if (opts?.pages) kept.inst.setLive(opts.live || {}, opts.pages); else if (opts?.live) kept.inst.setLive(opts.live, opts.pages); const stg = kept.holder.querySelector(".bd-stage"), sT = stg ? stg.scrollTop : 0, sL = stg ? stg.scrollLeft : 0;
       kept.inst.refresh(); container.replaceChildren(kept.holder);
       if (stg){ stg.scrollTop = sT; stg.scrollLeft = sL; }                         // перенос в новый контейнер не должен сбрасывать прокрутку листа
       requestAnimationFrame(() => { if (!kept) return; kept.inst.relayout(); if (stg){ stg.scrollTop = sT; stg.scrollLeft = sL; } }); return kept.inst; }
@@ -2646,5 +2651,20 @@ window.Board = (() => {
   function release(){ if (kept){ try { kept.inst.destroy(); } catch(_) {} kept = null; } }
   const keptPage = () => kept?.inst.page();
 
-  return {mount, api, pages, keep, release, keptPage};
+  /* разбор Word/PDF в документы без открытия доски: используется формой «Изменить урок» */
+  async function parseDocs(files){
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:-30000px;top:0;width:900px;height:900px;overflow:hidden";
+    document.body.appendChild(host);
+    let inst = null;
+    try {
+      inst = mount(host, {api: api("teacher", null, {lesson:"doc-parse"}), pages:[{key:"p1", label:"1", html:""}], role:"teacher", name:"Документ", channelName:null});
+      await inst.ready();
+      return await inst.docPages(files);
+    } finally {
+      try { inst && inst.destroy(); } catch (_) {}
+      try { host.remove(); } catch (_) {}
+    }
+  }
+  return {mount, api, pages, keep, release, keptPage, parseDocs};
 })();

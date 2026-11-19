@@ -882,3 +882,20 @@ body.play-open{overflow:hidden}
 .bd-doc-save:disabled{opacity:.6;cursor:wait}
 .bd-doc-cancel{background:#f3eefc;color:#24183d}
 @media (max-width:640px){.bd-doc-edit{padding:14px}.bd-doc-modal{height:96vh}}
+/* документы в форме «Изменить урок»: все страницы вниз, можно править текст */
+.el-docs-wrap{display:flex;flex-direction:column;gap:8px;margin:8px 0 4px}
+.el-docs-title{font-weight:800}
+.el-docs-drop{border:2px dashed #d9c9f2;border-radius:14px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;background:#fbf8ff;transition:background .15s,border-color .15s}
+.el-docs-drop.over{border-color:var(--violet,#7b4cf5);background:#f1e8ff}
+.el-docs-drop.busy{opacity:.65}
+.el-docs-drop b{font-size:15px}
+.el-docs-list{display:flex;flex-direction:column;gap:14px}
+.el-doc{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}
+.el-doc-head{padding:8px 10px;background:#faf7ff;border-bottom:1px solid var(--line);align-items:center}
+.el-doc-page{padding:14px 16px;max-height:none;overflow:visible;outline:0;font-size:16px;line-height:1.5;color:#1d1830;font-family:"PT Serif",Georgia,"Times New Roman",serif}
+.el-doc-page:focus{box-shadow:inset 0 0 0 2px #c9b8f5}
+.el-doc-page .bd-sheet{width:auto;min-height:0;padding:0;background:transparent;font:inherit;color:inherit}
+.el-doc-page .bd-doc{font-size:inherit;line-height:inherit;font-family:inherit;max-width:100%}
+.el-doc-page img{max-width:100%;height:auto}
+.el-doc-page .bd-pdf{max-width:100%}
+@media (max-width:640px){.el-doc-page{padding:10px;font-size:15px}}
