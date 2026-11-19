@@ -75,7 +75,7 @@ window.Board = (() => {
     const provided = (Array.isArray(o.pages) && o.pages.length)
       ? o.pages
       : [{key:"p1", label:"Лист 1", html:`<div class="bd-sheet"></div>`}];
-    const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}));
+    const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false, action:p.action || null}));
     let page = (o.page && pagesArr.some(p => p.key === String(o.page))) ? String(o.page) : pagesArr[0].key;
     const hiddenKeys = new Set();        // скрытые вкладки-листы (можно убрать любой лист)
 
@@ -201,7 +201,7 @@ window.Board = (() => {
           ${o.role === "teacher" ? `<button data-act="clear" data-l="Очистить" title="Очистить лист">🧹</button>` : ""}
           <button data-act="insert-text" hidden>📝</button><button data-act="insert-image" hidden>🖼</button>
         </div></div>
-      <div class="bd-stage"><div class="bd-wrap">
+      <div class="bd-stage"><div class="bd-page-action" data-page-action hidden></div><div class="bd-wrap">
         <div class="bd-bg"></div>
         <canvas class="bd-cv"></canvas>
         <div class="bd-cursors"></div>
@@ -722,7 +722,14 @@ window.Board = (() => {
         `<button data-pstep="1" title="Следующий лист" aria-label="Следующий лист">›</button>`;
       updateDocEditButton();
     }
-    function updateDocEditButton(){
+    function updatePageAction(){
+      const el = root.querySelector("[data-page-action]"); if (!el) return;
+      const p = pagesArr.find(x => x.key === page);
+      const a = p && p.action;
+      if (!a || !a.label){ el.hidden = true; el.onclick = null; return; }
+      el.hidden = false; el.textContent = a.label;
+      el.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); try { a.run && a.run(); } catch (_) {} };
+    }    function updateDocEditButton(){
       const b = root.querySelector('[data-act="doc-edit"]'); if (!b) return;
       const p = pagesArr.find(x => x.key === page);
       b.hidden = !(p && p.doc && p.editable !== false && o.role === "teacher");
@@ -1007,7 +1014,7 @@ window.Board = (() => {
       if (!hiddenKeys.size){ toast("Скрытых вкладок нет."); return; }
       hiddenKeys.clear();
       try { await o.api.add(PAGE_KEY, {t:"pgprefs", hidden:[]}); } catch (_) {}
-      provided.forEach(p => { if (!pagesArr.some(x => x.key === String(p.key))) pagesArr.push({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}); });
+      provided.forEach(p => { if (!pagesArr.some(x => x.key === String(p.key))) pagesArr.push({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false, action:p.action || null}); });
       renderPageButtons(); toast("Скрытые вкладки возвращены"); send("page-restore", {});
     }    async function pageDelete(key){
       if (o.role !== "teacher") return;
@@ -2382,7 +2389,7 @@ window.Board = (() => {
         }
         if (m.type === "page-restore"){
           hiddenKeys.clear();
-          provided.forEach(p => { if (!pagesArr.some(x => x.key === String(p.key))) pagesArr.push({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}); });
+          provided.forEach(p => { if (!pagesArr.some(x => x.key === String(p.key))) pagesArr.push({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false, action:p.action || null}); });
           renderPageButtons(); return;
         }
         if (m.type === "page-del"){
@@ -2602,7 +2609,7 @@ window.Board = (() => {
     return {
       /* прежний контракт keep()/приложения */
       setMenu(fn){ o.menu = fn; },
-      setLive(map, pagesNew){ live = map || {}; liveBgCache.clear(); if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.push(p); }); renderPageButtons(); const cur = pagesArr.find(p => p.key === page); if (cur && cur.doc){ bg.innerHTML = cur.html || ""; bgSource = "static"; afterSheet(); layout(); } } },
+      setLive(map, pagesNew){ live = map || {}; liveBgCache.clear(); if (pagesNew){ pagesNew.forEach(p => { const i = pagesArr.findIndex(x => x.key === p.key); if (i >= 0) pagesArr[i] = {...pagesArr[i], ...p}; else pagesArr.push(p); }); renderPageButtons(); const cur = pagesArr.find(p => p.key === page); if (cur && cur.doc){ bg.innerHTML = cur.html || ""; bgSource = "static"; afterSheet(); layout(); } updatePageAction(); } },
       refresh(){ liveBgCache.clear(); const painted = paintLive(false); if (painted || anchorsDirty){ afterSheet(); } boxesDirty = true; layout(); },
       open(key){ if (key && key !== page && pagesArr.some(p => p.key === key)) openPage(key); },
       destroy(){ destroy(); },

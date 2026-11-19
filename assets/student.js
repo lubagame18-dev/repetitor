@@ -1861,7 +1861,13 @@ function roomBoardPages(l){
     const root = el.querySelector("#wk-root"); if (root){ const states = (S.works = S.works || {})[l.id] = S.works[l.id] || {}; Work.bind(root, states, (i, st) => saveWork(l.id, i, st)); }
   });
   const extra = Board.pages(S.course || {}, l).filter(p => !["practice", "test", "theory", "text"].includes(p.key));
-  return {pages: [...tabs.map(([k, n]) => ({key: k, label: n, html: ""})), ...extra], live};
+  const pages = tabs.map(([k, n]) => {
+    const pg = {key: k, label: n, html: ""};
+    if (k === "hw" && l.hwtest?.length) pg.action = {label: "Пройти ДЗ-тест", run: () => startTest(l.id, "hw")};
+    if (k === "test" && tests(l).test.length) pg.action = {label: "Пройти тест", run: () => startTest(l.id, "lesson")};
+    return pg;
+  });
+  return {pages: [...pages, ...extra], live};
 }
 /* тест ученика – вживую у учителя */
 /* каждый ответ ученика – в журнал теста: учитель видит его вживую и после теста */

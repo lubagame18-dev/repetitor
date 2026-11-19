@@ -939,3 +939,9 @@ body.play-open{overflow:hidden}
 .bd-pagetab-tool.bd-pagetab-del:hover{background:#ffe9ee!important;color:#c0392b!important}
 .bd-pagetab.on > button[data-bpage]{background:var(--ink);color:var(--base)}
 @media (hover:none){.bd-pagetab .bd-pagetab-tool{display:inline-block}}
+/* крупная кнопка действия на вкладке «Домашка» / «Тест» */
+.bd-stage{position:relative}
+.bd-page-action{position:absolute;top:10px;right:14px;z-index:45;border:0;border-radius:999px;padding:11px 18px;font:800 15px/1.2 Manrope,system-ui,sans-serif;color:#fff;background:linear-gradient(135deg,var(--violet,#7b4cf5),var(--pink,#ec4899));box-shadow:0 10px 24px -10px rgba(123,76,245,.7);cursor:pointer}
+.bd-page-action:hover{filter:brightness(1.07)}
+.bd-page-action[hidden]{display:none}
+@media (max-width:640px){.bd-page-action{top:8px;right:8px;padding:10px 14px;font-size:14px}}
