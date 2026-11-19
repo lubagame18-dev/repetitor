@@ -927,13 +927,13 @@ function viewStudent(){
   ${!pending(s) && !courseLoading && window.OGE?.isOge(c) ? `<div class="section-title"><h2>ОГЭ по заданиям</h2><span class="small muted">так видит ученик в разделе «Мой ОГЭ»</span></div>${OGE.html(c, T.rows.filter(r => r.student_id === s.id), x.writings, {teacher: true})}` : ""}
   <div style="margin-top:16px">${U.progressHTML(T.students.filter(o => (o.person_id || o.id) === (s.person_id || s.id) && !pending(o)).map(o => ({subject: o.subject || U.subjectOf(o.course), ...U.subjectNow(T.rows.filter(r => r.student_id === o.id), T.writings.filter(w => w.student_id === o.id))})))}</div>
   ${courseLoading ? `<div class="section-title"><h2>Уроки</h2></div><div class="card stack" data-t-course-loading-lessons style="gap:8px"><p class="muted">Загружаю уроки курса…</p><div class="students-skeleton"><i></i><i></i><i></i></div></div>` : c ? `<div class="section-title"><h2>Карта успеха</h2></div>${window.mapHTML(c, x.results, x.hwres, x.writings, x.hw)}
-  <div class="section-title"><h2>Уроки</h2><div class="row"><button class="btn ghost sm" data-act="shift" title="Перенести все будущие уроки на неделю вперёд">Каникулы: сдвинуть будущие уроки на неделю</button></div></div>
+  <div class="section-title"><h2>Уроки</h2><div class="row"><button class="btn ghost sm" data-act="shift" title="Сдвинуть все будущие уроки на неделю вперёд">Каникулы: сдвинуть будущие уроки на неделю</button></div></div>
   <div class="tablewrap glass"><table style="min-width:1140px"><thead><tr><th>№</th><th>Дата</th><th>Тема</th><th>Доступ</th><th>Пройдено</th><th>Время</th><th>Выполнено</th><th>Тест</th><th>ДЗ-тест</th><th>Письмо</th><th>ДЗ</th><th></th></tr></thead><tbody>
   ${c.lessons.map((l,i) => { const r = x.results[l.id], hr = x.hwres[l.id], h = x.hw[l.id], w = x.writings[l.id], hs = U.hwState(c, l.id, x.hw), dn = x.done(l);
     const byDate = d(l.date) <= today(), early = unlocked.includes(l.id);
     const manualDate = s.covered_manual?.[l.id], coveredDate = manualDate || s.covered?.[l.id];
     const wcell = !w ? "–" : w.status === "sent" ? `<span class="chip mid">ждёт</span>` : w.max ? `<span class="chip ${lvl(Math.round(w.total/w.max*100))}">${w.total}/${w.max}</span>` : `<span class="chip">${w.status === "redo" ? "доработка" : "проверено"}</span>`;
-    return `<tr><td class="tnum">${i+1}</td><td><div class="dt-cell"><input type="date" class="tinput" value="${esc(l.date)}" data-date="${l.id}" aria-label="Дата урока ${i+1}"><input type="time" class="tinput" value="${esc(U.lessonTime(s, l))}" data-ltime="${l.id}" aria-label="Время урока ${i+1}"></div>${s.dates?.[l.id] ? '<div class="small muted">перенесён</div>' : ""}</td>
+    return `<tr><td class="tnum">${i+1}</td><td><div class="dt-cell"><input type="date" class="tinput" value="${esc(l.date)}" data-date="${l.id}" aria-label="Дата урока ${i+1}"><input type="time" class="tinput" value="${esc(U.lessonTime(s, l))}" data-ltime="${l.id}" aria-label="Время урока ${i+1}"></div></td>
       <td><i class="dot" style="background:${blockOf(c, l).color}"></i> ${esc(l.title)}${l.writing ? `<div class="small muted">${esc(U.KIND_NAME[l.writing.type])}</div>` : ""}${l.custom ? (T.mats.find(m => m.id === l.mid)?.student_id ? `<div class="small muted">из курса «${esc(l.oge)}» <button class="linkbtn" data-act="del-copy" data-mid="${l.mid}">убрать</button></div>` : '<div class="small muted">свой урок</div>') : ""}</td>
       <td>${byDate ? '<span class="chip good">открыт</span>' : early ? `<button class="btn ghost sm" data-unlock="${l.id}" data-on="0">Закрыть</button>` : `<button class="btn ghost sm" data-unlock="${l.id}" data-on="1">${I.lock} Открыть сейчас</button>`}</td>
       <td>${coveredDate ? `<span class="chip good" title="${manualDate ? "Отмечено вручную" : "Пройдено на уроке"}">✓ ${fmt(coveredDate, {day: "numeric", month: "short"})}</span> <button class="linkbtn" data-act="covered-toggle" data-lid="${esc(l.id)}" data-on="0">убрать</button>` : `<button class="btn ghost sm" data-act="covered-toggle" data-lid="${esc(l.id)}" data-on="1">Отметить</button>`}</td>
@@ -1418,20 +1418,31 @@ async function roomReplan(){
   }
   r.moved = r.lesson !== "free" && r.lesson !== r.planned && !r.covered?.has(r.planned) && !r.keepPlan;
   if (changed){ render(); const s = T.students.find(x => x.id === r.sid), P = U.courseFor(s, T.mats)?.lessons.find(x => x.id === r.planned);
-    toast(r.moved ? `План перестроен: «${P?.title || "урок по плану"}» перенесён на следующее занятие, остальные сдвинулись` : "План уроков возвращён как был"); }
+    toast("План обновлён"); }
 }
 /* пройдено на уроке: урок, с которым работали не меньше 3 минут, отмечается в результатах ученика и открывается ему */
-const COVER_MS = 180000;
-async function roomCover(force){
+const COVER_MS = 5 * 60000;   // урок проведён, только если ученик и учитель были вместе не меньше 5 минут
+function roomTogetherCheck(){
+  const r = T.room; if (!r) return false;
+  const on = (r.to || []).some(id => {
+    const p = T.online && T.online[id];
+    return p && (p.lesson === r.lesson || /на уроке/i.test(String(p.where || "")));
+  });
+  if (on){ if (!r.togetherAt) r.togetherAt = Date.now(); }
+  else r.togetherAt = null;
+  return on;
+}
+async function roomCover(){
   const r = T.room; if (!r || r.lesson === "free" || r.covered.has(r.lesson)) return;
-  if (!force && Date.now() - r.since < COVER_MS) return;
-  if (force && Date.now() - r.since < 60000) return;
+  roomTogetherCheck();
+  if (!r.togetherAt || Date.now() - r.togetherAt < COVER_MS) return;
   r.covered.add(r.lesson);
   for (const id of r.to){
     const o = T.students.find(x => x.id === id); if (!o) continue;
     const covered = {...(o.covered || {}), [r.lesson]: isoToday()}, unlocked = [...new Set([...(o.unlocked || []), r.lesson])];
     await upd(id, {covered, unlocked});
   }
+  if (T.view === "room") render();
 }
 async function roomSetLesson(lid){
   const r = T.room; if (!r || lid === r.lesson) return;
@@ -1552,12 +1563,12 @@ function viewRoom(){
         <button class="btn ghost sm ${r.tab === "tools" ? "accent" : ""}" data-act="room-tools" aria-pressed="${r.tab === "tools"}" title="Генерация материала, заметки, картинки, поиск ресурсов">🧰 Инструменты</button>
         <button class="btn ghost sm" data-act="room-invite" title="Ученик сразу окажется на уроке, чем бы он ни занимался">Позвать</button>
         <button class="btn ghost sm" data-act="room-end">Завершить</button></div>
-      ${r.moved ? `<div class="small" style="flex-basis:100%">Сегодня вместо урока по плану – папки перенесены на следующие занятия. <button class="linkbtn" data-act="room-undo">Вернуть план</button></div>` : ""}</div>
-  ${r.take ? `<div class="card" style="margin-bottom:14px"><div class="kicker">Сегодня – урок из другого класса или предмета</div><p class="small muted">Урок встанет на сегодняшнее занятие, папки по плану сдвинутся на следующие.</p>${takePick(s, "room")}</div>` : ""}
+      </div>
+  ${r.take ? `<div class="card" style="margin-bottom:14px"><div class="kicker">Сегодня – урок из другого класса или предмета</div><p class="small muted">Урок встанет на сегодняшнее занятие.</p>${takePick(s, "room")}</div>` : ""}
   <div class="room ${sideOn ? "" : "room-one"}">
     <article class="window glass room-board" style="--c:${blockOf(c, l).color}"><div class="head row between" style="gap:8px;flex-wrap:wrap"><h1 style="font-size:1.25rem">${esc(l.title)}</h1>
       <span class="row" style="gap:8px;align-items:center"><span class="small muted" data-where="${s.id}">${where ? `Ученик сейчас: ${esc(where.where || "")}` : "Ученик пока не на уроке"}</span>
-      <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок, лист и масштаб – прямо туда, где вы сейчас">➜ Перенести ученика сюда</button>
+      <button class="btn sm" data-act="room-move" title="Открыть ученику этот урок, лист и масштаб – прямо туда, где вы сейчас">➜ Открыть ученику этот урок</button>
       <button class="btn sm ${r.follow ? "accent" : "ghost"}" data-act="room-follow" aria-pressed="${!!r.follow}" title="Ученик всё время видит то же, что вы: урок, лист, масштаб и место. Его действия этот режим не сбрасывают – выключаете только вы">${r.follow ? "👁 Веду ученика · выключить" : "👁 Вести ученика"}</button></span></div>
       <p class="small muted room-hint">Урок прямо на доске: листы вверху – теория, задания, тест, письмо. 👆 – работать с листом (нажимать, вписывать), ✎ – писать поверх. Ученик видит тот же лист.</p>
       <div class="pane"><div class="board glass" id="board"></div></div></article>
@@ -2333,6 +2344,7 @@ function paintOnline(){
   document.querySelectorAll("[data-where]").forEach(el => { const p = T.online[el.dataset.where]; el.textContent = p ? "Ученик сейчас: " + (p.where || "") : "Ученик пока не на уроке"; });
   document.querySelectorAll("[data-online]").forEach(el => { const p = T.online[el.dataset.online]; el.innerHTML = p ? `<span class="live">онлайн${p.where ? " · " + esc(p.where) : ""}</span>` : ""; });
   const n = Object.keys(T.online).length, el = document.getElementById("online-count"); if (el) el.innerHTML = n ? `<span class="live">сейчас онлайн: ${n}</span>` : "";
+  roomTogetherCheck();
 }
 let refT = 0, refBusy = false;
 function refreshSoon(){
@@ -2739,7 +2751,7 @@ document.addEventListener("click", async e => {
     render(); return;
   }
   if (a === "room-move"){ const r = T.room, l = r.lesson, tab = Board.keptPage() || r.shown || r.tab || null; r.shown = tab; roomPublish(); r.to.forEach(id => cmd(id, "room-goto", {lesson: l, tab, page: tab, v: T.followV || null}));
-    roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён сюда" : "Ученик не в сети – откроется здесь, когда зайдёт"); return; }
+    roomTrack(); toast(T.online[r.sid] ? "Урок открыт ученику" : "Ученик не в сети – урок откроется, когда он зайдёт"); return; }
   if (a === "call-start"){ const s = T.students.find(x => x.id === T.room?.sid); if (s) startCallT(s); render(); return; }
   if (a === "join-room"){ const s = T.students.find(x => x.id === t.dataset.id); document.getElementById("callbar").hidden = true; if (s) startRoom(s, t.dataset.rl, true); return; }
   if (a === "del-copy"){
@@ -2769,7 +2781,7 @@ document.addEventListener("click", async e => {
     const d0 = nextLessonDate(s), nid = await insertLesson(s, curCourse(), T.open, d0, true);
     if (nid) toast(`Урок добавлен в план: ${s.name}, ${fmt(d0, {day: "numeric", month: "long"})}. Следующие уроки сдвинулись.`); return;
   }
-  if (a === "room-invite"){ const r = T.room; roomPublish(); r.to.forEach(id => cmd(id, "room-pull", {lesson: r.lesson, url: r.url, tab: r.shown || r.tab || null})); roomTrack(); toast(T.online[r.sid] ? "Ученик перенесён на урок" : "Ученик не в сети – перенесётся, как только откроет приложение"); return; }
+  if (a === "room-invite"){ const r = T.room; roomPublish(); r.to.forEach(id => cmd(id, "room-pull", {lesson: r.lesson, url: r.url, tab: r.shown || r.tab || null})); roomTrack(); toast(T.online[r.sid] ? "Ученик приглашён на урок" : "Ученик не в сети – приглашение появится, когда он зайдёт"); return; }
   if (a === "room-url"){ const u = $("#room-url").value.trim(); if (!/^https?:\/\//.test(u)){ toast("Вставьте ссылку, которая начинается с https://"); return; }
     T.room.url = u; window.open(u, "_blank", "noopener"); const s = T.students.find(x => x.id === T.room.sid);
     await saveCall(s, u, true);
@@ -2807,7 +2819,7 @@ document.addEventListener("click", async e => {
   if (a === "shift"){
     const s = T.students.find(x => x.id === T.sel), c = U.courseFor(s, T.mats), dates = {...(s.dates || {})}, now = U.iso(new Date());
     c.lessons.filter(l => l.date >= now).forEach(l => dates[l.id] = U.iso(new Date(new Date(l.date + "T00:00:00").getTime() + 7 * 864e5)));
-    if (await upd(s.id, {dates})){ render(); cmd(s.id, "refresh", {msg:"Учитель перенёс уроки"}); toast("Будущие уроки перенесены на неделю"); }
+    if (await upd(s.id, {dates})){ render(); cmd(s.id, "refresh", {msg:"Учитель обновил расписание"}); toast("Расписание обновлено"); }
   }
   if (a === "review"){
     const row = {student_id: T.sel, lesson_id: T.review, status: t.dataset.st, grade: $("#rv-grade").value.trim(), comment: $("#rv-comment").value.trim(), reviewed_at: new Date().toISOString()};
@@ -2986,6 +2998,6 @@ document.addEventListener("change", async e => {
     if (st) st.textContent = "Не получилось: " + (err && err.message || "проверьте файл");
     toast("Документ не встроился: " + (err && err.message || "проверьте файл"));
   }
-});window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards, trendPoints,
+});setInterval(() => { if (T.room && T.view === "room") roomCover().catch(() => {}); }, 30000);window.__teacher = {T, render, selfWork, selfBlockProg, selfDeckProg, ensureBoards, trendPoints,
   ssSets: () => { const s = T.students.find(x => x.id === T.sel); try { return (s && window.SELF_DATA?.customSets) ? SELF_DATA.customSets(T.mats, s.course, s.id) : {blocks: [], decks: []}; } catch(_){ return {blocks: [], decks: []}; } }};
 })();

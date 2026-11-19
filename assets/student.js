@@ -219,7 +219,7 @@ async function roomGoto(m, quiet){
   closeJoin(); S.view = "room"; S.drawer = false; S.away = false; render(); scrollTo(0, 0);
   if (S.board && typeof S.board.open === "function" && S.boardPage) S.board.open(S.boardPage);
   const TAB = {theory:"Теория", mnemo:"Запоминалки", practice:"Практика", writing:"Письмо", mats:"Материалы", hw:"Домашка", test:"Тест"};
-  if (!quiet) toast(`Учитель перенёс тебя: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`);
+  if (!quiet) toast(`Учитель открыл урок: ${roomLesson().title}${m.tab ? " · " + (TAB[m.tab] || "") : ""}`);
   liveTrack(); return true;
 }
 /* ---------- «веду ученика»: учитель держит вид ученика (урок, лист, масштаб, место); действия ученика его не сбрасывают, снимает только учитель ---------- */
