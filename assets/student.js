@@ -1536,6 +1536,39 @@ function progressList(){
   return S.prog.map(x => x.id === S.profile.id ? cur : {subject: x.subject, ...U.subjectNow(x.results, x.writings)});
 }
 /* ---------- тренажёр по теме из диагностики: мини-теория и повторная практика ---------- */
+/* всплывающая карточка у точки диагностики: наведение → «Подтянуть тему» */
+let topicTipEl = null, topicTipT = 0;
+function hideTopicTip(delay){
+  try { clearTimeout(topicTipT); } catch (_) {}
+  const hide = () => { try { topicTipEl && topicTipEl.remove(); } catch (_) {} topicTipEl = null; };
+  if (delay) topicTipT = setTimeout(hide, delay); else hide();
+}
+function showTopicTip(dot){
+  if (!dot) return;
+  hideTopicTip(0);
+  const topic = dot.getAttribute("data-topic") || "", pct = +dot.getAttribute("data-p") || 0;
+  const tip = document.createElement("div");
+  tip.className = "trend-tip";
+  tip.innerHTML = `<div class="kicker">Диагностика</div><b>${esc(topic)}</b>
+    <div class="trend-tip-row"><span class="chip ${pct < 60 ? "bad" : pct < 80 ? "mid" : "good"}">${pct}%</span><span class="small muted">средний результат темы</span></div>
+    <p class="small muted" style="margin:6px 0 8px">Мини-теория и тест-самообучение по заданиям, где были ошибки.</p>
+    <button class="btn sm tr-open" data-topic-train data-topic="${esc(topic)}" data-quiz-ids="${esc(dot.getAttribute("data-quiz-ids") || "")}">Подтянуть тему →</button>`;
+  document.body.appendChild(tip); topicTipEl = tip;
+  const r = dot.getBoundingClientRect();
+  const place = () => {
+    const w = tip.offsetWidth || 260, h = tip.offsetHeight || 150;
+    let left = r.left + r.width / 2 - w / 2;
+    left = Math.max(8, Math.min(window.innerWidth - w - 8, left));
+    let top = r.bottom + 10;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 10);
+    tip.style.left = Math.round(left) + "px"; tip.style.top = Math.round(top) + "px";
+  };
+  place(); requestAnimationFrame(place);
+  tip.addEventListener("pointerenter", () => { try { clearTimeout(topicTipT); } catch (_) {} });
+  tip.addEventListener("pointerleave", () => hideTopicTip(240));
+  const hideOnce = () => { hideTopicTip(160); window.removeEventListener("scroll", hideOnce, true); };
+  window.addEventListener("scroll", hideOnce, true);
+}
 function closeTopicTrainer(redraw){
   try { document.getElementById("tr-back")?.remove(); } catch (_) {}
   S.trainer = null;
@@ -1555,19 +1588,19 @@ function topicTheoryText(topic, questions){
 }
 function trainerHTML(){
   const tr = S.trainer; if (!tr) return "";
-  if (tr.phase === "loading") return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Тренажёр по теме</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body"><div class="tr-loading"><span class="live-dot"></span> Загружаю теорию и задания по теме «${esc(tr.topic)}»…</div></div></div></div>`;
-  if (tr.phase === "error") return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Тренажёр по теме</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body"><p>${esc(tr.error || "Не удалось загрузить задания.")}</p><div class="row"><button class="btn ghost sm" data-tr-close>Закрыть</button></div></div></div></div>`;
+  if (tr.phase === "loading") return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Подтянуть тему</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body"><div class="tr-loading"><span class="live-dot"></span> Готовлю мини-теорию и тест-самообучение по теме «${esc(tr.topic)}»…</div></div></div></div>`;
+  if (tr.phase === "error") return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Подтянуть тему</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body"><p>${esc(tr.error || "Не удалось загрузить задания.")}</p><div class="row"><button class="btn ghost sm" data-tr-close>Закрыть</button></div></div></div></div>`;
   if (tr.phase === "theory"){
     const dots = tr.questions.map(q => `<span class="chip ${q.wrong ? "bad" : ""}">${esc(q.topic || tr.topic)}${q.wrong ? " · было сложно" : ""}</span>`).join("");
     return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true" aria-labelledby="tr-title">
-      <div class="tr-head"><div><div class="kicker">Мини-теория · по вашим ошибкам</div><b id="tr-title">${esc(tr.topic)}</b></div><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div>
+      <div class="tr-head"><div><div class="kicker">Подтянуть тему · мини-теория</div><b id="tr-title">${esc(tr.topic)}</b></div><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div>
       <div class="tr-body"><div class="tr-theory">${(tr.theory.length ? tr.theory : ["Вспомните правило по этой теме. Ниже — задания, которые вызвали сложность."]).map(t => `<p>${esc(t)}</p>`).join("")}</div>
       <div class="tr-meta">${tr.wrongCount ? `В прошлом тесте было сложно: ${tr.wrongCount} задан.` : "В прошлом тесте тема была без ошибок — можно закрепить."} ${dots ? `<div class="quiz-topics">${dots}</div>` : ""}</div>
-      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-tr-start>Перейти к практике · ${tr.questions.length} вопросов</button><button class="btn ghost" data-tr-close>Позже</button></div></div></div></div>`;
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-tr-start>Перейти к тесту-самообучению · ${tr.questions.length} вопросов</button><button class="btn ghost" data-tr-close>Позже</button></div></div></div></div>`;
   }
   if (tr.phase === "done"){
     const pct = tr.questions.length ? Math.round(tr.score / tr.questions.length * 100) : 0;
-    return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Практика по теме · ${esc(tr.topic)}</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body">
+    return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Тест-самообучение · ${esc(tr.topic)}</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body">
       <div class="tr-result"><b>${tr.score} из ${tr.questions.length} · ${pct}%</b><p class="small muted">${pct >= 80 ? "Тема закреплена." : "Можно пройти ещё раз — вопросы те же."}</p><p class="small ${tr.saveError ? "bad" : "muted"}">${tr.saving ? "Сохраняю результат…" : tr.saved ? "Результат сохранён — средний балл по теме обновлён." : tr.saveError ? "Результат не сохранился: " + esc(tr.saveError) : ""}</p></div>
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-tr-again>Пройти ещё раз</button><button class="btn ghost" data-tr-close>Закрыть</button></div></div></div></div>`;
   }
@@ -1578,7 +1611,7 @@ function trainerHTML(){
     return `<button class="tr-opt${cls}" data-tr-opt="${k}" ${tr.revealed ? "disabled" : ""}><span class="n">${k + 1}.</span> ${esc(o)}</button>`;
   }).join("");
   const fb = tr.revealed ? `<div class="tr-fb ${tr.picked === q.a ? "ok" : "no"}"><b>${tr.picked === q.a ? "Верно!" : "Пока неверно."}</b>${q.e ? `<div>${esc(q.e)}</div>` : q.pickedWrong ? "" : ""}<div class="small muted">${tr.picked === q.a ? "Так держать." : "Правильный ответ: " + esc(q.o[q.a])}</div></div>` : "";
-  return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true" aria-labelledby="tr-title"><div class="tr-head"><div><div class="kicker">Практика по теме · ${tr.i + 1} из ${tr.questions.length}</div><b id="tr-title">${esc(tr.topic)}</b></div><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div>
+  return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true" aria-labelledby="tr-title"><div class="tr-head"><div><div class="kicker">Тест-самообучение · ${tr.i + 1} из ${tr.questions.length}</div><b id="tr-title">${esc(tr.topic)}</b></div><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div>
     <div class="tr-body"><div class="tr-q">${esc(q.q)}</div><div class="tr-opts">${opts}</div>${fb}
     <div class="row" style="gap:8px;margin-top:10px">${tr.revealed ? `<button class="btn" data-tr-next>${tr.i + 1 < tr.questions.length ? "Дальше" : "Завершить"}</button>` : `<span class="small muted">Выберите ответ</span>`}<button class="btn ghost" data-tr-close>Закрыть</button></div></div></div></div>`;
 }
@@ -2239,8 +2272,17 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
   render();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => { try { r.update(); } catch (_) {} }).catch(() => {});
 })();
-/* ---------- клики по точкам диагностики и тренажёр ---------- */
+document.addEventListener("pointerover", e => {
+  const dot = e.target.closest && e.target.closest(".trend-dot-topic");
+  if (dot) showTopicTip(dot);
+});
+document.addEventListener("pointerout", e => {
+  const dot = e.target.closest && e.target.closest(".trend-dot-topic");
+  if (dot) hideTopicTip(240);
+});/* ---------- клики по точкам диагностики и тренажёр ---------- */
 document.addEventListener("click", e => {
+  const tipBtn = e.target.closest && e.target.closest("[data-topic-train]");
+  if (tipBtn){ e.preventDefault(); hideTopicTip(0); openTopicTrainer(tipBtn.dataset.topic || "", tipBtn.dataset.quizIds || ""); return; }
   const dot = e.target.closest && e.target.closest(".trend-dot-topic");
   if (dot){
     e.preventDefault();

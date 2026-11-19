@@ -1854,7 +1854,9 @@ test("X9", "Темы теста разбиты на отдельные точк�
   })()`);
   if (!out.dots || out.dots < 2) throw new Error("X9: ожидали отдельные точки по темам, получили " + JSON.stringify(out));
   if (/Тест по всем/i.test(out.legend)) throw new Error("X9: осталась общая точка теста: " + JSON.stringify(out));
-  await page.eval(`(() => { const d = document.querySelector(".trend-dot-topic"); if (d) d.dispatchEvent(new MouseEvent("click", {bubbles:true})); return true; })()`);
+  await page.eval(`(() => { const d = document.querySelector(".trend-dot-topic"); if (d) d.dispatchEvent(new PointerEvent("pointerover", {bubbles:true})); return true; })()`);
+  await page.waitFor(`document.querySelector(".trend-tip [data-topic-train]") ? 1 : 0`, { timeout: 5000, label: "X9: подсказка «Подтянуть тему»" });
+  await page.eval(`document.querySelector("[data-topic-train]")?.click(); true`);
   await page.waitFor(`document.querySelector(".tr-modal .tr-body") ? 1 : 0`, { timeout: 12000, label: "X9: тренажёр по точке" });
   const trainer = await page.eval(`(() => ({ body: (document.querySelector(".tr-modal")||{}).innerText || "", options: document.querySelectorAll("[data-tr-opt]").length }))()`);
   if (!/Мини-теория|Загружаю/i.test(trainer.body)) throw new Error("X9: не открылась мини-теория: " + trainer.body.slice(0, 200));
