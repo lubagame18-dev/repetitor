@@ -191,7 +191,7 @@ window.Board = (() => {
           <button data-act="undo" data-l="Отмена" title="Отменить (Ctrl+Z)">↶</button>
           <button data-act="redo" data-l="Вернуть" title="Вернуть (Ctrl+Shift+Z)">↷</button>
           <button data-tool="touch" data-l="Нажимать" title="Нажимать и вводить внутри листа, сайта или презентации">👆</button>
-          <button data-act="page-add" data-l="Лист" title="Добавить лист" ${o.role === "teacher" ? "" : "hidden"}>＋</button><button data-act="page-rename" data-l="Имя" title="Переименовать лист" ${o.role === "teacher" ? "" : "hidden"}>✎</button><button data-act="page-del" data-l="Удалить" title="Удалить лист" ${o.role === "teacher" ? "" : "hidden"}>🗑</button><button data-act="attach" data-l="Файл" title="Прикрепить фото, PDF или документ">📎</button>
+          <button data-act="page-add" data-l="Лист" title="Добавить лист" ${o.role === "teacher" ? "" : "hidden"}>＋</button><button data-act="page-rename" data-l="Имя" title="Переименовать лист" ${o.role === "teacher" ? "" : "hidden"}>✎</button><button data-act="page-restore" data-l="Вернуть" title="Вернуть скрытые вкладки" ${o.role === "teacher" ? "" : "hidden"}>↺</button><button data-act="page-del" data-l="Удалить" title="Удалить лист" ${o.role === "teacher" ? "" : "hidden"}>🗑</button><button data-act="attach" data-l="Файл" title="Прикрепить фото, PDF или документ">📎</button>
           <button data-act="doc-edit" data-l="Документ" title="Редактировать документ: текст и картинки" hidden>✎ Документ</button>
           <span class="bd-sep"></span>
           <button data-act="embed" data-l="Сайт" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…" ${o.role === "teacher" ? "" : "hidden"}>🌐</button>
@@ -981,7 +981,7 @@ window.Board = (() => {
         if (ex){ ex.saved = true; ex.dbId = r.id || ex.dbId; ex.doc = !!it.doc; ex.docType = it.docType || ""; ex.editable = it.editable !== false; if (!ex.html && it.html) ex.html = String(it.html); return; }
         pagesArr.push({key:String(it.key), label:it.label || "Лист", html:String(it.html || ""), saved:true, dbId:r.id, doc:!!it.doc, docType:it.docType || "", editable:it.editable !== false});
       });
-      hiddenRows.forEach(h => h.forEach(k => hiddenKeys.add(String(k))));
+      if (hiddenRows.length){ hiddenKeys.clear(); hiddenRows[hiddenRows.length - 1].forEach(k => hiddenKeys.add(String(k))); }
       for (let i = pagesArr.length - 1; i >= 0; i--){ if (hiddenKeys.has(pagesArr[i].key)) pagesArr.splice(i, 1); }
       renderPageButtons();
     }
@@ -1002,7 +1002,14 @@ window.Board = (() => {
       catch (e) { toast("Не удалось переименовать: " + oneLine(e && e.message || "нет связи")); return; }
       send("page-rename", {key:p.key, label:name});
     }
-    async function pageDelete(key){
+    async function pageRestore(){
+      if (o.role !== "teacher") return;
+      if (!hiddenKeys.size){ toast("Скрытых вкладок нет."); return; }
+      hiddenKeys.clear();
+      try { await o.api.add(PAGE_KEY, {t:"pgprefs", hidden:[]}); } catch (_) {}
+      provided.forEach(p => { if (!pagesArr.some(x => x.key === String(p.key))) pagesArr.push({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}); });
+      renderPageButtons(); toast("Скрытые вкладки возвращены"); send("page-restore", {});
+    }    async function pageDelete(key){
       if (o.role !== "teacher") return;
       const p = pagesArr.find(x => x.key === String(key || page)); if (!p) return;
       if (!window.confirm("Удалить вкладку «" + p.label + "»? Пометки на ней тоже исчезнут.")) return;
@@ -1799,6 +1806,7 @@ window.Board = (() => {
       const b = e.target.closest("button"); if (!b || !root.contains(b)) return;
       if (b.dataset.prenamekey){ pageRename(b.dataset.prenamekey); return; }
       if (b.dataset.pdelkey){ pageDelete(b.dataset.pdelkey); return; }
+      if (b.dataset.act === "page-restore"){ pageRestore(); return; }
       if (b.dataset.pstep){ stepPage(+b.dataset.pstep); return; }
       if (b.dataset.bpage){ openPage(b.dataset.bpage); if (o.role === "teacher") send("page", {page:b.dataset.bpage}); }
       if (b.dataset.tool) setTool(b.dataset.tool);
@@ -2371,6 +2379,11 @@ window.Board = (() => {
         if (m.type === "page-rename"){
           const rp = pagesArr.find(x => x.key === String(m.key)); if (rp){ rp.label = String(m.label || rp.label).slice(0, 24); renderPageButtons(); }
           return;
+        }
+        if (m.type === "page-restore"){
+          hiddenKeys.clear();
+          provided.forEach(p => { if (!pagesArr.some(x => x.key === String(p.key))) pagesArr.push({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || "", editable:p.editable !== false}); });
+          renderPageButtons(); return;
         }
         if (m.type === "page-del"){
           const di = pagesArr.findIndex(x => x.key === String(m.key)); if (di >= 0){ pagesArr.splice(di, 1); if (page === String(m.key)){ page = pagesArr[Math.max(0, Math.min(di, pagesArr.length - 1))]?.key || ""; if (page) openPage(page); } renderPageButtons(); }
