@@ -1523,15 +1523,29 @@ function viewStats(){
   }
   let trend = "";
   if (window.Trend){
-    const rows = [...(S.rows || []), ...(S.qzResults || []).map(r => ({created_at:r.created_at, kind:"quiz", score:r.score, total:r.total, lesson_id:r.quiz_id}))];
+    const qOrder = window.Trend.topicOrder ? window.Trend.topicOrder(S.course) : new Map();
+    const topicPoints = window.Trend.pointsFromQuizTopics ? window.Trend.pointsFromQuizTopics(S.qzResults || [], {order:qOrder, limit:30}) : [];
+    const baseRows = S.rows || [];
     const titleOf = r => r.kind === "quiz"
-      ? ((S.quizzes || []).find(q => q.id === r.lesson_id)?.title || "тест по темам")
+      ? ((S.quizzes || []).find(q => q.id === (r.lesson_id || r.quiz_id))?.title || "тест по темам")
       : (U.findLesson(S.course, r.lesson_id)?.title || "");
-    const points = window.Trend.pointsFromRows(rows, {titleOf, limit:30});
-    trend = `<div data-t-trend style="margin:12px 0">${window.Trend.chart(points, {title:"Динамика успеваемости", empty:"График появится после первого занятия."})}</div>`;
+    let points;
+    if (topicPoints.length){
+      /* каждый тест по темам разбит на отдельные темы в порядке изучения */
+      points = [...window.Trend.pointsFromRows(baseRows, {titleOf, limit:30}), ...topicPoints];
+    } else {
+      const rows = [...baseRows, ...(S.qzResults || []).map(r => ({created_at:r.created_at, kind:"quiz", score:r.score, total:r.total, lesson_id:r.quiz_id}))];
+      points = window.Trend.pointsFromRows(rows, {titleOf, limit:30});
+    }
+    trend = `<div data-t-trend style="margin:12px 0">${window.Trend.chart(points, {title:"Динамика успеваемости", note: topicPoints.length ? "темы теста — в порядке изучения" : "", empty:"График появится после первого занятия."})}</div>`;
   }
   /* темы, которые проверялись в тестах: показываем под графиком, чтобы было видно, что именно влияет на линию */
-  const qstats = window.Quiz && typeof Quiz.topicStats === "function" ? Quiz.topicStats(S.qzResults || []) : [];
+  const qstatsAll = window.Quiz && typeof Quiz.topicStats === "function" ? Quiz.topicStats(S.qzResults || []) : [];
+  const qOrder2 = window.Trend?.topicOrder ? window.Trend.topicOrder(S.course) : new Map();
+  const qstats = qstatsAll.slice().sort((a,b) => {
+    const oa = qOrder2.has(a.title) ? qOrder2.get(a.title) : 9999, ob = qOrder2.has(b.title) ? qOrder2.get(b.title) : 9999;
+    return oa - ob || a.title.localeCompare(b.title);
+  });
   const topicsHTML = qstats.length ? `<div class="card stack" style="gap:8px;margin:10px 0" data-t-quiz-topics>
     <div class="row between" style="gap:8px"><div class="kicker">Темы из тестов по темам · ${(S.qzResults || []).length} попыт.</div><button class="btn ghost sm" data-go="quizzes">Все тесты</button></div>
     <div class="quiz-topics">${qstats.map(s => {

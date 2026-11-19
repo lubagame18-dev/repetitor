@@ -804,21 +804,28 @@ function trendPoints(s){
   const person = x => x.person_id || x.id;
   const sibs = new Set((T.students || []).filter(x => person(x) === person(s)).map(x => x.id));
   const qCourse = id => (T.qzQuizzes || []).find(q => q.id === id)?.course;
-  const quizzes = (T.qzResults || [])
-    .filter(r => r.student_id === s.id || (sibs.has(r.student_id) && qCourse(r.quiz_id) === s.course))
-    .map(r => ({created_at: r.created_at, kind: "quiz", score: r.score, total: r.total, lesson_id: r.quiz_id}));
-  return Trend.pointsFromRows([...rows, ...quizzes], {titleOf: trendTitleOf(c), limit: 30});
+  const rs = (T.qzResults || []).filter(r => r.student_id === s.id || (sibs.has(r.student_id) && qCourse(r.quiz_id) === s.course));
+  const topicPoints = Trend.pointsFromQuizTopics ? Trend.pointsFromQuizTopics(rs, {order: Trend.topicOrder(c), limit: 30}) : [];
+  const titleOf = trendTitleOf(c);
+  if (topicPoints.length) return [...Trend.pointsFromRows(rows, {titleOf, limit: 30}), ...topicPoints];
+  const quizzes = rs.map(r => ({created_at: r.created_at, kind: "quiz", score: r.score, total: r.total, lesson_id: r.quiz_id}));
+  return Trend.pointsFromRows([...rows, ...quizzes], {titleOf, limit: 30});
 }
 function trendTopicsHTML(s){
   if (!window.Quiz || !Quiz.topicStats) return "";
+  const c = U.courseFor(s, T.mats);
+  const order = window.Trend?.topicOrder ? Trend.topicOrder(c) : new Map();
   const person = x => x.person_id || x.id;
   const sibs = new Set((T.students || []).filter(x => person(x) === person(s)).map(x => x.id));
   const qCourse = id => (T.qzQuizzes || []).find(q => q.id === id)?.course;
   const rs = (T.qzResults || []).filter(r => r.student_id === s.id || (sibs.has(r.student_id) && qCourse(r.quiz_id) === s.course));
-  const stats = Quiz.topicStats(rs);
+  const stats = Quiz.topicStats(rs).sort((a,b) => {
+    const oa = order.has(a.title) ? order.get(a.title) : 9999, ob = order.has(b.title) ? order.get(b.title) : 9999;
+    return oa - ob || a.title.localeCompare(b.title);
+  });
   if (!stats.length) return "";
   return `<div class="card stack" style="gap:8px;margin:10px 0" data-t-student-quiz-topics>
-    <div class="kicker">Темы из тестов по темам</div>
+    <div class="kicker">Темы из тестов по темам · в порядке изучения</div>
     <div class="quiz-topics">${stats.map(x => {
       const lv = x.lastNeeds || x.lastPct < 60 ? "bad" : x.lastPct < 80 ? "mid" : "good";
       return `<span class="chip ${lv}" title="Последняя попытка: ${x.lastPct}%">${esc(x.title)} · ${x.lastPct}%</span>`;
@@ -828,8 +835,9 @@ function trendSectionHTML(s){
   if (!window.Trend || !Trend.chart) return "";
   const points = trendPoints(s);
   const last = points.length ? points[points.length - 1].p : 0, first = points.length ? points[0].p : 0;
+  const hasTopics = points.some(x => x.kind === "quiz-topic");
   return `<div class="section-title"><h2>Динамика успеваемости</h2><span class="small muted">результаты занятий и тестов по темам – от начала до текущего</span></div>
-    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
+    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", note: hasTopics ? "темы теста — в порядке изучения" : "", empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
 }
 
 function viewStudent(){

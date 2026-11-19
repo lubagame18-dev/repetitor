@@ -20,6 +20,45 @@ window.Trend = (() => {
     }).sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
     return out.slice(-(opts.limit || 30));
   }
+  /* порядок тем по программе: из уроков курса; если темы нет в уроках – по порядку вопросов теста */
+  function topicOrder(course){
+    const map = new Map(); let i = 0;
+    ((course && course.lessons) || []).forEach(l => (l.learn || []).forEach(t => {
+      const k = String(t || "").trim(); if (k && !map.has(k)) map.set(k, i++);
+    }));
+    return map;
+  }
+  /* результаты тестов по темам -> отдельная точка на каждую тему (а не одна общая точка за тест) */
+  function pointsFromQuizTopics(list, opts = {}){
+    if (!window.Quiz || typeof Quiz.topicStats !== "function") return [];
+    const results = (list || []).filter(Boolean);
+    const stats = Quiz.topicStats(results);
+    if (!stats.length) return [];
+    const order = opts.order || new Map();
+    const seen = new Map();           // тема -> номер по порядку вопросов в тесте
+    const lastAt = new Map();
+    let seq = 0;
+    results.slice().sort((a,b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)).forEach(r => {
+      const ts = r && r.details && r.details.topics;
+      (Array.isArray(ts) ? ts : []).forEach(t => {
+        const title = String((t && t.title) || "").trim(); if (!title) return;
+        if (!seen.has(title)) seen.set(title, seq++);
+        lastAt.set(title, r.created_at || r.at || "");
+      });
+    });
+    const rows = stats.map(s => {
+      const title = String(s.title || "");
+      return {
+        p: Math.max(0, Math.min(100, +s.lastPct || 0)),
+        label: title,
+        sub: `${s.first || 0} из ${s.total || 0} с первой попытки`,
+        at: lastAt.get(title) || "",
+        kind: "quiz-topic",
+        ord: order.has(title) ? order.get(title) : (10000 + (seen.get(title) ?? 9999)),
+      };
+    }).sort((a,b) => a.ord - b.ord);
+    return rows.slice(0, opts.limit || 30);
+  }
   /* точки quiz_results (у теста по темам нет kind, но есть title) */
   function pointsFromQuizzes(list, opts = {}){
     const rows = (list || []).map(q => ({lesson_id: q.quiz_id || "", kind: "quiz", score: q.score, total: q.total, created_at: q.created_at || q.at || ""}));
@@ -62,7 +101,7 @@ window.Trend = (() => {
     const trendWord = n < 2 ? "" : delta > 5 ? `рост +${delta}%` : delta < -5 ? `снижение ${delta}%` : "стабильно";
     return `<div class="trend" data-trend data-points="${n}" data-last="${last.p}" data-first="${first.p}">
       <div class="row between" style="gap:8px;flex-wrap:wrap;align-items:flex-start"><div><div class="kicker">${esc(opts.title || "Динамика успеваемости")}</div>
-        <div class="small muted">по темам и занятиям от начала до текущего · ${n} ${n === 1 ? "точка" : n < 5 ? "точки" : "точек"}${trendWord ? " · " + trendWord : ""}</div></div>
+        <div class="small muted">${esc(opts.note || "по темам и занятиям от начала до текущего")} · ${n} ${n === 1 ? "точка" : n < 5 ? "точки" : "точек"}${trendWord ? " · " + trendWord : ""}</div></div>
         <span class="chip ${delta < -5 ? "bad" : delta > 5 ? "good" : ""}">сейчас ${last.p}%</span></div>
       <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.title || "Динамика успеваемости")}: линия результатов занятий">
         ${grid}
@@ -93,5 +132,5 @@ window.Trend = (() => {
       document.head.appendChild(st);
     }
   } catch(_) {}
-  return {pointsFromRows, pointsFromQuizzes, chart, smoothPath};
+  return {pointsFromRows, pointsFromQuizzes, pointsFromQuizTopics, topicOrder, chart, smoothPath};
 })();

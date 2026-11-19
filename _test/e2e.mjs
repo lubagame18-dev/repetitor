@@ -1843,6 +1843,21 @@ test("X6", "Ученик: фоновая перерисовка не возвр�
   const after = await student.eval(`window.__app.S.board.page()`);
   if (before !== after) throw new Error(`страница доски сбросилась при перерисовке: ${before} -> ${after}`);
 });
+test("X9", "Темы теста разбиты на отдельные точки графика в порядке изучения", async () => {
+  const page = W.quizTab; if (!page) return;
+  await page.eval(`(() => { const b = document.querySelector('[data-go="stats"]'); if (b) b.click(); return true; })()`);
+  await page.waitFor(`(() => { const S = window.__app.S; return S.view === "stats" && document.querySelector("[data-t-trend] .trend-dot") ? 1 : 0; })()`, { timeout: 12000, label: "X9: график статистики" });
+  const out = await page.eval(`(() => {
+    const dots = [...document.querySelectorAll("[data-t-trend] .trend-dot")];
+    const labels = [...document.querySelectorAll("[data-t-trend] .trend-dot title")].map(x => x.textContent);
+    return { dots: dots.length, labels, legend: (document.querySelector("[data-t-trend] .trend-legend")||{}).textContent || "", topics: (document.querySelector("[data-t-quiz-topics]")||{}).textContent || "" };
+  })()`);
+  if (!out.dots || out.dots < 2) throw new Error("X9: ожидали отдельные точки по темам, получили " + JSON.stringify(out));
+  if (/Тест по всем/i.test(out.legend)) throw new Error("X9: осталась общая точка теста: " + JSON.stringify(out));
+  const qOrder = W.quizQuestions.map(q => q.topic).filter(Boolean);
+  const names = out.labels.join(" | ");
+  if (qOrder[0] && !names.includes(qOrder[0])) throw new Error("X9: нет темы " + qOrder[0] + ": " + names);
+});
 /* ================= запуск ================= */
 function ensureArtifacts() { fs.mkdirSync(ARTIFACTS, { recursive: true }); }
 
