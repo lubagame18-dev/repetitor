@@ -2044,7 +2044,19 @@ function render(){
   if (S.profile && sb){ liveStart(); liveTrack(); }
 }
 
-/* ---------- события ---------- */
+/* не даём странице «улетать» вверх, когда ученик поставил курсор в поле и печатает */
+let fieldScrollGuard = null;
+document.addEventListener("focusin", e => {
+  const el = e.target;
+  if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || "") || el.isContentEditable)) fieldScrollGuard = {y: scrollY, at: Date.now(), el};
+});
+document.addEventListener("focusout", () => { setTimeout(() => { if (!document.activeElement || !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName || "")) fieldScrollGuard = null; }, 0); });
+window.addEventListener("scroll", () => {
+  const g = fieldScrollGuard; if (!g) return;
+  if (Date.now() - g.at > 2500){ fieldScrollGuard = null; return; }
+  if (document.activeElement !== g.el) return;
+  if (g.y > 60 && scrollY < g.y - 80){ try { scrollTo(0, g.y); } catch (_) {} }
+}, {passive:true});/* ---------- события ---------- */
 document.addEventListener("submit", async e => {
   e.preventDefault();
   /* сообщение – без перерисовки, чтобы не стирать то, что уже введено */

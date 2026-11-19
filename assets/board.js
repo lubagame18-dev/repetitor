@@ -1527,12 +1527,14 @@ window.Board = (() => {
       viewChanged();
       const g = scrollGuard; if (!g) return;
       /* пока идёт штрих, холст не должен сам «улетать» вверх */
+      if ((g.until || g.at + 8000) < Date.now()) return;
       if (g.st > 40 && stage.scrollTop < g.st - 120){ try { stage.scrollTop = g.st; } catch (_) {} }
     };
     stage.addEventListener("scroll", onStageScrollGuard, {passive: true});
     const onPageScrollGuard = () => {
       const g = scrollGuard; if (!g) return;
-      if (g.y > 60 && Date.now() - g.at < 8000 && scrollY < g.y - 60){ try { scrollTo(0, g.y); } catch (_) {} }
+      if ((g.until || g.at + 8000) < Date.now()) return;
+      if (g.y > 60 && scrollY < g.y - 60){ try { scrollTo(0, g.y); } catch (_) {} }
     };
     window.addEventListener("scroll", onPageScrollGuard, {passive: true});
     /* жест двумя пальцами и автоматическое расширение отключены: случайное касание не двигает и не растягивает лист */
@@ -1557,7 +1559,7 @@ window.Board = (() => {
       }
       /* защита от «прыжка» страницы/холста вверх во время письма */
       lastDrawAt = Date.now();
-      scrollGuard = {y: scrollY, st: stage.scrollTop, sl: stage.scrollLeft, at: Date.now()};
+      scrollGuard = {y: scrollY, st: stage.scrollTop, sl: stage.scrollLeft, at: Date.now(), until: 0};
       const p = pos(e);
       lastPoint = {x:p[0], y:p[1]};
       placeEraseCur(e);
@@ -1666,7 +1668,8 @@ window.Board = (() => {
     function cancelStroke(){ if (drawing && !drawing.erase) send("draft", {sid:drawing.sid, p:[], end:true, drop:true}); drawing = null; redraw(); }
     function end(e){
       if (e && drawing && drawing.pid !== e.pointerId) return;
-      scrollGuard = null; lastDrawAt = Date.now();
+      if (scrollGuard) scrollGuard.until = Date.now() + 2500;
+      lastDrawAt = Date.now();
       lpClear();
       if (pan){ pan = null; cv.style.cursor = "grab"; return; }
       if (moving){

@@ -955,3 +955,5 @@ body.play-open{overflow:hidden}
 .explain-text .bd-doc{max-width:100%;font-size:14px;line-height:1.5}
 .explain-doc h2{font-size:22px;margin:0 0 10px}.explain-doc h3{font-size:18px;margin:14px 0 5px}.explain-doc p{margin:0 0 7px}.explain-doc ul{margin:0 0 8px 20px}
 @media (max-width:640px){.explain-panel{right:8px;bottom:8px;width:calc(100vw - 16px);max-height:64vh}}
+/* не даём браузеру самому «дёргать» страницу при изменении высоты/фокусе */
+html,body{overflow-anchor:none}
