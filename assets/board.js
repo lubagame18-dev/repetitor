@@ -75,7 +75,7 @@ window.Board = (() => {
     const provided = (Array.isArray(o.pages) && o.pages.length)
       ? o.pages
       : [{key:"p1", label:"Лист 1", html:`<div class="bd-sheet"></div>`}];
-    const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false}));
+    const pagesArr = provided.map(p => ({key:String(p.key), label:p.label || "Лист", html:p.html || "", saved:false, doc:!!p.doc, docType:p.docType || ""}));
     let page = (o.page && pagesArr.some(p => p.key === String(o.page))) ? String(o.page) : pagesArr[0].key;
 
     let items = new Map();             // id -> item
@@ -191,6 +191,7 @@ window.Board = (() => {
           <button data-act="redo" data-l="Вернуть" title="Вернуть (Ctrl+Shift+Z)">↷</button>
           <button data-tool="touch" data-l="Нажимать" title="Нажимать и вводить внутри листа, сайта или презентации">👆</button>
           <button data-act="attach" data-l="Файл" title="Прикрепить фото, PDF или документ">📎</button>
+          <button data-act="doc-edit" data-l="Документ" title="Редактировать документ: текст и картинки" hidden>✎ Документ</button>
           <span class="bd-sep"></span>
           <button data-act="embed" data-l="Сайт" title="Встроить сайт: Wordwall, YouTube, Google Презентации, Canva…" ${o.role === "teacher" ? "" : "hidden"}>🌐</button>
           <button data-act="camera" data-l="Камера" title="Фото с камеры" ${o.role === "teacher" ? "" : "hidden"}>📷</button>
@@ -718,6 +719,12 @@ window.Board = (() => {
       box.innerHTML = `<button data-pstep="-1" title="Предыдущий лист" aria-label="Предыдущий лист">‹</button>` +
         pagesArr.map(p => `<button data-bpage="${esc(p.key)}" aria-pressed="${p.key === page}">${esc(p.label)}</button>`).join("") +
         `<button data-pstep="1" title="Следующий лист" aria-label="Следующий лист">›</button>`;
+      updateDocEditButton();
+    }
+    function updateDocEditButton(){
+      const b = root.querySelector('[data-act="doc-edit"]'); if (!b) return;
+      const p = pagesArr.find(x => x.key === page);
+      b.hidden = !(p && p.doc && o.role === "teacher");
     }
     /* «живые» листы: урок прямо на доске (теория, задания, тест, письмо) – отвечать можно в самом листе, рисовать – поверх */
     let live = o.live || {};
@@ -856,7 +863,7 @@ window.Board = (() => {
       if (page && page !== key) pageCache.set(page, [...items.entries()].filter(([id]) => !isTemp(id)).map(([id, item]) => ({id, item})));
       const tok = ++openTok;
       page = key;
-      renderPageButtons();
+      renderPageButtons(); updateDocEditButton();
       const pg = pagesArr.find(p => p.key === key);
       if (!paintLive(true)){ bg.innerHTML = pg ? pg.html : ""; bgSource = "static"; }
       afterSheet();
@@ -916,12 +923,16 @@ window.Board = (() => {
         const html = fitPageHtml(p.html);
         if (html !== p.html){ p.html = html; if (page === p.key){ if (!paintLive(true)){ bg.innerHTML = html; bgSource = "static"; } afterSheet(); layout(); } }
         try {
-          const id = await o.api.add(PAGE_KEY, {t:"pg", key:p.key, label:p.label, html:p.html});
+          const item = {t:"pg", key:p.key, label:p.label, html:p.html};
+          if (p.doc){ item.doc = true; item.docType = p.docType || "doc"; }
+          const id = await o.api.add(PAGE_KEY, item);
           p.saved = true; p.dbId = id;
         } catch (e1){
           const minimal = `<div class="bd-sheet"><h2>${esc(p.label)}</h2><p class="small muted">Материал слишком большой, чтобы сохраниться целиком.</p></div>`;
           try {
-            const id = await o.api.add(PAGE_KEY, {t:"pg", key:p.key, label:p.label, html:minimal});
+            const item = {t:"pg", key:p.key, label:p.label, html:minimal};
+            if (p.doc){ item.doc = true; item.docType = p.docType || "doc"; }
+            const id = await o.api.add(PAGE_KEY, item);
             p.saved = true; p.dbId = id; p.html = minimal;
             if (page === p.key){ if (!paintLive(true)){ bg.innerHTML = minimal; bgSource = "static"; } afterSheet(); layout(); }
             /* у второй стороны уже мог быть более полный html – синхронизируем тем же ключом */
@@ -933,15 +944,17 @@ window.Board = (() => {
         }
       } finally { saving--; }
     }
-    function addPageP(label, html, broadcast){
+    function addPageP(label, html, broadcast, opts){
       const key = "x" + Date.now().toString(36) + rid().slice(0, 3);
       /* обрезаем СИНХРОННО до push/broadcast: у обеих сторон должен быть один и тот же html */
       const clean = fitPageHtml(String(html || ""));
-      const p = {key, label: String(label || "Лист").slice(0, 24), html: clean, saved: false, broadcast: !!broadcast};
+      opts = opts || {};
+      const p = {key, label: String(label || "Лист").slice(0, 24), html: clean, saved: false, broadcast: !!broadcast,
+        doc: !!(opts.doc), docType: opts.docType || ""};
       pagesArr.push(p);
       renderPageButtons();
       persistPage(p);
-      if (broadcast) send("addpage", {key, label: p.label, html: clean});
+      if (broadcast) send("addpage", {key, label: p.label, html: clean, doc:p.doc, docType:p.docType});
       return key;
     }
     /* вставка нового листа из панели учителя: добавить, открыть у себя и показать ученику */
@@ -962,10 +975,59 @@ window.Board = (() => {
         const it = r.item || r;
         if (!it || (it.t !== "pg" && it.t !== "page") || !it.key) return;
         const ex = pagesArr.find(p => p.key === String(it.key));
-        if (ex){ ex.saved = true; if (!ex.html && it.html) ex.html = String(it.html); return; }
-        pagesArr.push({key:String(it.key), label:it.label || "Лист", html:String(it.html || ""), saved:true});
+        if (ex){ ex.saved = true; ex.dbId = r.id || ex.dbId; ex.doc = !!it.doc; ex.docType = it.docType || ""; if (!ex.html && it.html) ex.html = String(it.html); return; }
+        pagesArr.push({key:String(it.key), label:it.label || "Лист", html:String(it.html || ""), saved:true, dbId:r.id, doc:!!it.doc, docType:it.docType || ""});
       });
       renderPageButtons();
+    }
+    /* сохранить изменённый документ: html листа обновляется, пометки/подчёркивания остаются отдельными объектами */
+    async function updateDocPage(p, html){
+      if (!p) return false;
+      const clean = fitPageHtml(String(html || ""));
+      if (!clean || clean.length < 20){ toast("Документ получился пустым — сохранение отменено."); return false; }
+      if (!p.dbId) await persistPage(p);
+      if (!p.dbId){ toast("Не удалось сохранить документ: нет связи."); return false; }
+      try {
+        await o.api.update(PAGE_KEY, p.dbId, {t:"pg", key:p.key, label:p.label, html:clean, doc:true, docType:p.docType || "doc"});
+      } catch (e){
+        toast("Не удалось сохранить документ: " + oneLine(e && e.message || "нет связи"));
+        return false;
+      }
+      p.html = clean; p.saved = true;
+      if (page === p.key){ bg.innerHTML = clean; bgSource = "static"; afterSheet(); layout(); }
+      send("addpage", {key:p.key, label:p.label, html:clean, doc:true, docType:p.docType || "doc", update:true});
+      toast("Документ сохранён — ученик увидит изменения.");
+      return true;
+    }
+    function openDocEditor(){
+      if (o.role !== "teacher") return;
+      const p = pagesArr.find(x => x.key === page);
+      if (!p || !p.doc) return;
+      const back = document.createElement("div");
+      back.className = "bd-doc-back";
+      back.innerHTML = `<div class="bd-doc-modal" role="dialog" aria-modal="true" aria-label="Редактирование документа">
+        <div class="bd-doc-head"><b>Редактирование документа · ${esc(p.label)}</b>
+          <span class="small muted">Пишите и правьте текст как в Word. Подчёркивания и рисунки поверх останутся на месте.</span>
+          <button type="button" class="bd-doc-x" data-doc-cancel aria-label="Закрыть">✕</button></div>
+        <div class="bd-doc-edit" contenteditable="true" spellcheck="false">${p.html}</div>
+        <div class="bd-doc-foot"><span class="small muted">Изменения увидят ученики после «Сохранить»</span>
+          <button type="button" class="bd-doc-cancel" data-doc-cancel>Отмена</button>
+          <button type="button" class="bd-doc-save" data-doc-save>Сохранить</button></div></div>`;
+      root.appendChild(back);
+      const ed = back.querySelector(".bd-doc-edit");
+      try { ed.focus(); } catch (_) {}
+      const close = () => { try { back.remove(); } catch (_) {} };
+      back.addEventListener("click", async e => {
+        if (e.target.closest("[data-doc-cancel]")){ close(); return; }
+        const b = e.target.closest("[data-doc-save]");
+        if (!b) return;
+        if (b.disabled) return; b.disabled = true; b.textContent = "Сохраняю…";
+        const ok = await updateDocPage(p, ed.innerHTML);
+        if (ok) close(); else { b.disabled = false; b.textContent = "Сохранить"; }
+      });
+      document.addEventListener("keydown", function onEsc(e){
+        if (e.key === "Escape"){ document.removeEventListener("keydown", onEsc); close(); }
+      });
     }
     /* встроить сайт (Wordwall, YouTube, Google Презентации, Canva, любая страница с разрешённым встраиванием) */
     function embedURL(u){
@@ -1722,11 +1784,11 @@ window.Board = (() => {
     dlg.className = "bd-dialog"; dlg.hidden = true;
     dlg.innerHTML = `<div class="bd-dialog-card" role="dialog" aria-modal="true" aria-label="Куда выгрузить материал">
       <h3>Куда выгрузить материал?</h3>
-      <p class="bd-dialog-note">Можно положить картинками на текущий лист или сохранить отдельными листами доски.</p>
+      <p class="bd-dialog-note">Можно положить картинками на текущий лист или сохранить отдельными листами. Word и PDF станут документами: текст чёткий, поверх можно писать, подчёркивать, а учитель — редактировать кнопкой «✎ Документ».</p>
       <div class="bd-dialog-files"></div>
       <div class="bd-dialog-actions">
         <button type="button" data-bd-dest="inline">На этот лист</button>
-        <button type="button" data-bd-dest="pages">Отдельными листами</button>
+        <button type="button" data-bd-dest="pages">Документом / листами</button>
         <button type="button" data-bd-dest="cancel" class="bd-dialog-cancel">Отмена</button>
       </div></div>`;
     root.appendChild(dlg);
@@ -1815,6 +1877,82 @@ window.Board = (() => {
         pdfjsLib.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.js?v=1";
       } catch (_) {}
       return true;
+    }
+    async function loadMammoth(){
+      if (window.mammoth) return true;
+      try { await loadScript("assets/mammoth.browser.min.js?v=1"); } catch (_) {
+        try { await loadScript("https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"); } catch (_) { return false; }
+      }
+      return !!window.mammoth;
+    }
+    /* DOCX → HTML-документ (векторный текст, картинки, стили): можно писать и подчёркивать поверх */
+    async function docxToDocPages(file){
+      if (!(await loadMammoth())) throw new Error("Модуль Word не загрузился");
+      const res = await window.mammoth.convertToHtml({arrayBuffer: await file.arrayBuffer()});
+      let html = String(res && res.value || "").trim();
+      if (!html) throw new Error("В документе нет текста");
+      /* нормальный вид документа, а не «список абзацев» */
+      html = html.replace(/<img\b([^>]*)>/gi, (m, attrs) => /style=/i.test(attrs) ? m : `<img${attrs} style="max-width:100%;height:auto">`);
+      const pages = [];
+      const tmp = document.createElement("div"); tmp.innerHTML = html;
+      let cur = [], curLen = 0;
+      const flush = () => {
+        if (!cur.length) return;
+        pages.push(`<div class="bd-sheet bd-doc-sheet"><div class="bd-doc bd-docx">${cur.join("")}</div></div>`);
+        cur = []; curLen = 0;
+      };
+      Array.from(tmp.childNodes).forEach(node => {
+        const h = node.outerHTML || "";
+        if (curLen + h.length > 42000 && cur.length) flush();
+        cur.push(h); curLen += h.length;
+      });
+      flush();
+      if (!pages.length) throw new Error("Не удалось разобрать документ");
+      return pages.map((h, i) => ({label: "Документ " + (i + 1), html: h, doc: true, docType: "docx"}));
+    }
+    /* PDF → HTML-документ: каждая страница как расположенный текст (чёткий, без растра) */
+    async function pdfToDocPages(file){
+      if (!(await loadPdfJs())) throw new Error("PDF-модуль не загрузился");
+      const doc = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+      const out = [];
+      const targetW = 744;                         // ширина рабочего листа доски без полей
+      const n = Math.min(doc.numPages, 60);
+      for (let p = 1; p <= n; p++){
+        const pg = await doc.getPage(p);
+        const vp = pg.getViewport({scale: 1});
+        const k = targetW / Math.max(1, vp.width);
+        const tc = await pg.getTextContent({normalizeWhitespace: true, disableCombineTextItems: false});
+        const items = (tc.items || []).filter(it => it && String(it.str || "").trim());
+        if (!items.length){
+          /* скан без текстового слоя: сохраняем страницу картинкой в высоком качестве, но помечаем как документ */
+          const base = await pdfToImages(file, PAGE_HTML_MAX - 1200, n);
+          return base.map((it, i) => ({label: "Документ " + (i + 1), html: `<div class="bd-sheet bd-doc-sheet"><div class="bd-doc bd-pdf-image"><img src="${it.src}" style="width:100%;height:auto;border-radius:4px"></div></div>`, doc: true, docType: "pdf"}));
+        }
+        const lines = new Map();
+        items.forEach(it => {
+          const tr = it.transform || [1,0,0,1,0,0];
+          const x = +tr[4] || 0, y = +tr[5] || 0;
+          const fs = Math.max(6, Math.hypot(+tr[2] || 0, +tr[3] || 0) || Math.abs(+tr[3] || 0) || 12);
+          const key = Math.round(y * 2) / 2;
+          let line = lines.get(key);
+          if (!line){ line = {x, y, fs, text: "", top: vp.height - y}; lines.set(key, line); }
+          line.x = Math.min(line.x, x); line.fs = Math.max(line.fs, fs);
+          const gap = x - (line.lastX == null ? x : line.lastX + (line.lastW || 0));
+          const space = line.text && gap > fs * 0.25 ? " " : "";
+          line.text += space + String(it.str || "");
+          line.lastX = x; line.lastW = +(it.width || 0);
+        });
+        const spans = [...lines.values()].sort((a,b) => a.top - b.top || a.x - b.x).map(l => {
+          const left = Math.max(0, Math.round(l.x * k));
+          const top = Math.max(0, Math.round((l.top - l.fs) * k));
+          const fs = Math.max(7, +(l.fs * k).toFixed(1));
+          return `<span style="position:absolute;left:${left}px;top:${top}px;font-size:${fs}px;line-height:1.18;white-space:pre;color:#1d1830">${esc(l.text)}</span>`;
+        }).join("");
+        const height = Math.round(vp.height * k);
+        out.push({label: "Документ " + p, html: `<div class="bd-sheet bd-doc-sheet"><div class="bd-doc bd-pdf" style="position:relative;width:${targetW}px;height:${height}px">${spans}</div></div>`, doc: true, docType: "pdf"});
+        await delay(0);
+      }
+      return out;
     }
     /* максимально качественная картинка страницы PDF в пределах лимита размера листа доски:
        сначала WebP высокого качества, потом плавное уменьшение; JPEG — только если WebP не поддержан */
@@ -1996,18 +2134,25 @@ window.Board = (() => {
       const keys = [];
       for (const f of files){
         let descs = [];
+        const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name), isDoc = /\.(docx)$/i.test(f.name);
         if (/^image\//.test(f.type)) descs = await buildImagePage(f);
-        else if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)) descs = await buildPdfPages(f);
+        else if (isPdf){
+          try { descs = await pdfToDocPages(f); }
+          catch (e) { toast("PDF как документ не открылся: " + oneLine(e && e.message)); descs = await buildPdfPages(f); }
+        }
         else if (/^video\//.test(f.type)) descs = await buildVideoPage(f);
-        else if (/\.(docx)$/i.test(f.name)) descs = await buildDocxPages(f);
+        else if (isDoc){
+          try { descs = await docxToDocPages(f); }
+          catch (e) { toast("Word как документ не открылся: " + oneLine(e && e.message)); descs = await buildDocxPages(f); }
+        }
         else if (/\.(pptx)$/i.test(f.name)) descs = await buildPptxPages(f);
         else { toast("Формат «" + f.name + "» пока не поддерживается."); continue; }
-        for (const d of descs) keys.push(addPageP(d.label, d.html, true));
+        for (const d of descs) keys.push(addPageP(d.label, d.html, true, {doc:d.doc, docType:d.docType}));
       }
       if (keys.length){
         openPage(keys[0]);
         if (o.role === "teacher") send("page", {page:keys[0]});
-        toast("Добавлено листов: " + keys.length);
+        toast("Добавлено листов: " + keys.length + (files.some(f => /\.(pdf|docx)$/i.test(f.name)) ? " · документы можно подчёркивать и редактировать" : ""));
       } else {
         toast("Не удалось добавить материал отдельными листами");
       }
@@ -2074,6 +2219,7 @@ window.Board = (() => {
         return;
       }
       if (b.dataset.act === "attach") fileInput.click();
+      if (b.dataset.act === "doc-edit"){ openDocEditor(); return; }
       if (b.dataset.act === "embed"){
         if (root.querySelector(".bd-embedform")) return;
         const f = document.createElement("form"); f.className = "bd-embedform card";
@@ -2140,11 +2286,12 @@ window.Board = (() => {
           if (ex){
             /* сервер/вторая сторона могли сохранить усечённую версию – синхронизируем html по тому же ключу */
             if (typeof m.html === "string" && m.html !== ex.html){
-              ex.html = m.html; ex.saved = true;
-              if (page === ex.key){ if (!paintLive(true)){ bg.innerHTML = m.html; bgSource = "static"; } afterSheet(); layout(); }
+              ex.html = m.html; ex.saved = true; ex.doc = !!m.doc; ex.docType = m.docType || ex.docType || "";
+              if (page === ex.key){ if (!paintLive(true)){ bg.innerHTML = m.html; bgSource = "static"; } afterSheet(); layout(); updateDocEditButton(); }
             } else ex.saved = true;
+            if (m.doc){ ex.doc = true; ex.docType = m.docType || ex.docType || ""; updateDocEditButton(); }
           } else if (m.key){
-            pagesArr.push({key:String(m.key), label:m.label || "Лист", html:m.html || "", saved:true});
+            pagesArr.push({key:String(m.key), label:m.label || "Лист", html:m.html || "", saved:true, doc:!!m.doc, docType:m.docType || ""});
             renderPageButtons();
           }
           return;
@@ -2358,7 +2505,22 @@ window.Board = (() => {
       ready: () => readyP,
       whenIdle: async () => { await readyP; while (saving > 0 || selPending > 0) await delay(50); return info(); },
       attach: files => handleFiles(files),
-      addPage: (label, html, broadcast) => addPageP(label, html, broadcast),
+      addPage: (label, html, broadcast, opts) => addPageP(label, html, broadcast, opts),
+      updatePage: async (key, html) => {
+        const p = pagesArr.find(x => x.key === String(key));
+        if (!p) return false;
+        return await updateDocPage(p, html);
+      },
+      docPages: async files => {
+        const out = [];
+        for (const f of files || []){
+          try {
+            if (/\.pdf$/i.test(f.name) || /pdf$/i.test(f.type)) out.push(...await pdfToDocPages(f));
+            else if (/\.docx$/i.test(f.name)) out.push(...await docxToDocPages(f));
+          } catch (e) { toast("Документ не разобрался: " + oneLine(e && e.message)); }
+        }
+        return out;
+      },
       stickPage: key => stickPage(key),
       setView: v => setRelView(v),
       getRelView: () => getRelView(),
@@ -2379,7 +2541,7 @@ window.Board = (() => {
       zoomBy: d => zoomBy(d),
       fitWidth: () => fitWidth(),
       openPage,
-      pages: () => pagesArr.map(p => ({key:p.key, label:p.label, saved:!!p.saved})),
+      pages: () => pagesArr.map(p => ({key:p.key, label:p.label, saved:!!p.saved, doc:!!p.doc, docType:p.docType || ""})),
       debug(){
         const v = info();
         v.raw = Array.from(items.entries()).map(([id, it]) => ({id, item:it}));
@@ -2402,6 +2564,7 @@ window.Board = (() => {
       return {
         load: async p => get(p),
         add: async (p, item) => { const l = get(p), id = Date.now() + Math.random().toString(36).slice(2, 6); l.push({id, item}); put(p, l); return id; },
+        update: async (p, id, item) => { const l = get(p), row = l.find(r => String(r.id) === String(id)); if (row) row.item = item; put(p, l); },
         remove: async (p, ids) => { const set = new Set((ids || []).map(String)); put(p, get(p).filter(r => !set.has(String(r.id)))); },
         clear: async p => put(p, [])
       };
@@ -2409,12 +2572,14 @@ window.Board = (() => {
     if (kind === "student") return {
       load: async p => { const {data, error} = await sb.rpc("board_load", {p_code: ident.code, p_lesson: lk(p)}); if (error) throw error; return data || []; },
       add: async (p, item) => { const {data, error} = await sb.rpc("board_add", {p_code: ident.code, p_lesson: lk(p), p_item: item}); if (error) throw error; return data; },
+      update: async (p, id, item) => { const {error} = await sb.rpc("board_update", {p_code: ident.code, p_lesson: lk(p), p_id: +id, p_item: item}); if (error) throw error; },
       remove: async (p, ids) => { const nums = (ids || []).map(Number).filter(Number.isFinite); if (!nums.length) return; await sb.rpc("board_remove", {p_code: ident.code, p_lesson: lk(p), p_ids: nums}); },
       clear: async () => {}
     };
     return {
       load: async p => { const {data, error} = await sb.from("board_items").select("id,item").eq("student_id", ident.studentId).eq("lesson_id", lk(p)).order("id"); if (error) throw error; return data || []; },
       add: async (p, item) => { const {data, error} = await sb.from("board_items").insert({student_id: ident.studentId, lesson_id: lk(p), item, author: "teacher"}).select("id").single(); if (error) throw error; return data.id; },
+      update: async (p, id, item) => { const {error} = await sb.from("board_items").update({item}).eq("id", +id).eq("student_id", ident.studentId).eq("lesson_id", lk(p)); if (error) throw error; },
       remove: async (p, ids) => { const nums = (ids || []).map(Number).filter(Number.isFinite); if (!nums.length) return; await sb.from("board_items").delete().in("id", nums); },
       clear: async p => { await sb.from("board_items").delete().eq("student_id", ident.studentId).eq("lesson_id", lk(p)); }
     };

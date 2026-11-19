@@ -716,6 +716,17 @@ returns void language sql security definer set search_path = public as $$
   delete from board_items where student_id = board_owner(student_id_by_code(p_code)) and lesson_id = p_lesson and id = any(p_ids);
 $$;
 
+-- обновление листа доски (редактирование документа учителем/учеником)
+create or replace function public.board_update(p_code text, p_lesson text, p_id bigint, p_item jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare sid uuid := student_id_by_code(p_code);
+begin
+  if sid is null then raise exception 'unknown code'; end if;
+  if length(p_item::text) > 60000 then raise exception 'too big'; end if;
+  update board_items set item = p_item
+   where id = p_id and student_id = board_owner(sid) and lesson_id = left(p_lesson, 60);
+end $$;
+
 -- ---------- Тесты по темам (несколько тем, ссылка ученику, разбор ошибок) ----------
 -- quizzes: тест учителя; id – короткий код в ссылке (index.html?quiz=КОД).
 -- data = {title, subject, grade, topics:[{id,title}], questions:[{q,o,a,e,topic,topicId}]}
@@ -850,7 +861,7 @@ do $$ declare f text; begin
     'public.student_state(text, boolean)', 'public.student_live(text, text)', 'public.student_submit_result(text, text, int, int, jsonb, text, int, jsonb)', 'public.student_ping(text, text, int)',
     'public.student_set_theme(text, text)', 'public.student_set_profile(text, text, text)', 'public.student_save_work(text, text, int, jsonb)', 'public.teacher_by_code(text)', 'public.student_signup(text, text, text, int, text[], text, text, text, text)', 'public.student_switch(text, uuid)', 'public.student_set_mascot(text, text)', 'public.student_submit_homework(text, text, text)',
     'public.student_submit_writing(text, text, text, text, text, int, jsonb)',
-    'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])',
+    'public.student_progress(text)', 'public.board_load(text, text)', 'public.board_add(text, text, jsonb)', 'public.board_remove(text, text, bigint[])', 'public.board_update(text, text, bigint, jsonb)',
     'public.quiz_get(text)', 'public.quiz_submit(text, text, int, int, jsonb, text[])', 'public.student_quizzes(text)'] loop
     execute 'revoke all on function ' || f || ' from public';
     execute 'grant execute on function ' || f || ' to anon, authenticated';

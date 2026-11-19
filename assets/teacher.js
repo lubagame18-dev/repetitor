@@ -978,7 +978,7 @@ function viewCourse(){
     <span class="front">${ok || l.custom ? "" : `<span class="lockico">${I.lock}</span>`}<span class="num">№ ${String(i+1).padStart(2,"0")}${l.custom ? " · СВОЙ" : ""}</span><span class="ttl">${esc(l.title)}</span>
     <span class="meta"><span class="pill">${esc(l.oge)}</span>${l.materials?.length ? `<span class="pill">+${l.materials.length}</span>` : ""}${sheetFor(cid, l.id).url ? '<span class="pill">лист ✓</span>' : ""}<span class="arrow">→</span></span></span></button>`).join("")}</div>
   ${sb && T.session ? `<div class="section-title"><h2>Свой урок</h2></div>
-  <form class="card stack" id="own-lesson" style="gap:8px"><p class="small muted">Урок появится в курсе у всех ваших учеников этого курса. Материалы, задания и тест добавите внутри папки.</p>
+  <form class="card stack" id="own-lesson" style="gap:8px"><p class="small muted">Урок появится в курсе у всех ваших учеников этого курса. Материалы, задания и тест добавите внутри папки. Чтобы вставить Word/PDF как документ, откройте урок с учеником → «Доска» → 📎 «Файл» → «Документом / листами»: по документу можно писать и подчёркивать, а кнопка «✎ Документ» позволит его отредактировать.</p>
     <label for="ol-title">Тема</label><input type="text" id="ol-title" required>
     <label for="ol-date">Дата (по плану курса)</label><input type="date" id="ol-date" required>
     ${T.me?.role === "developer" ? `<label class="small" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="ol-shared"> В общую базу – для всех учителей</label>` : ""}
