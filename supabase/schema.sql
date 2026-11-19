@@ -832,7 +832,7 @@ create or replace function public.student_topic_mastery(p_code text)
 returns json language sql security definer set search_path = public stable as $$
   with s as (select * from public.students where id = student_id_by_code(p_code))
   select coalesce(json_agg(json_build_object('topic_key', m.topic_key, 'title', m.topic_title, 'pct', m.pct, 'solved', m.solved, 'updated_at', m.updated_at) order by m.updated_at desc), '[]'::json)
-  from public.topic_mastery m
+  from public.topic_mastery m, s
   where m.student_id in (select x.id from public.students x where coalesce(x.person_id, x.id) = coalesce(s.person_id, s.id));
 $$;
 -- список тестов от учителя + история попыток (для визуальной карты тем у ученика)
