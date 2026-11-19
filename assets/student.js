@@ -1514,6 +1514,104 @@ function progressList(){
   if (!S.prog) return [cur];
   return S.prog.map(x => x.id === S.profile.id ? cur : {subject: x.subject, ...U.subjectNow(x.results, x.writings)});
 }
+/* ---------- тренажёр по теме из диагностики: мини-теория и повторная практика ---------- */
+function closeTopicTrainer(){
+  try { document.getElementById("tr-back")?.remove(); } catch (_) {}
+  S.trainer = null;
+}
+function topicTheoryText(topic, questions){
+  const out = [];
+  const seen = new Set();
+  const add = t => { t = String(t || "").trim(); if (t && !seen.has(t)){ seen.add(t); out.push(t); } };
+  const lesson = (S.course?.lessons || []).find(l => (l.learn || []).some(x => String(x).includes(topic) || topic.includes(String(x))) || String(l.title || "").includes(topic));
+  (lesson?.theory || []).slice(0, 4).forEach(b => { add(b.h); if (b.t) add(b.t); (b.list || []).slice(0, 6).forEach(add); });
+  questions.slice(0, 4).forEach(q => {
+    if (q.e) add(q.e);
+    else if (q.o && q.o[q.a] != null) add("Правильный ответ: " + q.o[q.a]);
+  });
+  return out;
+}
+function trainerHTML(){
+  const tr = S.trainer; if (!tr) return "";
+  if (tr.phase === "loading") return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Тренажёр по теме</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body"><div class="tr-loading"><span class="live-dot"></span> Загружаю теорию и задания по теме «${esc(tr.topic)}»…</div></div></div></div>`;
+  if (tr.phase === "error") return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Тренажёр по теме</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body"><p>${esc(tr.error || "Не удалось загрузить задания.")}</p><div class="row"><button class="btn ghost sm" data-tr-close>Закрыть</button></div></div></div></div>`;
+  if (tr.phase === "theory"){
+    const dots = tr.questions.map(q => `<span class="chip ${q.wrong ? "bad" : ""}">${esc(q.topic || tr.topic)}${q.wrong ? " · было сложно" : ""}</span>`).join("");
+    return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true" aria-labelledby="tr-title">
+      <div class="tr-head"><div><div class="kicker">Мини-теория · по вашим ошибкам</div><b id="tr-title">${esc(tr.topic)}</b></div><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div>
+      <div class="tr-body"><div class="tr-theory">${(tr.theory.length ? tr.theory : ["Вспомните правило по этой теме. Ниже — задания, которые вызвали сложность."]).map(t => `<p>${esc(t)}</p>`).join("")}</div>
+      <div class="tr-meta">${tr.wrongCount ? `В прошлом тесте было сложно: ${tr.wrongCount} задан.` : "В прошлом тесте тема была без ошибок — можно закрепить."} ${dots ? `<div class="quiz-topics">${dots}</div>` : ""}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-tr-start>Перейти к практике · ${tr.questions.length} вопросов</button><button class="btn ghost" data-tr-close>Позже</button></div></div></div></div>`;
+  }
+  if (tr.phase === "done"){
+    const pct = tr.questions.length ? Math.round(tr.score / tr.questions.length * 100) : 0;
+    return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true"><div class="tr-head"><b>Практика по теме · ${esc(tr.topic)}</b><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div><div class="tr-body">
+      <div class="tr-result"><b>${tr.score} из ${tr.questions.length} · ${pct}%</b><p class="small muted">${pct >= 80 ? "Тема закреплена." : "Можно пройти ещё раз — вопросы те же."}</p></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-tr-again>Пройти ещё раз</button><button class="btn ghost" data-tr-close>Закрыть</button></div></div></div></div>`;
+  }
+  const q = tr.questions[tr.i]; if (!q) return "";
+  const opts = q.o.map((o, k) => {
+    let cls = "";
+    if (tr.revealed){ if (k === q.a) cls = " ok"; else if (k === tr.picked) cls = " no"; }
+    return `<button class="tr-opt${cls}" data-tr-opt="${k}" ${tr.revealed ? "disabled" : ""}><span class="n">${k + 1}.</span> ${esc(o)}</button>`;
+  }).join("");
+  const fb = tr.revealed ? `<div class="tr-fb ${tr.picked === q.a ? "ok" : "no"}"><b>${tr.picked === q.a ? "Верно!" : "Пока неверно."}</b>${q.e ? `<div>${esc(q.e)}</div>` : q.pickedWrong ? "" : ""}<div class="small muted">${tr.picked === q.a ? "Так держать." : "Правильный ответ: " + esc(q.o[q.a])}</div></div>` : "";
+  return `<div class="tr-back" id="tr-back"><div class="tr-modal" role="dialog" aria-modal="true" aria-labelledby="tr-title"><div class="tr-head"><div><div class="kicker">Практика по теме · ${tr.i + 1} из ${tr.questions.length}</div><b id="tr-title">${esc(tr.topic)}</b></div><button class="iconbtn" data-tr-close aria-label="Закрыть">✕</button></div>
+    <div class="tr-body"><div class="tr-q">${esc(q.q)}</div><div class="tr-opts">${opts}</div>${fb}
+    <div class="row" style="gap:8px;margin-top:10px">${tr.revealed ? `<button class="btn" data-tr-next>${tr.i + 1 < tr.questions.length ? "Дальше" : "Завершить"}</button>` : `<span class="small muted">Выберите ответ</span>`}<button class="btn ghost" data-tr-close>Закрыть</button></div></div></div></div>`;
+}
+function paintTrainer(){
+  const old = document.getElementById("tr-back"); if (old) old.remove();
+  const html = trainerHTML(); if (!html) return;
+  document.body.insertAdjacentHTML("beforeend", html);
+}
+async function openTopicTrainer(topic, quizIds){
+  if (!topic) return;
+  if (!sb){ toast("Тренажёр откроется, когда появится связь с сервером."); return; }
+  closeTopicTrainer();
+  S.trainer = {topic, phase:"loading", questions: [], theory: [], wrongCount: 0, i: 0, picked: null, revealed: false, score: 0};
+  paintTrainer();
+  try {
+    const ids = [...new Set(String(quizIds || "").split(",").filter(Boolean).concat(
+      (S.qzResults || []).filter(r => (r.details?.topics || []).some(t => String(t.title) === String(topic))).map(r => r.quiz_id)
+    ))].slice(0, 5);
+    if (!ids.length) throw new Error("В результатах нет теста по этой теме");
+    const wrong = new Set();       // "quizId:index" заданий с ошибкой
+    (S.qzResults || []).forEach(r => {
+      if (!ids.includes(String(r.quiz_id))) return;
+      (r.details?.questions || []).forEach(log => {
+        if (log && String(log.topic || "") === String(topic) && (!log.first || !log.ok)) wrong.add(String(r.quiz_id) + ":" + String(log.i));
+      });
+    });
+    const all = [];
+    for (const id of ids){
+      let rpc; try { rpc = await sb.rpc("quiz_get", {p_token: id}); } catch (_) { continue; }
+      const data = rpc && rpc.data; if (!data) continue;
+      const raw = Array.isArray(data.data?.questions) ? data.data.questions : [];
+      raw.forEach((q, idx) => {
+        if (!q || !q.q || !Array.isArray(q.o) || q.o.length < 2) return;
+        const t = String(q.topic || q.topicId || "");
+        if (t && t !== String(topic) && !t.includes(String(topic)) && !String(topic).includes(t)) return;
+        const a = +q.a; if (!Number.isInteger(a) || a < 0 || a >= q.o.length) return;
+        all.push({q:String(q.q), o:q.o.map(String), a, e:String(q.e || ""), topic:t || topic,
+          wrong: wrong.has(String(id) + ":" + idx), quizId:id});
+      });
+    }
+    const seen = new Set(); const uniq = all.filter(x => { const k = x.q.trim(); if (seen.has(k)) return false; seen.add(k); return true; });
+    const difficult = uniq.filter(x => x.wrong);
+    const questions = difficult.length ? difficult : uniq;
+    if (!questions.length) throw new Error("По теме не нашлись вопросы — попросите учителя собрать тест заново.");
+    const tr = S.trainer;
+    tr.questions = questions; tr.wrongCount = difficult.length;
+    tr.theory = topicTheoryText(topic, difficult.length ? difficult : questions);
+    tr.phase = "theory";
+    paintTrainer();
+  } catch (e) {
+    if (!S.trainer) return;
+    S.trainer.phase = "error"; S.trainer.error = e && e.message || "Нет связи";
+    paintTrainer();
+  }
+}
 function viewStats(){
   const et = entryTest(), er = entryRes();
   /* всегда подтягиваем свежие результаты тестов по темам (они могут быть пройдены на другом устройстве) */
@@ -1537,7 +1635,7 @@ function viewStats(){
       const rows = [...baseRows, ...(S.qzResults || []).map(r => ({created_at:r.created_at, kind:"quiz", score:r.score, total:r.total, lesson_id:r.quiz_id}))];
       points = window.Trend.pointsFromRows(rows, {titleOf, limit:30});
     }
-    trend = `<div data-t-trend style="margin:12px 0">${window.Trend.chart(points, {title:"Динамика успеваемости", note: topicPoints.length ? "темы теста — в порядке изучения" : "", empty:"График появится после первого занятия."})}</div>`;
+    trend = `<div data-t-trend style="margin:12px 0">${window.Trend.chart(points, {title:"Динамика успеваемости", note: topicPoints.length ? "темы теста — в порядке изучения" : "", topicMode: topicPoints.length > 0, empty:"График появится после первого занятия."})}</div>`;
   }
   /* темы, которые проверялись в тестах: показываем под графиком, чтобы было видно, что именно влияет на линию */
   const qstatsAll = window.Quiz && typeof Quiz.topicStats === "function" ? Quiz.topicStats(S.qzResults || []) : [];
@@ -2088,5 +2186,35 @@ document.addEventListener("izl-listened", e => { const id = e.detail?.key; if (i
   render();
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => { try { r.update(); } catch (_) {} }).catch(() => {});
 })();
-window.__app = {S, render, openQuiz, openQuizzes, loadQuizzes, lessonTabs, lessonPane};   // для отладки и автотестов
+/* ---------- клики по точкам диагностики и тренажёр ---------- */
+document.addEventListener("click", e => {
+  const dot = e.target.closest && e.target.closest(".trend-dot-topic");
+  if (dot){
+    e.preventDefault();
+    openTopicTrainer(dot.dataset.topic || "", dot.dataset.quizIds || "");
+    return;
+  }
+  if (e.target.closest && e.target.closest("[data-tr-close]")){ closeTopicTrainer(); return; }
+  if (!S.trainer) return;
+  const start = e.target.closest && e.target.closest("[data-tr-start]");
+  if (start){ S.trainer.phase = "practice"; S.trainer.i = 0; S.trainer.picked = null; S.trainer.revealed = false; S.trainer.score = 0; paintTrainer(); return; }
+  const opt = e.target.closest && e.target.closest("[data-tr-opt]");
+  if (opt){
+    const k = +opt.dataset.trOpt, tr = S.trainer, q = tr.questions[tr.i];
+    if (!q || tr.revealed) return;
+    tr.picked = k; tr.revealed = true; if (k === q.a) tr.score++;
+    paintTrainer(); return;
+  }
+  if (e.target.closest && e.target.closest("[data-tr-next]")){
+    const tr = S.trainer;
+    if (tr.i + 1 < tr.questions.length){ tr.i++; tr.picked = null; tr.revealed = false; }
+    else { tr.phase = "done"; }
+    paintTrainer(); return;
+  }
+  if (e.target.closest && e.target.closest("[data-tr-again]")){
+    const tr = S.trainer; tr.phase = "practice"; tr.i = 0; tr.picked = null; tr.revealed = false; tr.score = 0; paintTrainer(); return;
+  }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && S.trainer) closeTopicTrainer(); });
+window.__app = {S, render, openQuiz, openQuizzes, loadQuizzes, lessonTabs, lessonPane, openTopicTrainer};   // для отладки и автотестов
 })();

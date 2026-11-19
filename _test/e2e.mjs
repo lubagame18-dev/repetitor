@@ -1854,6 +1854,15 @@ test("X9", "Темы теста разбиты на отдельные точк�
   })()`);
   if (!out.dots || out.dots < 2) throw new Error("X9: ожидали отдельные точки по темам, получили " + JSON.stringify(out));
   if (/Тест по всем/i.test(out.legend)) throw new Error("X9: осталась общая точка теста: " + JSON.stringify(out));
+  await page.eval(`(() => { const d = document.querySelector(".trend-dot-topic"); if (d) d.dispatchEvent(new MouseEvent("click", {bubbles:true})); return true; })()`);
+  await page.waitFor(`document.querySelector(".tr-modal .tr-body") ? 1 : 0`, { timeout: 12000, label: "X9: тренажёр по точке" });
+  const trainer = await page.eval(`(() => ({ body: (document.querySelector(".tr-modal")||{}).innerText || "", options: document.querySelectorAll("[data-tr-opt]").length }))()`);
+  if (!/Мини-теория|Загружаю/i.test(trainer.body)) throw new Error("X9: не открылась мини-теория: " + trainer.body.slice(0, 200));
+  await page.eval(`document.querySelector("[data-tr-start]")?.click(); true`);
+  await page.waitFor(`document.querySelector("[data-tr-opt]") ? 1 : 0`, { timeout: 8000, label: "X9: практика тренажёра" });
+  await page.eval(`document.querySelector("[data-tr-opt]")?.click(); true`);
+  await page.waitFor(`document.querySelector(".tr-fb") ? 1 : 0`, { timeout: 5000, label: "X9: ответ в тренажёре" });
+  await page.eval(`document.querySelector("[data-tr-close]")?.click(); true`);
   const qOrder = W.quizQuestions.map(q => q.topic).filter(Boolean);
   const names = out.labels.join(" | ");
   if (qOrder[0] && !names.includes(qOrder[0])) throw new Error("X9: нет темы " + qOrder[0] + ": " + names);

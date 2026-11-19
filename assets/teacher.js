@@ -837,7 +837,7 @@ function trendSectionHTML(s){
   const last = points.length ? points[points.length - 1].p : 0, first = points.length ? points[0].p : 0;
   const hasTopics = points.some(x => x.kind === "quiz-topic");
   return `<div class="section-title"><h2>Динамика успеваемости</h2><span class="small muted">результаты занятий и тестов по темам – от начала до текущего</span></div>
-    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", note: hasTopics ? "темы теста — в порядке изучения" : "", empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
+    <div data-t-student-trend data-points="${points.length}" data-first="${first}" data-last="${last}">${Trend.chart(points, {title: "Динамика успеваемости", note: hasTopics ? "темы теста — в порядке изучения" : "", topicMode: hasTopics, topicClick: false, empty: "График появится после первого занятия или теста по темам."})}</div>${trendTopicsHTML(s)}`;
 }
 
 function viewStudent(){

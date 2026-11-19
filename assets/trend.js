@@ -37,6 +37,7 @@ window.Trend = (() => {
     const order = opts.order || new Map();
     const seen = new Map();           // тема -> номер по порядку вопросов в тесте
     const lastAt = new Map();
+    const quizIds = new Map();
     let seq = 0;
     results.slice().sort((a,b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)).forEach(r => {
       const ts = r && r.details && r.details.topics;
@@ -44,6 +45,7 @@ window.Trend = (() => {
         const title = String((t && t.title) || "").trim(); if (!title) return;
         if (!seen.has(title)) seen.set(title, seq++);
         lastAt.set(title, r.created_at || r.at || "");
+        if (r.quiz_id) { if (!quizIds.has(title)) quizIds.set(title, []); if (!quizIds.get(title).includes(String(r.quiz_id))) quizIds.get(title).push(String(r.quiz_id)); }
       });
     });
     const rows = stats.map(s => {
@@ -54,6 +56,7 @@ window.Trend = (() => {
         sub: `${s.first || 0} из ${s.total || 0} с первой попытки`,
         at: lastAt.get(title) || "",
         kind: "quiz-topic",
+        quizIds: quizIds.get(title) || [],
         ord: order.has(title) ? order.get(title) : (10000 + (seen.get(title) ?? 9999)),
       };
     }).sort((a,b) => a.ord - b.ord);
@@ -93,9 +96,21 @@ window.Trend = (() => {
       return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}" class="trend-grid"/><text x="${L - 8}" y="${(y + 4).toFixed(1)}" class="trend-y" text-anchor="end">${v}</text>`;
     }).join("");
     const step = Math.max(1, Math.ceil(n / 6));
-    const labels = pts.map((p, i) => (i % step === 0 || i === n - 1)
-      ? `<text x="${p.x.toFixed(1)}" y="${H - 12}" class="trend-x" text-anchor="middle">${esc(String(p.label || "").slice(0, 14))}</text>` : "").join("");
-    const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4.2" class="trend-dot" data-p="${p.p}"><title>${esc(p.label)}: ${p.p}% (${esc(p.sub || "")}) · ${esc(String(p.at || "").slice(0, 10))}</title></circle>`).join("");
+    const topicMode = !!opts.topicMode || pts.some(p => p.kind === "quiz-topic");
+    const labels = topicMode
+      ? pts.map((p, i) => p.kind === "quiz-topic" ? `<text x="${p.x.toFixed(1)}" y="${H - 12}" class="trend-x" text-anchor="middle">Т${i + 1}</text>` : "").join("")
+      : pts.map((p, i) => (i % step === 0 || i === n - 1)
+        ? `<text x="${p.x.toFixed(1)}" y="${H - 12}" class="trend-x" text-anchor="middle">${esc(String(p.label || "").slice(0, 14))}</text>` : "").join("");
+    const dots = pts.map(p => {
+      const topic = p.kind === "quiz-topic", clickable = topic && opts.topicClick !== false;
+      const attrs = clickable
+        ? ` class="trend-dot trend-dot-topic" data-topic="${esc(p.label)}" data-quiz-ids="${esc((p.quizIds || []).join(","))}"`
+        : ` class="trend-dot"`;
+      const tip = clickable
+        ? `${p.label}: ${p.p}% — нажмите, чтобы повторить тему`
+        : `${p.label}: ${p.p}% (${p.sub || ""}) · ${String(p.at || "").slice(0, 10)}`;
+      return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${topic ? "5.2" : "4.2"}"${attrs} data-p="${p.p}" tabindex="${clickable ? "0" : "-1"}" role="${clickable ? "button" : "img"}"><title>${esc(tip)}</title></circle>`;
+    }).join("");
     const last = pts[n - 1], first = pts[0];
     const delta = n > 1 ? last.p - first.p : 0;
     const trendWord = n < 2 ? "" : delta > 5 ? `рост +${delta}%` : delta < -5 ? `снижение ${delta}%` : "стабильно";
@@ -110,7 +125,9 @@ window.Trend = (() => {
         ${dots}
         ${labels}
       </svg>
-      <div class="small muted trend-legend">${esc(first.label)} — ${first.p}% · ${esc(last.label)} — ${last.p}%${n > 1 ? ` · ${delta >= 0 ? "+" : ""}${delta}%` : ""}</div>
+      <div class="small muted trend-legend">${topicMode
+        ? "Наведите на точку — тема и результат. Нажмите на точку — мини-теория и повторная практика по этой теме."
+        : `${esc(first.label)} — ${first.p}% · ${esc(last.label)} — ${last.p}%${n > 1 ? ` · ${delta >= 0 ? "+" : ""}${delta}%` : ""}`}</div>
     </div>`;
   }
   /* подключить стили один раз */
@@ -126,7 +143,7 @@ window.Trend = (() => {
 .trend-area{fill:color-mix(in srgb,var(--violet,#7b4cf5) 14%,transparent);stroke:none}
 .trend-line{fill:none;stroke:var(--violet,#7b4cf5);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 .trend-dot{fill:var(--glass-2,#fff);stroke:var(--violet,#7b4cf5);stroke-width:2.5}
-.trend-dot:hover{fill:var(--violet,#7b4cf5)}
+.trend-dot:hover{fill:var(--violet,#7b4cf5)}.trend-dot-topic{cursor:pointer;stroke-width:3}.trend-dot-topic:hover,.trend-dot-topic:focus{fill:var(--violet,#7b4cf5);outline:none}
 .trend-legend{margin-top:2px}
 @media (max-width:560px){.trend{padding:10px 10px 6px}.trend-x{font-size:10px}}`;
       document.head.appendChild(st);
