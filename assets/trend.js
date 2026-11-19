@@ -82,7 +82,8 @@ window.Trend = (() => {
   function chart(points, opts = {}){
     const data = (points || []).filter(x => x && Number.isFinite(+x.p));
     if (!data.length) return `<div class="card trend" data-trend data-points="0"><div class="kicker">${esc(opts.title || "Динамика успеваемости")}</div><p class="small muted" style="margin-top:6px">${esc(opts.empty || "График появится, когда пройдено первое занятие.")}</p></div>`;
-    const W = 720, H = 230, L = 36, R = 18, T = 16, B = 38, iw = W - L - R, ih = H - T - B;
+    const topicMode = !!opts.topicMode || data.some(x => x.kind === "quiz-topic");
+    const W = 720, H = 230, L = 36, R = 18, T = 16, B = topicMode ? 16 : 38, iw = W - L - R, ih = H - T - B;
     const n = data.length;
     const pts = data.map((d, i) => ({
       ...d,
@@ -96,10 +97,7 @@ window.Trend = (() => {
       return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}" class="trend-grid"/><text x="${L - 8}" y="${(y + 4).toFixed(1)}" class="trend-y" text-anchor="end">${v}</text>`;
     }).join("");
     const step = Math.max(1, Math.ceil(n / 6));
-    const topicMode = !!opts.topicMode || pts.some(p => p.kind === "quiz-topic");
-    const labels = topicMode
-      ? pts.map((p, i) => p.kind === "quiz-topic" ? `<text x="${p.x.toFixed(1)}" y="${H - 12}" class="trend-x" text-anchor="middle">Т${i + 1}</text>` : "").join("")
-      : pts.map((p, i) => (i % step === 0 || i === n - 1)
+    const labels = topicMode ? "" : pts.map((p, i) => (i % step === 0 || i === n - 1)
         ? `<text x="${p.x.toFixed(1)}" y="${H - 12}" class="trend-x" text-anchor="middle">${esc(String(p.label || "").slice(0, 14))}</text>` : "").join("");
     const dots = pts.map(p => {
       const topic = p.kind === "quiz-topic", clickable = topic && opts.topicClick !== false;
